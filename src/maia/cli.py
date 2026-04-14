@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 import sys
 import uuid
@@ -169,9 +168,7 @@ def _handle_agent_tune(
     registry_path: str,
     registry,
 ) -> int:
-    record = registry.get(args.agent_id)
-    updated = replace(record, persona=_resolve_persona(args))
-    registry._records[args.agent_id] = updated
+    updated = registry.set_persona(args.agent_id, _resolve_persona(args))
     storage.save(registry_path, registry)
     print(f"updated agent_id={updated.agent_id} persona={updated.persona}")
     return 0
@@ -204,8 +201,7 @@ def _handle_agent_purge(
             f"(status={record.status.value})"
         )
 
-    del registry._records[args.agent_id]
-    registry._order.remove(args.agent_id)
+    registry.remove(args.agent_id)
     storage.save(registry_path, registry)
     print(f"purged agent_id={args.agent_id}")
     return 0

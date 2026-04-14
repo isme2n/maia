@@ -43,6 +43,22 @@ class AgentRegistry:
         self._records[agent_id] = updated
         return replace(updated)
 
+    def set_persona(self, agent_id: str, persona: str) -> AgentRecord:
+        """Update the persona for an existing record and return the new value."""
+
+        record = self._require(agent_id)
+        updated = replace(record, persona=persona)
+        self._records[agent_id] = updated
+        return replace(updated)
+
+    def remove(self, agent_id: str) -> AgentRecord:
+        """Remove an existing record and return the removed value."""
+
+        record = self._require(agent_id)
+        del self._records[agent_id]
+        self._order.remove(agent_id)
+        return replace(record)
+
     def _require(self, agent_id: str) -> AgentRecord:
         try:
             return self._records[agent_id]

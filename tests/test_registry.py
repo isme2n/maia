@@ -85,6 +85,60 @@ def test_registry_set_status_updates_record() -> None:
     assert record.status is AgentStatus.RUNNING
 
 
+def test_registry_set_persona_updates_record() -> None:
+    registry = AgentRegistry()
+    record = AgentRecord(
+        agent_id="agent-001",
+        name="planner",
+        status=AgentStatus.RUNNING,
+        persona="careful",
+    )
+
+    registry.add(record)
+    updated = registry.set_persona("agent-001", "analyst")
+
+    assert updated.persona == "analyst"
+    assert registry.get("agent-001").persona == "analyst"
+    assert registry.get("agent-001").status is AgentStatus.RUNNING
+    assert record.persona == "careful"
+
+
+def test_registry_remove_deletes_record_and_preserves_order() -> None:
+    registry = AgentRegistry()
+    alpha = AgentRecord(
+        agent_id="agent-001",
+        name="alpha",
+        status=AgentStatus.STOPPED,
+        persona="",
+    )
+    beta = AgentRecord(
+        agent_id="agent-002",
+        name="beta",
+        status=AgentStatus.ARCHIVED,
+        persona="strict",
+    )
+    gamma = AgentRecord(
+        agent_id="agent-003",
+        name="gamma",
+        status=AgentStatus.RUNNING,
+        persona="fast",
+    )
+
+    registry.add(alpha)
+    registry.add(beta)
+    registry.add(gamma)
+
+    removed = registry.remove("agent-002")
+
+    assert removed == beta
+    assert [record.agent_id for record in registry.list()] == [
+        "agent-001",
+        "agent-003",
+    ]
+    with pytest.raises(LookupError, match="Agent with id 'agent-002' not found"):
+        registry.get("agent-002")
+
+
 def test_registry_get_missing_id_error() -> None:
     registry = AgentRegistry()
 
@@ -97,3 +151,17 @@ def test_registry_set_status_missing_id_error() -> None:
 
     with pytest.raises(LookupError, match="Agent with id 'missing' not found"):
         registry.set_status("missing", AgentStatus.STOPPED)
+
+
+def test_registry_set_persona_missing_id_error() -> None:
+    registry = AgentRegistry()
+
+    with pytest.raises(LookupError, match="Agent with id 'missing' not found"):
+        registry.set_persona("missing", "analyst")
+
+
+def test_registry_remove_missing_id_error() -> None:
+    registry = AgentRegistry()
+
+    with pytest.raises(LookupError, match="Agent with id 'missing' not found"):
+        registry.remove("missing")
