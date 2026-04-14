@@ -48,6 +48,54 @@ def test_agent_purge_placeholder_contract(capsys: pytest.CaptureFixture[str]) ->
     assert captured.out.strip() == "Not implemented yet: agent purge"
 
 
+def test_agent_tune_placeholder_contract_with_persona_file(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    persona_path = tmp_path / "persona.txt"
+
+    assert main(["agent", "tune", "demo1234", "--persona-file", str(persona_path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: agent tune"
+
+
+def test_agent_tune_parser_rejects_both_persona_sources(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    persona_path = tmp_path / "persona.txt"
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "agent",
+                "tune",
+                "demo1234",
+                "--persona",
+                "analyst",
+                "--persona-file",
+                str(persona_path),
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--persona" in captured.err
+    assert "--persona-file" in captured.err
+    assert "not allowed" in captured.err
+
+
+def test_agent_tune_parser_rejects_missing_persona_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "tune", "demo1234"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--persona" in captured.err
+    assert "--persona-file" in captured.err
+    assert "required" in captured.err
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [

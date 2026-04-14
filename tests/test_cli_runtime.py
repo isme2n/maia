@@ -135,6 +135,65 @@ def test_agent_tune_updates_persona_for_existing_agent(tmp_path: Path) -> None:
     )
 
 
+def test_agent_tune_updates_persona_from_file_for_existing_agent(tmp_path: Path) -> None:
+    created = run_module(tmp_path, "agent", "new", "demo")
+    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+    persona_path = tmp_path / "persona.txt"
+    persona_path.write_text("research analyst", encoding="utf-8")
+
+    result = run_module(
+        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
+    )
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert (
+        result.stdout.strip()
+        == f"updated agent_id={agent_id} persona=research analyst"
+    )
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert (
+        status.stdout.strip()
+        == f"agent_id={agent_id} name=demo status=stopped persona=research analyst"
+    )
+
+
+def test_agent_tune_persona_file_preserves_trailing_newline(tmp_path: Path) -> None:
+    created = run_module(tmp_path, "agent", "new", "demo")
+    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+    persona_path = tmp_path / "persona.txt"
+    persona_path.write_text("night-shift\n", encoding="utf-8")
+
+    result = run_module(
+        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
+    )
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == f"updated agent_id={agent_id} persona=night-shift\n\n"
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert (
+        status.stdout
+        == f"agent_id={agent_id} name=demo status=stopped persona=night-shift\n\n"
+    )
+
+    registry_path = tmp_path / ".maia" / "registry.json"
+    assert json.loads(registry_path.read_text(encoding="utf-8")) == {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "name": "demo",
+                "status": "stopped",
+                "persona": "night-shift\n",
+            }
+        ]
+    }
+
+
 def test_agent_tune_preserves_name_and_status(tmp_path: Path) -> None:
     created = run_module(tmp_path, "agent", "new", "demo")
     agent_id = parse_fields(created.stdout.strip())["agent_id"]
@@ -167,6 +226,22 @@ def test_agent_tune_missing_agent_error(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr.strip() == "error: Agent with id 'missing' not found"
+
+
+def test_agent_tune_missing_persona_file_error(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+    persona_path = tmp_path / "missing.txt"
+
+    result = run_module(
+        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert (
+        result.stderr.strip()
+        == f"error: Persona file {str(persona_path)!r} not found"
+    )
 
 
 def test_agent_tune_empty_persona_clears_value(tmp_path: Path) -> None:

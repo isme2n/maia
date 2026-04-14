@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 import sys
 import uuid
 
@@ -59,10 +60,14 @@ def build_parser() -> argparse.ArgumentParser:
         if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
         if command_name == "tune":
-            command_parser.add_argument(
+            persona_group = command_parser.add_mutually_exclusive_group(required=True)
+            persona_group.add_argument(
                 "--persona",
-                required=True,
                 help="Persona text to store for the agent",
+            )
+            persona_group.add_argument(
+                "--persona-file",
+                help="UTF-8 text file containing the persona to store for the agent",
             )
 
     return parser
@@ -165,7 +170,7 @@ def _handle_agent_tune(
     registry,
 ) -> int:
     record = registry.get(args.agent_id)
-    updated = replace(record, persona=args.persona)
+    updated = replace(record, persona=_resolve_persona(args))
     registry._records[args.agent_id] = updated
     storage.save(registry_path, registry)
     print(f"updated agent_id={updated.agent_id} persona={updated.persona}")
@@ -208,3 +213,23 @@ def _handle_agent_purge(
 
 def _format_record(record: AgentRecord) -> str:
     return f"agent_id={record.agent_id} name={record.name} status={record.status.value}"
+
+
+def _resolve_persona(args: argparse.Namespace) -> str:
+    if args.persona is not None:
+        return args.persona
+
+    persona_path = Path(args.persona_file)
+    try:
+        return persona_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError(f"Persona file {args.persona_file!r} not found") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"Could not decode persona file {args.persona_file!r} as UTF-8"
+        ) from exc
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        raise ValueError(
+            f"Could not read persona file {args.persona_file!r}: {detail}"
+        ) from exc
