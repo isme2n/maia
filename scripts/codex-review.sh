@@ -9,6 +9,7 @@ fi
 TASK_SPEC="$1"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+export PYTHONDONTWRITEBYTECODE=1
 
 PROMPT=$(cat <<EOF
 You are the reviewer Codex for the Maia project.
