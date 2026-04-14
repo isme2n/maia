@@ -30,6 +30,23 @@
 - verify 실행: `scripts/verify.sh`
 - reviewer 실행: `scripts/codex-review.sh docs/tasks/<slug>.md`
 
+## 백그라운드 감시 규칙
+- watch pattern은 좁고 명확하게 잡는다.
+- 권장 패턴:
+  - `Traceback`
+  - `FAILED`
+  - `request_changes`
+  - `blocking_issues:`
+  - `AssertionError`
+  - `exited 1`
+- 피해야 할 패턴:
+  - `Error`
+  - `ValueError`
+  - 일반 클래스명/타입명
+  - 기능명이나 도메인 용어(예: `AgentRegistry`)
+- 이유:
+  - 코드 diff나 테스트 코드 안의 문자열까지 오탐으로 잡히기 쉽다.
+
 ## 리뷰 기준
 - spec 불일치가 없는가?
 - 범위 초과 변경이 없는가?

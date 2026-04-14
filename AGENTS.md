@@ -13,6 +13,7 @@
 - 요구사항 밖 변경 금지.
 - 변경 후 반드시 검증 명령을 실행한다.
 - 리뷰 결과의 blocking issue는 반드시 수정 후 재리뷰한다.
+- 백그라운드 감시는 넓은 키워드(`Error`, 클래스명) 대신 좁은 실패 신호(`Traceback`, `FAILED`, `request_changes`)만 사용한다.
 
 ## 기본 루프
 1. task spec 작성
