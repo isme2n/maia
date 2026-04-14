@@ -16,6 +16,7 @@
 - 백그라운드 감시는 프롬프트/문서에 그대로 등장하는 단어를 쓰지 않는다.
 - worker watch는 런타임 실패 신호만 사용한다.
 - reviewer watch는 verdict나 섹션 이름을 감시하지 않고, 실행 실패만 본다.
+- `exited 1` 같은 하위 명령 exit 로그 문구는 watch에 넣지 않는다. Codex 작업 로그 안의 개별 probe/grep/rg 실패도 그 문구를 출력할 수 있다.
 - reviewer 판정은 항상 구조화된 결과 블록 파싱으로 확인한다.
 
 ## 기본 루프

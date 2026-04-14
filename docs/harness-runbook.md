@@ -34,10 +34,12 @@
 - watch pattern은 "실패했을 때만 거의 나타나는 런타임 신호"만 쓴다.
 - worker와 reviewer의 watch는 분리한다.
 - worker watch의 목적:
-  - 구현/검증 중 uncaught stacktrace, pytest 실패, assertion 실패, 프로세스 non-zero 종료를 빨리 감지하는 것
+  - 구현/검증 중 uncaught stacktrace, pytest 실패, assertion 실패를 빨리 감지하는 것
 - reviewer watch의 목적:
-  - reviewer 실행 자체가 깨졌는지(스택트레이스, assertion 실패, non-zero 종료)만 감지하는 것
+  - reviewer 실행 자체가 깨졌는지(스택트레이스, assertion 실패)만 감지하는 것
 - reviewer의 `approve` / `request_changes` / 섹션 이름은 watch로 보지 않는다.
+- `exited 1` 같은 문자열은 watch로 쓰지 않는다.
+  - 이유: Codex 로그는 내부 probe 명령의 `exited 1 in 0ms:` 같은 줄도 그대로 보여줄 수 있어서 오탐이 난다.
 - 피해야 할 패턴:
   - 프롬프트나 문서에 적어둔 예시 단어
   - 리뷰 verdict 값이나 리뷰 섹션 이름

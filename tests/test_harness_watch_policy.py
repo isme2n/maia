@@ -32,7 +32,6 @@ def test_worker_watch_patterns_are_role_specific() -> None:
         r"^Traceback \(most recent call last\):$",
         r"^FAILED .*$",
         r"^AssertionError(:|$)",
-        r"(^|.* )exited 1$",
     ]
     assert not any("request_changes" in pattern for pattern in patterns)
     assert not any("blocking_issues" in pattern for pattern in patterns)
@@ -48,7 +47,6 @@ def test_reviewer_watch_patterns_only_watch_runtime_failures() -> None:
     assert patterns == [
         r"^Traceback \(most recent call last\):$",
         r"^AssertionError(:|$)",
-        r"(^|.* )exited 1$",
     ]
     assert not any("approve" in pattern for pattern in patterns)
     assert not any("request_changes" in pattern for pattern in patterns)

@@ -14,14 +14,12 @@ case "$role" in
 ^Traceback \(most recent call last\):$
 ^FAILED .*$
 ^AssertionError(:|$)
-(^|.* )exited 1$
 EOF
     ;;
   reviewer)
     cat <<'EOF'
 ^Traceback \(most recent call last\):$
 ^AssertionError(:|$)
-(^|.* )exited 1$
 EOF
     ;;
   *)
