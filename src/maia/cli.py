@@ -24,7 +24,16 @@ AGENT_COMMANDS = (
     "tune",
     "purge",
 )
-RUNTIME_AGENT_COMMANDS = frozenset({"new", "list", "status", "tune"})
+LIFECYCLE_STATUS_BY_COMMAND = {
+    "start": AgentStatus.RUNNING,
+    "stop": AgentStatus.STOPPED,
+    "archive": AgentStatus.ARCHIVED,
+    "restore": AgentStatus.STOPPED,
+}
+AGENT_ID_COMMANDS = frozenset({"status", "tune", *LIFECYCLE_STATUS_BY_COMMAND})
+RUNTIME_AGENT_COMMANDS = frozenset(
+    {"new", "list", "status", "tune", *LIFECYCLE_STATUS_BY_COMMAND}
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,10 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command_name == "new":
             command_parser.add_argument("name", help="Agent name")
-        if command_name == "status":
+        if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
         if command_name == "tune":
-            command_parser.add_argument("agent_id", help="Agent id")
             command_parser.add_argument(
                 "--persona",
                 required=True,
@@ -104,6 +112,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_agent_status(args, registry)
         if args.agent_command == "tune":
             return _handle_agent_tune(args, storage, registry_path, registry)
+        if args.agent_command in LIFECYCLE_STATUS_BY_COMMAND:
+            return _handle_agent_lifecycle(args, storage, registry_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -155,6 +165,20 @@ def _handle_agent_tune(
     registry._records[args.agent_id] = updated
     storage.save(registry_path, registry)
     print(f"updated agent_id={updated.agent_id} persona={updated.persona}")
+    return 0
+
+
+def _handle_agent_lifecycle(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    updated = registry.set_status(
+        args.agent_id, LIFECYCLE_STATUS_BY_COMMAND[args.agent_command]
+    )
+    storage.save(registry_path, registry)
+    print(f"updated agent_id={updated.agent_id} status={updated.status.value}")
     return 0
 
 
