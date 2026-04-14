@@ -32,6 +32,8 @@ def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia agent" in captured.out
+    assert "export" in captured.out
+    assert "import" in captured.out
     assert "new" in captured.out
     assert "purge" in captured.out
 
@@ -46,6 +48,26 @@ def test_agent_purge_placeholder_contract(capsys: pytest.CaptureFixture[str]) ->
     assert main(["agent", "purge", "demo1234"]) == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == "Not implemented yet: agent purge"
+
+
+def test_agent_export_placeholder_contract(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    export_path = tmp_path / "registry.json"
+
+    assert main(["agent", "export", str(export_path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: agent export"
+
+
+def test_agent_import_placeholder_contract(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    import_path = tmp_path / "registry.json"
+
+    assert main(["agent", "import", str(import_path)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: agent import"
 
 
 def test_agent_tune_placeholder_contract_with_persona_file(

@@ -21,6 +21,8 @@ AGENT_COMMANDS = (
     "restore",
     "status",
     "list",
+    "export",
+    "import",
     "tune",
     "purge",
 )
@@ -34,7 +36,16 @@ AGENT_ID_COMMANDS = frozenset(
     {"status", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND}
 )
 RUNTIME_AGENT_COMMANDS = frozenset(
-    {"new", "list", "status", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND}
+    {
+        "new",
+        "list",
+        "status",
+        "export",
+        "import",
+        "tune",
+        "purge",
+        *LIFECYCLE_STATUS_BY_COMMAND,
+    }
 )
 
 
@@ -58,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
+        if command_name in {"export", "import"}:
+            command_parser.add_argument("path", help="Registry JSON path")
         if command_name == "tune":
             persona_group = command_parser.add_mutually_exclusive_group(required=True)
             persona_group.add_argument(
@@ -109,6 +122,9 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
     registry_path = get_registry_path()
 
     try:
+        if args.agent_command == "import":
+            return _handle_agent_import(args, storage, registry_path)
+
         registry = storage.load(registry_path)
         if args.agent_command == "new":
             return _handle_agent_new(args, storage, registry_path, registry)
@@ -116,6 +132,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_agent_list(registry)
         if args.agent_command == "status":
             return _handle_agent_status(args, registry)
+        if args.agent_command == "export":
+            return _handle_agent_export(args, storage, registry)
         if args.agent_command == "tune":
             return _handle_agent_tune(args, storage, registry_path, registry)
         if args.agent_command == "purge":
@@ -153,6 +171,31 @@ def _handle_agent_new(
 def _handle_agent_list(registry) -> int:
     for record in registry.list():
         print(_format_record(record))
+    return 0
+
+
+def _handle_agent_export(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry,
+) -> int:
+    storage.save(args.path, registry)
+    print(f"exported registry path={args.path} agents={len(registry.list())}")
+    return 0
+
+
+def _handle_agent_import(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+) -> int:
+    import_path = Path(args.path)
+    if not import_path.exists():
+        raise ValueError(f"Import file {args.path!r} not found")
+
+    registry = storage.load(import_path)
+    storage.save(registry_path, registry)
+    print(f"imported registry path={args.path} agents={len(registry.list())}")
     return 0
 
 

@@ -31,7 +31,9 @@ def run_module(home: Path, *argv: str) -> subprocess.CompletedProcess[str]:
 
 def parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"created", "updated"}:
+    if tokens and tokens[0] in {"created", "updated", "exported", "imported"}:
+        tokens = tokens[1:]
+    if tokens and tokens[0] == "registry":
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -93,6 +95,121 @@ def test_agent_list_preserves_storage_order(tmp_path: Path) -> None:
         f"agent_id={first_id} name=alpha status=stopped",
         f"agent_id={second_id} name=beta status=stopped",
     ]
+
+
+def test_agent_export_writes_registry_file(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+    export_path = tmp_path / "exports" / "registry.json"
+
+    result = run_module(tmp_path, "agent", "export", str(export_path))
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert parse_fields(result.stdout.strip()) == {
+        "path": str(export_path),
+        "agents": "1",
+    }
+
+    registry_path = tmp_path / ".maia" / "registry.json"
+    assert json.loads(export_path.read_text(encoding="utf-8")) == json.loads(
+        registry_path.read_text(encoding="utf-8")
+    )
+    assert json.loads(export_path.read_text(encoding="utf-8")) == {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "name": "demo",
+                "status": "stopped",
+                "persona": "",
+            }
+        ]
+    }
+
+
+def test_agent_export_creates_parent_dirs(tmp_path: Path) -> None:
+    export_path = tmp_path / "nested" / "backup" / "registry.json"
+
+    result = run_module(tmp_path, "agent", "export", str(export_path))
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert parse_fields(result.stdout.strip()) == {
+        "path": str(export_path),
+        "agents": "0",
+    }
+    assert export_path.exists()
+    assert json.loads(export_path.read_text(encoding="utf-8")) == {"agents": []}
+
+
+def test_agent_import_restores_exported_registry(tmp_path: Path) -> None:
+    alpha_id = create_agent(tmp_path, "alpha")
+    beta_id = create_agent(tmp_path, "beta")
+
+    started = run_module(tmp_path, "agent", "start", alpha_id)
+    tuned = run_module(tmp_path, "agent", "tune", beta_id, "--persona", "reviewer")
+    export_path = tmp_path / "exports" / "registry.json"
+    exported = run_module(tmp_path, "agent", "export", str(export_path))
+
+    gamma_id = create_agent(tmp_path, "gamma")
+    imported = run_module(tmp_path, "agent", "import", str(export_path))
+    listed = run_module(tmp_path, "agent", "list")
+    alpha_status = run_module(tmp_path, "agent", "status", alpha_id)
+    beta_status = run_module(tmp_path, "agent", "status", beta_id)
+    gamma_status = run_module(tmp_path, "agent", "status", gamma_id)
+
+    assert started.returncode == 0
+    assert tuned.returncode == 0
+    assert exported.returncode == 0
+    assert imported.returncode == 0
+    assert imported.stderr == ""
+    assert parse_fields(imported.stdout.strip()) == {
+        "path": str(export_path),
+        "agents": "2",
+    }
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip().splitlines() == [
+        f"agent_id={alpha_id} name=alpha status=running",
+        f"agent_id={beta_id} name=beta status=stopped",
+    ]
+    assert alpha_status.returncode == 0
+    assert alpha_status.stderr == ""
+    assert (
+        alpha_status.stdout.strip()
+        == f"agent_id={alpha_id} name=alpha status=running persona="
+    )
+    assert beta_status.returncode == 0
+    assert beta_status.stderr == ""
+    assert (
+        beta_status.stdout.strip()
+        == f"agent_id={beta_id} name=beta status=stopped persona=reviewer"
+    )
+    assert gamma_status.returncode == 1
+    assert gamma_status.stdout == ""
+    assert gamma_status.stderr.strip() == f"error: Agent with id {gamma_id!r} not found"
+
+
+def test_agent_import_missing_file_error(tmp_path: Path) -> None:
+    import_path = tmp_path / "missing" / "registry.json"
+
+    result = run_module(tmp_path, "agent", "import", str(import_path))
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == f"error: Import file {str(import_path)!r} not found"
+
+
+def test_agent_import_invalid_file_error(tmp_path: Path) -> None:
+    import_path = tmp_path / "invalid.json"
+    import_path.write_text("{not valid json", encoding="utf-8")
+
+    result = run_module(tmp_path, "agent", "import", str(import_path))
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip().startswith(
+        f"error: Invalid registry JSON in {import_path}:"
+    )
 
 
 def test_agent_status_existing_agent(tmp_path: Path) -> None:
