@@ -9,7 +9,7 @@ import sys
 import uuid
 
 from maia.agent_model import AgentRecord, AgentStatus
-from maia.app_state import get_registry_path
+from maia.app_state import get_default_export_path, get_registry_path
 from maia.storage import JsonRegistryStorage
 
 PLACEHOLDER_TEMPLATE = "Not implemented yet: {}"
@@ -69,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
-        if command_name in {"export", "import"}:
+        if command_name == "export":
+            command_parser.add_argument("path", nargs="?", help="Registry JSON path")
+        if command_name == "import":
             command_parser.add_argument("path", help="Registry JSON path")
         if command_name == "tune":
             persona_group = command_parser.add_mutually_exclusive_group(required=True)
@@ -179,8 +181,9 @@ def _handle_agent_export(
     storage: JsonRegistryStorage,
     registry,
 ) -> int:
-    storage.save(args.path, registry)
-    print(f"exported registry path={args.path} agents={len(registry.list())}")
+    export_path = Path(args.path) if args.path is not None else get_default_export_path()
+    storage.save(export_path, registry)
+    print(f"exported registry path={export_path} agents={len(registry.list())}")
     return 0
 
 

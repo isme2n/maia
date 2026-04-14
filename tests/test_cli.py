@@ -60,6 +60,14 @@ def test_agent_export_placeholder_contract(
     assert captured.out.strip() == "Not implemented yet: agent export"
 
 
+def test_agent_export_placeholder_contract_without_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["agent", "export"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: agent export"
+
+
 def test_agent_import_placeholder_contract(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:

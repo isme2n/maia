@@ -9,6 +9,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 
+sys.path.insert(0, str(SRC_ROOT))
+
+from maia.app_state import (
+    get_default_export_path,
+    get_exports_dir,
+    get_runtime_dir,
+)
+
 
 def run_module(home: Path, *argv: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
@@ -126,6 +134,48 @@ def test_agent_export_writes_registry_file(tmp_path: Path) -> None:
     }
 
 
+def test_agent_export_uses_default_export_path_when_omitted(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+    export_path = get_default_export_path({"HOME": str(tmp_path)})
+
+    result = run_module(tmp_path, "agent", "export")
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert parse_fields(result.stdout.strip()) == {
+        "path": str(export_path),
+        "agents": "1",
+    }
+    assert export_path.exists()
+    assert json.loads(export_path.read_text(encoding="utf-8")) == {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "name": "demo",
+                "status": "stopped",
+                "persona": "",
+            }
+        ]
+    }
+
+
+def test_agent_export_explicit_path_still_works(tmp_path: Path) -> None:
+    create_agent(tmp_path)
+    export_path = tmp_path / "portable" / "snapshot.json"
+    default_export_path = get_default_export_path({"HOME": str(tmp_path)})
+
+    result = run_module(tmp_path, "agent", "export", str(export_path))
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert parse_fields(result.stdout.strip()) == {
+        "path": str(export_path),
+        "agents": "1",
+    }
+    assert export_path.exists()
+    assert not default_export_path.exists()
+
+
 def test_agent_export_creates_parent_dirs(tmp_path: Path) -> None:
     export_path = tmp_path / "nested" / "backup" / "registry.json"
 
@@ -139,6 +189,14 @@ def test_agent_export_creates_parent_dirs(tmp_path: Path) -> None:
     }
     assert export_path.exists()
     assert json.loads(export_path.read_text(encoding="utf-8")) == {"agents": []}
+
+
+def test_exports_dir_helper_path_under_home(tmp_path: Path) -> None:
+    assert get_exports_dir({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "exports"
+
+
+def test_runtime_dir_helper_path_under_home(tmp_path: Path) -> None:
+    assert get_runtime_dir({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "runtime"
 
 
 def test_agent_import_restores_exported_registry(tmp_path: Path) -> None:
