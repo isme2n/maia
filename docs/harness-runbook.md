@@ -31,21 +31,24 @@
 - reviewer 실행: `scripts/codex-review.sh docs/tasks/<slug>.md`
 
 ## 백그라운드 감시 규칙
-- watch pattern은 좁고 명확하게 잡는다.
-- 권장 패턴:
-  - `Traceback`
-  - `FAILED`
-  - `request_changes`
-  - `blocking_issues:`
-  - `AssertionError`
-  - `exited 1`
+- watch pattern은 "실패했을 때만 거의 나타나는 런타임 신호"만 쓴다.
+- worker와 reviewer의 watch는 분리한다.
+- worker watch의 목적:
+  - 구현/검증 중 uncaught stacktrace, pytest 실패, assertion 실패, 프로세스 non-zero 종료를 빨리 감지하는 것
+- reviewer watch의 목적:
+  - reviewer 실행 자체가 깨졌는지(스택트레이스, assertion 실패, non-zero 종료)만 감지하는 것
+- reviewer의 `approve` / `request_changes` / 섹션 이름은 watch로 보지 않는다.
 - 피해야 할 패턴:
-  - `Error`
-  - `ValueError`
-  - 일반 클래스명/타입명
-  - 기능명이나 도메인 용어(예: `AgentRegistry`)
+  - 프롬프트나 문서에 적어둔 예시 단어
+  - 리뷰 verdict 값이나 리뷰 섹션 이름
+  - 일반 예외명/클래스명/도메인 용어
 - 이유:
-  - 코드 diff나 테스트 코드 안의 문자열까지 오탐으로 잡히기 쉽다.
+  - Codex가 AGENTS.md, runbook, 프롬프트를 읽거나 인용하면 그 단어가 그대로 출력되어 오탐이 난다.
+  - 리뷰 verdict/항목명은 watch가 아니라 결과 본문 파싱으로 처리해야 한다.
+- 운영 방식:
+  - worker 패턴 목록은 `scripts/codex-watch-patterns.sh worker`
+  - reviewer 패턴 목록은 `scripts/codex-watch-patterns.sh reviewer`
+  - reviewer 결과 판정은 `python3 scripts/codex-parse-review.py <review-output-file>`
 
 ## 리뷰 기준
 - spec 불일치가 없는가?

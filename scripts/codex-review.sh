@@ -19,12 +19,19 @@ Rules:
 - Do not implement the fix.
 - Focus on requirement mismatch, regression risk, missing validation, and unsafe scope expansion.
 - First inspect the task spec, current git diff, and verification-relevant files.
-- Return a concise review with:
+- Return the final review inside an exact marker block so tooling can parse it.
+- The marker block format must be:
+  REVIEW_RESULT_START
   verdict: approve | request_changes
   blocking_issues:
+  - ...
   non_blocking_suggestions:
+  - ...
   touched_risks:
-  summary:
+  - ...
+  summary: ...
+  REVIEW_RESULT_END
+- Do not omit the markers.
 EOF
 )
 

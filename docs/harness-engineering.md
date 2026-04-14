@@ -61,11 +61,16 @@
 - worker 요약
 
 ## Reviewer 출력 형식
-- verdict: approve | request_changes
-- blocking_issues
-- non_blocking_suggestions
-- touched_risks
-- summary
+- reviewer는 최종 응답에 marker block을 반드시 포함한다.
+- block 형식:
+  - `REVIEW_RESULT_START`
+  - `verdict: approve | request_changes`
+  - `blocking_issues:`
+  - `non_blocking_suggestions:`
+  - `touched_risks:`
+  - `summary:`
+  - `REVIEW_RESULT_END`
+- 승인 여부는 watch 문자열이 아니라 이 block을 파싱해서 판정한다.
 
 ## Fix loop 규칙
 - 최대 3회까지 반복
