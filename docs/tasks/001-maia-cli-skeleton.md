@@ -13,6 +13,7 @@
 
 ## Allowed files
 - `src/maia/__init__.py`
+- `src/maia/__main__.py`
 - `src/maia/cli.py`
 - `src/maia/main.py`
 - `tests/test_cli.py`
@@ -37,13 +38,13 @@
   - top-level help
   - agent help
   - representative subcommand placeholder output
-- [ ] Python 엔트리포인트로 `python -m maia --help`가 동작한다.
+- [ ] `PYTHONPATH=src python3 -m maia --help`가 동작한다.
 
 ## Required validation commands
 - `bash scripts/verify.sh`
 - `python3 -m pytest -q`
-- `python3 -m maia --help`
-- `python3 -m maia agent --help`
+- `PYTHONPATH=src python3 -m maia --help`
+- `PYTHONPATH=src python3 -m maia agent --help`
 
 ## Forbidden changes
 - Docker 관련 코드 추가
