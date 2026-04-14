@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import replace
 import sys
 import uuid
 
@@ -23,7 +24,7 @@ AGENT_COMMANDS = (
     "tune",
     "purge",
 )
-RUNTIME_AGENT_COMMANDS = frozenset({"new", "list", "status"})
+RUNTIME_AGENT_COMMANDS = frozenset({"new", "list", "status", "tune"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("name", help="Agent name")
         if command_name == "status":
             command_parser.add_argument("agent_id", help="Agent id")
+        if command_name == "tune":
+            command_parser.add_argument("agent_id", help="Agent id")
+            command_parser.add_argument(
+                "--persona",
+                required=True,
+                help="Persona text to store for the agent",
+            )
 
     return parser
 
@@ -94,6 +102,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_agent_list(registry)
         if args.agent_command == "status":
             return _handle_agent_status(args, registry)
+        if args.agent_command == "tune":
+            return _handle_agent_tune(args, storage, registry_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -131,6 +141,20 @@ def _handle_agent_list(registry) -> int:
 def _handle_agent_status(args: argparse.Namespace, registry) -> int:
     record = registry.get(args.agent_id)
     print(f"{_format_record(record)} persona={record.persona}")
+    return 0
+
+
+def _handle_agent_tune(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    record = registry.get(args.agent_id)
+    updated = replace(record, persona=args.persona)
+    registry._records[args.agent_id] = updated
+    storage.save(registry_path, registry)
+    print(f"updated agent_id={updated.agent_id} persona={updated.persona}")
     return 0
 
 

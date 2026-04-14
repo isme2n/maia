@@ -107,3 +107,75 @@ def test_agent_status_missing_agent_error(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr.strip() == "error: Agent with id 'missing' not found"
+
+
+def test_agent_tune_updates_persona_for_existing_agent(tmp_path: Path) -> None:
+    created = run_module(tmp_path, "agent", "new", "demo")
+    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+
+    result = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "analyst")
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.strip() == f"updated agent_id={agent_id} persona=analyst"
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert (
+        status.stdout.strip()
+        == f"agent_id={agent_id} name=demo status=stopped persona=analyst"
+    )
+
+
+def test_agent_tune_preserves_name_and_status(tmp_path: Path) -> None:
+    created = run_module(tmp_path, "agent", "new", "demo")
+    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+
+    tuned = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "operator")
+
+    assert tuned.returncode == 0
+
+    registry_path = tmp_path / ".maia" / "registry.json"
+    assert json.loads(registry_path.read_text(encoding="utf-8")) == {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "name": "demo",
+                "status": "stopped",
+                "persona": "operator",
+            }
+        ]
+    }
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
+
+
+def test_agent_tune_missing_agent_error(tmp_path: Path) -> None:
+    result = run_module(tmp_path, "agent", "tune", "missing", "--persona", "analyst")
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
+
+
+def test_agent_tune_empty_persona_clears_value(tmp_path: Path) -> None:
+    created = run_module(tmp_path, "agent", "new", "demo")
+    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+
+    first_tune = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "analyst")
+    second_tune = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "")
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert first_tune.returncode == 0
+    assert second_tune.returncode == 0
+    assert second_tune.stderr == ""
+    assert second_tune.stdout.strip() == f"updated agent_id={agent_id} persona="
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert (
+        status.stdout.strip()
+        == f"agent_id={agent_id} name=demo status=stopped persona="
+    )
