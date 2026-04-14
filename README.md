@@ -10,3 +10,4 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 ## Registry persistence
 - `JsonRegistryStorage` saves the agent registry as a single JSON object with an `agents` array.
 - Missing registry files load as an empty `AgentRegistry`.
+- Runtime CLI commands `python -m maia agent new|list|status` use the default registry path `~/.maia/registry.json`.
