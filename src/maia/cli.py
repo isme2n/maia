@@ -30,9 +30,11 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "archive": AgentStatus.ARCHIVED,
     "restore": AgentStatus.STOPPED,
 }
-AGENT_ID_COMMANDS = frozenset({"status", "tune", *LIFECYCLE_STATUS_BY_COMMAND})
+AGENT_ID_COMMANDS = frozenset(
+    {"status", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND}
+)
 RUNTIME_AGENT_COMMANDS = frozenset(
-    {"new", "list", "status", "tune", *LIFECYCLE_STATUS_BY_COMMAND}
+    {"new", "list", "status", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND}
 )
 
 
@@ -112,6 +114,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_agent_status(args, registry)
         if args.agent_command == "tune":
             return _handle_agent_tune(args, storage, registry_path, registry)
+        if args.agent_command == "purge":
+            return _handle_agent_purge(args, storage, registry_path, registry)
         if args.agent_command in LIFECYCLE_STATUS_BY_COMMAND:
             return _handle_agent_lifecycle(args, storage, registry_path, registry)
     except (LookupError, ValueError) as exc:
@@ -179,6 +183,26 @@ def _handle_agent_lifecycle(
     )
     storage.save(registry_path, registry)
     print(f"updated agent_id={updated.agent_id} status={updated.status.value}")
+    return 0
+
+
+def _handle_agent_purge(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    record = registry.get(args.agent_id)
+    if record.status is not AgentStatus.ARCHIVED:
+        raise ValueError(
+            f"Agent with id {args.agent_id!r} is not archived "
+            f"(status={record.status.value})"
+        )
+
+    del registry._records[args.agent_id]
+    registry._order.remove(args.agent_id)
+    storage.save(registry_path, registry)
+    print(f"purged agent_id={args.agent_id}")
     return 0
 
 

@@ -239,6 +239,95 @@ def test_agent_archive_sets_archived(tmp_path: Path) -> None:
     )
 
 
+def test_agent_purge_archived_agent_succeeds(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+
+    archived = run_module(tmp_path, "agent", "archive", agent_id)
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    listed = run_module(tmp_path, "agent", "list")
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert archived.returncode == 0
+    assert purged.returncode == 0
+    assert purged.stderr == ""
+    assert purged.stdout.strip() == f"purged agent_id={agent_id}"
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip() == ""
+    assert status.returncode == 1
+    assert status.stdout == ""
+    assert status.stderr.strip() == f"error: Agent with id {agent_id!r} not found"
+
+    registry_path = tmp_path / ".maia" / "registry.json"
+    assert json.loads(registry_path.read_text(encoding="utf-8")) == {"agents": []}
+
+
+def test_agent_purge_running_agent_rejected(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert started.returncode == 0
+    assert purged.returncode == 1
+    assert purged.stdout == ""
+    assert (
+        purged.stderr.strip()
+        == f"error: Agent with id {agent_id!r} is not archived (status=running)"
+    )
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert (
+        status.stdout.strip()
+        == f"agent_id={agent_id} name=demo status=running persona="
+    )
+
+
+def test_agent_purge_stopped_agent_rejected(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path)
+
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    listed = run_module(tmp_path, "agent", "list")
+
+    assert purged.returncode == 1
+    assert purged.stdout == ""
+    assert (
+        purged.stderr.strip()
+        == f"error: Agent with id {agent_id!r} is not archived (status=stopped)"
+    )
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
+
+
+def test_agent_purge_missing_agent_error(tmp_path: Path) -> None:
+    result = run_module(tmp_path, "agent", "purge", "missing")
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
+
+
+def test_agent_purge_preserves_remaining_list_order(tmp_path: Path) -> None:
+    alpha_id = create_agent(tmp_path, "alpha")
+    beta_id = create_agent(tmp_path, "beta")
+    gamma_id = create_agent(tmp_path, "gamma")
+
+    archived = run_module(tmp_path, "agent", "archive", beta_id)
+    purged = run_module(tmp_path, "agent", "purge", beta_id)
+    listed = run_module(tmp_path, "agent", "list")
+
+    assert archived.returncode == 0
+    assert purged.returncode == 0
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip().splitlines() == [
+        f"agent_id={alpha_id} name=alpha status=stopped",
+        f"agent_id={gamma_id} name=gamma status=stopped",
+    ]
+
+
 def test_agent_restore_sets_stopped_after_archive(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path)
 

@@ -42,6 +42,12 @@ def test_agent_new_placeholder(capsys: pytest.CaptureFixture[str]) -> None:
     assert captured.out.strip() == "Not implemented yet: agent new"
 
 
+def test_agent_purge_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["agent", "purge", "demo1234"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: agent purge"
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
