@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from maia.agent_model import AgentRecord, AgentStatus
+from maia.agent_model import AgentRecord, AgentStatus, RuntimeSpec
 
 __all__ = ["AgentRegistry"]
 
@@ -68,6 +68,18 @@ class AgentRegistry:
             model=record.model if model is None else model,
             tags=list(record.tags) if tags is None else list(tags),
         )
+        self._records[agent_id] = updated
+        return _clone_record(updated)
+
+    def set_runtime_spec(
+        self,
+        agent_id: str,
+        runtime_spec: RuntimeSpec | None,
+    ) -> AgentRecord:
+        """Replace the runtime spec for an existing record and return the new value."""
+
+        record = self._require(agent_id)
+        updated = replace(record, runtime_spec=runtime_spec)
         self._records[agent_id] = updated
         return _clone_record(updated)
 

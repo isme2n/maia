@@ -212,6 +212,32 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Clear all stored agent tags",
             )
+            runtime_group = command_parser.add_mutually_exclusive_group()
+            runtime_group.add_argument(
+                "--clear-runtime",
+                action="store_true",
+                help="Clear the stored runtime spec",
+            )
+            command_parser.add_argument(
+                "--runtime-image",
+                help="Set the runtime image for the agent",
+            )
+            command_parser.add_argument(
+                "--runtime-workspace",
+                help="Set the runtime workspace path for the agent",
+            )
+            command_parser.add_argument(
+                "--runtime-command",
+                action="append",
+                default=None,
+                help="Append one runtime command argv item; repeat for multiple items (use --runtime-command=-m for dash-prefixed args)",
+            )
+            command_parser.add_argument(
+                "--runtime-env",
+                action="append",
+                default=None,
+                help="Append one runtime env entry as KEY=VALUE; repeat for multiple entries",
+            )
 
     team_parser = top_level.add_parser("team", help="Manage team metadata")
     team_parser.set_defaults(parser=team_parser)

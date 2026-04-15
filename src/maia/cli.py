@@ -13,6 +13,7 @@ import sys
 import uuid
 
 from maia.agent_model import AgentRecord, AgentStatus
+from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
     get_collaboration_path,
     get_default_export_path,
@@ -1085,6 +1086,8 @@ def _handle_agent_tune(
     }
     if profile_updates:
         updated = registry.set_profile_metadata(args.agent_id, **profile_updates)
+    if "runtime_spec" in updates:
+        updated = registry.set_runtime_spec(args.agent_id, updates["runtime_spec"])
     storage.save(registry_path, registry)
     print(_format_agent_tune_result(updated, updates))
     return 0
@@ -1163,6 +1166,17 @@ def _format_agent_tune_result(record: AgentRecord, updates: dict[str, object]) -
         parts.append(f"model={_format_preview_value(record.model)}")
     if "tags" in updates:
         parts.append(f"tags={_format_encoded_list_or_dash(record.tags)}")
+    if "runtime_spec" in updates:
+        if record.runtime_spec is None:
+            parts.append("runtime=cleared")
+        else:
+            parts.append(f"runtime_image={_format_preview_value(record.runtime_spec.image)}")
+            parts.append(f"runtime_workspace={_format_preview_value(record.runtime_spec.workspace)}")
+            parts.append(
+                f"runtime_command={_format_encoded_list_or_dash(record.runtime_spec.command)}"
+            )
+            runtime_env_keys = sorted(record.runtime_spec.env)
+            parts.append(f"runtime_env={_format_encoded_list_or_dash(runtime_env_keys)}")
     return " ".join(parts)
 
 
@@ -1182,9 +1196,73 @@ def _resolve_agent_tune_updates(args: argparse.Namespace) -> dict[str, object]:
         updates["tags"] = []
     elif args.tags is not None:
         updates["tags"] = _parse_tag_list(args.tags, field_name="Agent tags")
+    if args.clear_runtime:
+        if any(
+            value is not None
+            for value in (
+                args.runtime_image,
+                args.runtime_workspace,
+                args.runtime_command,
+                args.runtime_env,
+            )
+        ):
+            raise ValueError("Agent tune runtime clear cannot be combined with runtime set flags")
+        updates["runtime_spec"] = None
+    elif any(
+        value is not None
+        for value in (
+            args.runtime_image,
+            args.runtime_workspace,
+            args.runtime_command,
+            args.runtime_env,
+        )
+    ):
+        updates["runtime_spec"] = _resolve_runtime_spec(args)
     if not updates:
         raise ValueError("Agent tune requires at least one change flag")
     return updates
+
+
+def _resolve_runtime_spec(args: argparse.Namespace) -> RuntimeSpec:
+    if args.runtime_image is None:
+        raise ValueError("Agent runtime spec requires --runtime-image")
+    if args.runtime_workspace is None:
+        raise ValueError("Agent runtime spec requires --runtime-workspace")
+    if args.runtime_command is None:
+        raise ValueError("Agent runtime spec requires at least one --runtime-command")
+    if args.runtime_env is None:
+        raise ValueError("Agent runtime spec requires at least one --runtime-env")
+    image = _normalize_optional_cli_text(args.runtime_image, field_name="runtime image")
+    workspace = _normalize_optional_cli_text(
+        args.runtime_workspace,
+        field_name="runtime workspace",
+    )
+    command = [
+        _normalize_optional_cli_text(part, field_name="runtime command item")
+        for part in args.runtime_command
+    ]
+    env = _parse_runtime_env(args.runtime_env)
+    return RuntimeSpec(
+        image=image,
+        workspace=workspace,
+        command=command,
+        env=env,
+    )
+
+
+def _parse_runtime_env(items: list[str]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError("Agent runtime env entries must use KEY=VALUE format")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("Agent runtime env entries must use non-empty KEY=VALUE format")
+        if key in env:
+            raise ValueError(f"Duplicate agent runtime env key: {key!r}")
+        env[key] = value
+    return env
 
 
 def _resolve_persona(args: argparse.Namespace) -> str:

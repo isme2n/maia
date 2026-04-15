@@ -350,6 +350,151 @@ def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: 
     }
 
 
+def test_agent_tune_runtime_spec_persists_and_can_clear(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=review",
+    )
+    assert tuned.returncode == 0
+    assert tuned.stderr == ""
+    assert parse_fields(tuned.stdout.strip()) == {
+        "agent_id": agent_id,
+        "runtime_image": "ghcr.io/example/reviewer:latest",
+        "runtime_workspace": "/workspace/reviewer",
+        "runtime_command": "python,-m,reviewer",
+        "runtime_env": "MAIA_ENV,MAIA_ROLE",
+    }
+
+    registry = load_registry(tmp_path)
+    assert registry["agents"][0]["runtime_spec"] == {
+        "image": "ghcr.io/example/reviewer:latest",
+        "workspace": "/workspace/reviewer",
+        "command": ["python", "-m", "reviewer"],
+        "env": {"MAIA_ENV": "test", "MAIA_ROLE": "review"},
+    }
+
+    cleared = run_module(tmp_path, "agent", "tune", agent_id, "--clear-runtime")
+    assert cleared.returncode == 0
+    assert cleared.stderr == ""
+    assert parse_fields(cleared.stdout.strip()) == {
+        "agent_id": agent_id,
+        "runtime": "cleared",
+    }
+    assert "runtime_spec" not in load_registry(tmp_path)["agents"][0]
+
+
+def test_agent_tune_runtime_spec_validation_errors(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+
+    missing_workspace = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+    )
+    assert missing_workspace.returncode == 1
+    assert missing_workspace.stderr.strip() == "error: Agent runtime spec requires --runtime-workspace"
+
+    missing_command = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert missing_command.returncode == 1
+    assert missing_command.stderr.strip() == "error: Agent runtime spec requires at least one --runtime-command"
+
+    missing_env = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+    )
+    assert missing_env.returncode == 1
+    assert missing_env.stderr.strip() == "error: Agent runtime spec requires at least one --runtime-env"
+
+    bad_env = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "BROKEN",
+    )
+    assert bad_env.returncode == 1
+    assert bad_env.stderr.strip() == "error: Agent runtime env entries must use KEY=VALUE format"
+
+    duplicate_env = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ENV=prod",
+    )
+    assert duplicate_env.returncode == 1
+    assert duplicate_env.stderr.strip() == "error: Duplicate agent runtime env key: 'MAIA_ENV'"
+
+    clear_plus_set = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--clear-runtime",
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+    )
+    assert clear_plus_set.returncode == 1
+    assert clear_plus_set.stderr.strip() == (
+        "error: Agent tune runtime clear cannot be combined with runtime set flags"
+    )
+
+
 
 def test_agent_lifecycle_and_purge(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")

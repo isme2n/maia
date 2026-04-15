@@ -182,6 +182,11 @@ def test_agent_tune_help_includes_profile_flags(capsys: pytest.CaptureFixture[st
     assert "--clear-role" in captured.out
     assert "--clear-model" in captured.out
     assert "--clear-tags" in captured.out
+    assert "--runtime-image" in captured.out
+    assert "--runtime-workspace" in captured.out
+    assert "--runtime-command" in captured.out
+    assert "--runtime-env" in captured.out
+    assert "--clear-runtime" in captured.out
 
 
 def test_agent_tune_parser_rejects_both_persona_sources(
@@ -219,6 +224,34 @@ def test_agent_tune_parser_rejects_conflicting_role_flags(
     captured = capsys.readouterr()
     assert "--clear-role" in captured.err
     assert "not allowed" in captured.err
+
+
+def test_build_parser_runtime_tune_shape() -> None:
+    args = build_parser().parse_args(
+        [
+            "agent",
+            "tune",
+            "demo1234",
+            "--runtime-image",
+            "ghcr.io/example/reviewer:latest",
+            "--runtime-workspace",
+            "/workspace/reviewer",
+            "--runtime-command",
+            "python",
+            "--runtime-command=-m",
+            "--runtime-command",
+            "reviewer",
+            "--runtime-env",
+            "MAIA_ENV=test",
+        ]
+    )
+
+    assert args.agent_command == "tune"
+    assert args.runtime_image == "ghcr.io/example/reviewer:latest"
+    assert args.runtime_workspace == "/workspace/reviewer"
+    assert args.runtime_command == ["python", "-m", "reviewer"]
+    assert args.runtime_env == ["MAIA_ENV=test"]
+    assert args.clear_runtime is False
 
 
 @pytest.mark.parametrize(
