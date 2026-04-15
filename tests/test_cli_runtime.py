@@ -1029,6 +1029,7 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
     assert inbox_message["body"] == "please␠review␠phase␠3"
     assert inbox_message["reply_to_message_id"] == "-"
 
+    thread_created_at = load_collaboration(tmp_path)["threads"][0]["created_at"]
     thread = run_module(tmp_path, "thread", thread_id)
     assert thread.returncode == 0
     thread_lines = thread.stdout.strip().splitlines()
@@ -1036,9 +1037,14 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
         "thread_id": thread_id,
         "topic": "phase␠3␠review",
         "participants": f"{planner_id},{reviewer_id}",
+        "participant_runtime": f"{planner_id}:stopped,{reviewer_id}:stopped",
         "created_by": planner_id,
         "status": "open",
+        "updated_at": thread_created_at,
+        "pending_on": reviewer_id,
+        "artifacts": "0",
         "messages": "1",
+        "created_at": thread_created_at,
     }
     thread_message = parse_fields(thread_lines[1])
     assert thread_message["message_id"] == first_message_id

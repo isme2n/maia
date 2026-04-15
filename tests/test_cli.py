@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -12,7 +13,7 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
-from maia.app_state import get_collaboration_path
+from maia.app_state import get_collaboration_path, get_runtime_state_path
 from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
 from maia import cli as cli_module
@@ -86,6 +87,11 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
+    assert "Phase 7 operator flow:" in captured.out
+    assert "maia agent start <agent_id>" in captured.out
+    assert "maia send <from_agent_id> <to_agent_id>" in captured.out
+    assert "maia thread show <thread_id>" in captured.out
+    assert "maia agent status <agent_id>" in captured.out
 
 
 def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -156,6 +162,19 @@ def test_build_parser_thread_show_shape() -> None:
     assert args.thread_command == "show"
     assert args.thread_id == "thread1234"
     assert args.limit == 10
+
+
+def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["thread", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: maia thread" in captured.out
+    assert "participant runtime summaries" in captured.out
+    assert "Examples:" in captured.out
+    assert "maia thread list --status open" in captured.out
+    assert "maia thread show 7f2c1a9b" in captured.out
 
 
 def test_build_parser_artifact_add_shape() -> None:
@@ -889,6 +908,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
     monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
     CollaborationStorage().save(
         collaboration_path,
         threads=[
@@ -909,6 +929,15 @@ def test_thread_list_and_show_surface_control_plane_summary(
                 status="closed",
                 created_at="2026-04-15T10:30:00Z",
                 updated_at="2026-04-15T11:00:00Z",
+            ),
+            ThreadRecord(
+                thread_id="thread-003",
+                topic="colon identity",
+                participants=["agent:1"],
+                created_by="agent:1",
+                status="open",
+                created_at="2026-04-15T09:00:00Z",
+                updated_at="2026-04-15T09:00:00Z",
             ),
         ],
         messages=[
@@ -954,21 +983,49 @@ def test_thread_list_and_show_surface_control_plane_summary(
             )
         ],
     )
+    runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_state_path.write_text(
+        json.dumps(
+            {
+                "runtimes": [
+                    {
+                        "agent_id": "planner",
+                        "runtime_status": "running",
+                        "runtime_handle": "runtime-001",
+                    },
+                    {
+                        "agent_id": "analyst",
+                        "runtime_status": "failed",
+                        "runtime_handle": "runtime-009",
+                    },
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     assert main(["thread", "list"]) == 0
     list_lines = capsys.readouterr().out.strip().splitlines()
-    assert len(list_lines) == 2
+    assert len(list_lines) == 3
     open_fields = _parse_fields(list_lines[0])
     assert open_fields["thread_id"] == "thread-001"
     assert open_fields["topic"] == "phase␠6␠review"
     assert open_fields["participants"] == "planner,reviewer"
+    assert open_fields["participant_runtime"] == "planner:running,reviewer:stopped"
     assert open_fields["status"] == "open"
     assert open_fields["updated_at"] == "2026-04-15T12:02:00Z"
     assert open_fields["pending_on"] == "planner"
-    assert open_fields["handoffs"] == "1"
+    assert open_fields["artifacts"] == "1"
     assert open_fields["messages"] == "2"
     closed_fields = _parse_fields(list_lines[1])
     assert closed_fields["thread_id"] == "thread-002"
+    assert closed_fields["participant_runtime"] == "planner:running,analyst:failed"
+    colon_fields = _parse_fields(list_lines[2])
+    assert colon_fields["thread_id"] == "thread-003"
+    assert colon_fields["participant_runtime"] == "agent%3A1:stopped"
+    assert colon_fields["pending_on"] == "-"
 
     assert main(["thread", "list", "--agent", "reviewer"]) == 0
     reviewer_lines = capsys.readouterr().out.strip().splitlines()
@@ -985,8 +1042,9 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert len(show_lines) == 3
     show_fields = _parse_fields(show_lines[0])
     assert show_fields["thread_id"] == "thread-001"
+    assert show_fields["participant_runtime"] == "planner:running,reviewer:stopped"
     assert show_fields["pending_on"] == "planner"
-    assert show_fields["handoffs"] == "1"
+    assert show_fields["artifacts"] == "1"
     assert show_fields["messages"] == "2"
     assert show_fields["created_by"] == "planner"
     assert show_fields["created_at"] == "2026-04-15T12:00:00Z"
@@ -999,6 +1057,42 @@ def test_thread_list_and_show_surface_control_plane_summary(
     legacy_lines = capsys.readouterr().out.strip().splitlines()
     assert len(legacy_lines) == 2
     assert _parse_fields(legacy_lines[0])["thread_id"] == "thread-001"
+
+
+def test_thread_visibility_falls_back_when_runtime_state_json_is_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
+    CollaborationStorage().save(
+        collaboration_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-invalid-runtime",
+                topic="runtime fallback",
+                participants=["planner"],
+                created_by="planner",
+                status="open",
+                created_at="2026-04-15T08:00:00Z",
+                updated_at="2026-04-15T08:00:00Z",
+            )
+        ],
+        messages=[],
+        handoffs=[],
+    )
+    runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_state_path.write_text("{bad json\n", encoding="utf-8")
+
+    assert main(["thread", "list"]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip())
+    assert fields["thread_id"] == "thread-invalid-runtime"
+    assert fields["participant_runtime"] == "planner:stopped"
+    assert fields["pending_on"] == "-"
 
 
 @pytest.mark.parametrize(

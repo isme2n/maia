@@ -13,7 +13,7 @@ import socket
 import subprocess
 import sys
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.runtime_spec import RuntimeSpec
@@ -594,6 +594,7 @@ def _handle_thread(args, collaboration) -> int:
 def _handle_thread_list(args, collaboration) -> int:
     messages_by_thread = _group_messages_by_thread(collaboration.messages)
     handoffs_by_thread = _group_handoffs_by_thread(collaboration.handoffs)
+    runtime_states = _load_thread_runtime_states()
     threads = sorted(
         collaboration.threads,
         key=lambda thread: (thread.updated_at, thread.thread_id),
@@ -608,6 +609,7 @@ def _handle_thread_list(args, collaboration) -> int:
             thread,
             messages_by_thread.get(thread.thread_id, []),
             handoffs_by_thread.get(thread.thread_id, []),
+            runtime_states,
         )
         print(f"thread {overview}")
     return 0
@@ -622,8 +624,9 @@ def _handle_thread_show(args, collaboration) -> int:
     thread_handoffs = [
         handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
     ]
+    runtime_states = _load_thread_runtime_states()
     print(
-        f"thread {_format_thread_overview_fields(thread, thread_messages, thread_handoffs)} "
+        f"thread {_format_thread_overview_fields(thread, thread_messages, thread_handoffs, runtime_states)} "
         f"created_by={thread.created_by} created_at={thread.created_at}"
     )
     for message in thread_messages[:limit]:
@@ -794,18 +797,49 @@ def _derive_thread_pending_on(thread_messages: Sequence[MessageRecord]) -> str:
     return max(thread_messages, key=_message_sort_key).to_agent
 
 
+def _resolve_thread_participant_runtime_status(
+    agent_id: str,
+    runtime_states: dict[str, RuntimeState],
+) -> str:
+    runtime_state = runtime_states.get(agent_id)
+    if runtime_state is None:
+        return RuntimeStatus.STOPPED.value
+    return runtime_state.runtime_status.value
+
+
+def _load_thread_runtime_states() -> dict[str, RuntimeState]:
+    try:
+        return RuntimeStateStorage().load(get_runtime_state_path())
+    except ValueError:
+        return {}
+
+
+def _format_thread_participant_runtime(
+    participants: Sequence[str],
+    runtime_states: dict[str, RuntimeState],
+) -> str:
+    return _format_encoded_list_or_dash(
+        [
+            f"{quote(participant, safe='')}:{_resolve_thread_participant_runtime_status(participant, runtime_states)}"
+            for participant in participants
+        ]
+    )
+
+
 def _format_thread_overview_fields(
     thread: ThreadRecord,
     thread_messages: Sequence[MessageRecord],
     thread_handoffs: Sequence[HandoffRecord],
+    runtime_states: dict[str, RuntimeState],
 ) -> str:
     return (
         f"thread_id={thread.thread_id} "
         f"topic={_format_preview_value(thread.topic)} "
         f"participants={_format_encoded_list_or_dash(thread.participants)} "
+        f"participant_runtime={_format_thread_participant_runtime(thread.participants, runtime_states)} "
         f"status={thread.status} updated_at={thread.updated_at} "
         f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
-        f"handoffs={len(thread_handoffs)} messages={len(thread_messages)}"
+        f"artifacts={len(thread_handoffs)} messages={len(thread_messages)}"
     )
 
 

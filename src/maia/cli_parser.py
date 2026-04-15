@@ -41,6 +41,17 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.set_defaults(parser=parser)
+    parser.epilog = (
+        "Phase 7 operator flow:\n"
+        "  maia agent start <agent_id>\n"
+        "  maia send <from_agent_id> <to_agent_id> --body 'ready for review' --topic 'phase 7 review'\n"
+        "  maia reply <message_id> --from-agent <agent_id> --body 'review complete'\n"
+        "  maia artifact add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> "
+        "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
+        "  maia thread list --status open\n"
+        "  maia thread show <thread_id>\n"
+        "  maia agent status <agent_id>"
+    )
 
     top_level = parser.add_subparsers(dest="resource")
 
@@ -136,7 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
             "thread": "Inspect collaboration threads",
             "reply": "Reply to an existing message",
         }[command_name]
-        command_parser = top_level.add_parser(command_name, help=help_text)
+        parser_kwargs: dict[str, object] = {"help": help_text}
+        if command_name == "thread":
+            parser_kwargs["description"] = "Inspect collaboration threads with participant runtime summaries."
+            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
+        command_parser = top_level.add_parser(command_name, **parser_kwargs)
         command_parser.set_defaults(parser=command_parser)
         if command_name == "send":
             command_parser.add_argument("from_agent", help="Sender agent id")
@@ -155,6 +170,12 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("agent_id", help="Agent id")
             command_parser.add_argument("--limit", type=int, default=20, help="Max messages to show")
         if command_name == "thread":
+            command_parser.epilog = (
+                "Examples:\n"
+                "  maia thread list --status open\n"
+                "  maia thread list --agent reviewer1234\n"
+                "  maia thread show 7f2c1a9b"
+            )
             thread_commands = command_parser.add_subparsers(
                 dest="thread_command",
                 metavar="{" + ",".join(THREAD_COMMANDS) + "}",
