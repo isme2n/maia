@@ -49,11 +49,20 @@ from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metad
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(_normalize_legacy_thread_argv(argv_list))
     if _get_runtime_command_name(args) is None:
         args.parser.print_help()
         return 0
     return _handle_runtime_command(args)
+
+
+def _normalize_legacy_thread_argv(argv: list[str]) -> list[str]:
+    if len(argv) < 2 or argv[0] != "thread":
+        return argv
+    if argv[1] in {"list", "show", "-h", "--help"} or argv[1].startswith("-"):
+        return argv
+    return ["thread", "show", *argv[1:]]
 
 
 def _handle_runtime_command(args: argparse.Namespace) -> int:
@@ -575,17 +584,49 @@ def _handle_inbox(
 
 
 def _handle_thread(args, collaboration) -> int:
+    if args.thread_command == "list":
+        return _handle_thread_list(args, collaboration)
+    if args.thread_command == "show":
+        return _handle_thread_show(args, collaboration)
+    raise ValueError(f"Unsupported thread command: {args.thread_command!r}")
+
+
+def _handle_thread_list(args, collaboration) -> int:
+    messages_by_thread = _group_messages_by_thread(collaboration.messages)
+    handoffs_by_thread = _group_handoffs_by_thread(collaboration.handoffs)
+    threads = sorted(
+        collaboration.threads,
+        key=lambda thread: (thread.updated_at, thread.thread_id),
+        reverse=True,
+    )
+    if args.agent is not None:
+        threads = [thread for thread in threads if args.agent in thread.participants]
+    if args.status is not None:
+        threads = [thread for thread in threads if thread.status == args.status]
+    for thread in threads:
+        overview = _format_thread_overview_fields(
+            thread,
+            messages_by_thread.get(thread.thread_id, []),
+            handoffs_by_thread.get(thread.thread_id, []),
+        )
+        print(f"thread {overview}")
+    return 0
+
+
+def _handle_thread_show(args, collaboration) -> int:
     limit = _validate_positive_limit(args.limit, field_name="Thread limit")
     thread = _require_thread(collaboration, args.thread_id)
-    thread_messages = [
+    thread_messages = _sorted_thread_messages(
         message for message in collaboration.messages if message.thread_id == thread.thread_id
-    ][:limit]
-    print(
-        f"thread thread_id={thread.thread_id} topic={_format_preview_value(thread.topic)} "
-        f"participants={_format_encoded_list_or_dash(thread.participants)} "
-        f"created_by={thread.created_by} status={thread.status} messages={len(thread_messages)}"
     )
-    for message in thread_messages:
+    thread_handoffs = [
+        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
+    ]
+    print(
+        f"thread {_format_thread_overview_fields(thread, thread_messages, thread_handoffs)} "
+        f"created_by={thread.created_by} created_at={thread.created_at}"
+    )
+    for message in thread_messages[:limit]:
         print(_format_message_line(message))
     return 0
 
@@ -723,6 +764,49 @@ def _validate_positive_limit(value: int, *, field_name: str) -> int:
     if value < 1:
         raise ValueError(f"{field_name} must be >= 1")
     return value
+
+
+def _message_sort_key(message: MessageRecord) -> tuple[str, str]:
+    return (message.created_at, message.message_id)
+
+
+def _sorted_thread_messages(messages: Sequence[MessageRecord]) -> list[MessageRecord]:
+    return sorted(messages, key=_message_sort_key)
+
+
+def _group_messages_by_thread(messages: Sequence[MessageRecord]) -> dict[str, list[MessageRecord]]:
+    grouped: dict[str, list[MessageRecord]] = {}
+    for message in messages:
+        grouped.setdefault(message.thread_id, []).append(message)
+    return grouped
+
+
+def _group_handoffs_by_thread(handoffs: Sequence[HandoffRecord]) -> dict[str, list[HandoffRecord]]:
+    grouped: dict[str, list[HandoffRecord]] = {}
+    for handoff in handoffs:
+        grouped.setdefault(handoff.thread_id, []).append(handoff)
+    return grouped
+
+
+def _derive_thread_pending_on(thread_messages: Sequence[MessageRecord]) -> str:
+    if not thread_messages:
+        return "-"
+    return max(thread_messages, key=_message_sort_key).to_agent
+
+
+def _format_thread_overview_fields(
+    thread: ThreadRecord,
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> str:
+    return (
+        f"thread_id={thread.thread_id} "
+        f"topic={_format_preview_value(thread.topic)} "
+        f"participants={_format_encoded_list_or_dash(thread.participants)} "
+        f"status={thread.status} updated_at={thread.updated_at} "
+        f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
+        f"handoffs={len(thread_handoffs)} messages={len(thread_messages)}"
+    )
 
 
 def _require_thread(collaboration, thread_id: str) -> ThreadRecord:
@@ -1532,6 +1616,8 @@ def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
         return getattr(args, "artifact_command", None)
     if resource == "team":
         return getattr(args, "team_command", None)
+    if resource == "thread":
+        return resource if getattr(args, "thread_command", None) is not None else None
     return resource
 
 

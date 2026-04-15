@@ -10,6 +10,7 @@ from maia.handoff_model import HandoffKind
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor",)
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
+THREAD_COMMANDS = ("list", "show")
 ARTIFACT_COMMANDS = ("add", "list", "show")
 AGENT_COMMANDS = (
     "new",
@@ -132,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
         help_text = {
             "send": "Send a collaboration message",
             "inbox": "Show an agent inbox",
-            "thread": "Show a collaboration thread",
+            "thread": "Inspect collaboration threads",
             "reply": "Reply to an existing message",
         }[command_name]
         command_parser = top_level.add_parser(command_name, help=help_text)
@@ -154,8 +155,25 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("agent_id", help="Agent id")
             command_parser.add_argument("--limit", type=int, default=20, help="Max messages to show")
         if command_name == "thread":
-            command_parser.add_argument("thread_id", help="Thread id")
-            command_parser.add_argument("--limit", type=int, default=50, help="Max messages to show")
+            thread_commands = command_parser.add_subparsers(
+                dest="thread_command",
+                metavar="{" + ",".join(THREAD_COMMANDS) + "}",
+            )
+            list_parser = thread_commands.add_parser("list", help="List collaboration threads")
+            list_parser.set_defaults(parser=list_parser)
+            list_parser.add_argument(
+                "--agent",
+                help="Only show threads that include the given participant agent id",
+            )
+            list_parser.add_argument(
+                "--status",
+                choices=("open", "closed"),
+                help="Only show threads with the given status",
+            )
+            show_parser = thread_commands.add_parser("show", help="Show a collaboration thread")
+            show_parser.set_defaults(parser=show_parser)
+            show_parser.add_argument("thread_id", help="Thread id")
+            show_parser.add_argument("--limit", type=int, default=50, help="Max messages to show")
         if command_name == "reply":
             command_parser.add_argument("message_id", help="Message id to reply to")
             command_parser.add_argument("--from-agent", required=True, help="Reply sender agent id")

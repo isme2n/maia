@@ -18,12 +18,13 @@ from maia.cli import main
 from maia import cli as cli_module
 from maia.cli_parser import build_parser
 from maia.collaboration_storage import CollaborationStorage
-from maia.message_model import MessageKind, MessageRecord
+from maia.handoff_model import HandoffKind, HandoffRecord
+from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 
 
 def _parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id"}:
+    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id", "thread"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -137,6 +138,24 @@ def test_build_parser_reply_shape() -> None:
     assert args.from_agent == "reviewer"
     assert args.body == "done"
     assert args.kind == "answer"
+
+
+def test_build_parser_thread_list_shape() -> None:
+    args = build_parser().parse_args(["thread", "list", "--agent", "reviewer", "--status", "open"])
+
+    assert args.resource == "thread"
+    assert args.thread_command == "list"
+    assert args.agent == "reviewer"
+    assert args.status == "open"
+
+
+def test_build_parser_thread_show_shape() -> None:
+    args = build_parser().parse_args(["thread", "show", "thread1234", "--limit", "10"])
+
+    assert args.resource == "thread"
+    assert args.thread_command == "show"
+    assert args.thread_id == "thread1234"
+    assert args.limit == 10
 
 
 def test_build_parser_artifact_add_shape() -> None:
@@ -859,6 +878,127 @@ def test_artifact_list_rejects_unknown_thread_filter(
     assert main(["artifact", "list", "--thread-id", "missing-thread"]) == 1
     captured = capsys.readouterr()
     assert "Thread with id 'missing-thread' not found" in captured.err
+
+
+def test_thread_list_and_show_surface_control_plane_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    CollaborationStorage().save(
+        collaboration_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-001",
+                topic="phase 6 review",
+                participants=["planner", "reviewer"],
+                created_by="planner",
+                status="open",
+                created_at="2026-04-15T12:00:00Z",
+                updated_at="2026-04-15T12:02:00Z",
+            ),
+            ThreadRecord(
+                thread_id="thread-002",
+                topic="retro wrap-up",
+                participants=["planner", "analyst"],
+                created_by="planner",
+                status="closed",
+                created_at="2026-04-15T10:30:00Z",
+                updated_at="2026-04-15T11:00:00Z",
+            ),
+        ],
+        messages=[
+            MessageRecord(
+                message_id="msg-002",
+                thread_id="thread-001",
+                from_agent="reviewer",
+                to_agent="planner",
+                kind=MessageKind.ANSWER,
+                body="latest update",
+                created_at="2026-04-15T12:02:00Z",
+                reply_to_message_id="msg-001",
+            ),
+            MessageRecord(
+                message_id="msg-001",
+                thread_id="thread-001",
+                from_agent="planner",
+                to_agent="reviewer",
+                kind=MessageKind.REQUEST,
+                body="first ask",
+                created_at="2026-04-15T12:00:00Z",
+            ),
+            MessageRecord(
+                message_id="msg-003",
+                thread_id="thread-002",
+                from_agent="planner",
+                to_agent="analyst",
+                kind=MessageKind.NOTE,
+                body="closed context",
+                created_at="2026-04-15T11:00:00Z",
+            ),
+        ],
+        handoffs=[
+            HandoffRecord(
+                handoff_id="artifact-001",
+                thread_id="thread-001",
+                from_agent="planner",
+                to_agent="reviewer",
+                kind=HandoffKind.REPORT,
+                location="reports/phase6.md",
+                summary="phase 6 bundle",
+                created_at="2026-04-15T12:01:00Z",
+            )
+        ],
+    )
+
+    assert main(["thread", "list"]) == 0
+    list_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(list_lines) == 2
+    open_fields = _parse_fields(list_lines[0])
+    assert open_fields["thread_id"] == "thread-001"
+    assert open_fields["topic"] == "phase␠6␠review"
+    assert open_fields["participants"] == "planner,reviewer"
+    assert open_fields["status"] == "open"
+    assert open_fields["updated_at"] == "2026-04-15T12:02:00Z"
+    assert open_fields["pending_on"] == "planner"
+    assert open_fields["handoffs"] == "1"
+    assert open_fields["messages"] == "2"
+    closed_fields = _parse_fields(list_lines[1])
+    assert closed_fields["thread_id"] == "thread-002"
+
+    assert main(["thread", "list", "--agent", "reviewer"]) == 0
+    reviewer_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(reviewer_lines) == 1
+    assert _parse_fields(reviewer_lines[0])["thread_id"] == "thread-001"
+
+    assert main(["thread", "list", "--status", "closed"]) == 0
+    closed_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(closed_lines) == 1
+    assert _parse_fields(closed_lines[0])["thread_id"] == "thread-002"
+
+    assert main(["thread", "show", "thread-001"]) == 0
+    show_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(show_lines) == 3
+    show_fields = _parse_fields(show_lines[0])
+    assert show_fields["thread_id"] == "thread-001"
+    assert show_fields["pending_on"] == "planner"
+    assert show_fields["handoffs"] == "1"
+    assert show_fields["messages"] == "2"
+    assert show_fields["created_by"] == "planner"
+    assert show_fields["created_at"] == "2026-04-15T12:00:00Z"
+    first_message_fields = _parse_fields(show_lines[1])
+    second_message_fields = _parse_fields(show_lines[2])
+    assert first_message_fields["message_id"] == "msg-001"
+    assert second_message_fields["message_id"] == "msg-002"
+
+    assert main(["thread", "thread-001", "--limit", "1"]) == 0
+    legacy_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(legacy_lines) == 2
+    assert _parse_fields(legacy_lines[0])["thread_id"] == "thread-001"
 
 
 @pytest.mark.parametrize(

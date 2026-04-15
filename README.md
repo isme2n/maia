@@ -40,6 +40,8 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 - `python -m maia team update ...` updates only team-level portable metadata (`team_name`, `team_description`, `team_tags`, `default_agent_id`) and never mutates agent persona/SOUL state.
 - `python -m maia artifact add|list|show` manages thread-linked artifact metadata using the existing `HandoffRecord` storage model while keeping the public CLI wording on `artifact`.
 - `python -m maia artifact add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it never auto-adds participants.
+- `python -m maia thread list` prints thread overview lines with `thread_id`, `topic`, `participants`, `status`, `updated_at`, derived `pending_on`, `handoffs`, and `messages`; use `--agent <id>` or `--status <open|closed>` to filter.
+- `python -m maia thread show <thread_id>` prints the richer thread summary plus the stored message history for that thread.
 - The `.maia` bundle is a single zip-backed archive containing exactly one `manifest.json` and exactly one `registry.json` for the current v1 format.
 - `python -m maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
 - `~/.maia/exports/` is the portable snapshot area, while `~/.maia/runtime/` is reserved for runtime-only state that should not be treated as a portable backup.
@@ -69,6 +71,10 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
   - `python -m maia artifact add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> --type report --location reports/phase7.md --summary 'Phase 7 review bundle'`
   - `python -m maia artifact list --thread-id <thread_id>`
   - `python -m maia artifact show <artifact_id>`
+- Inspect collaboration flow state:
+  - `python -m maia thread list --status open`
+  - `python -m maia thread list --agent <agent_id>`
+  - `python -m maia thread show <thread_id>`
 - Default export bundle:
   - `python -m maia export`
 - Inspect a bundle before import:
