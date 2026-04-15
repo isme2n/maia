@@ -50,14 +50,16 @@ from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metad
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
-    args = parser.parse_args(_normalize_legacy_thread_argv(argv_list))
+    args = parser.parse_args(_normalize_legacy_cli_argv(argv_list))
     if _get_runtime_command_name(args) is None:
         args.parser.print_help()
         return 0
     return _handle_runtime_command(args)
 
 
-def _normalize_legacy_thread_argv(argv: list[str]) -> list[str]:
+def _normalize_legacy_cli_argv(argv: list[str]) -> list[str]:
+    if argv and argv[0] == "artifact":
+        argv = ["handoff", *argv[1:]]
     if len(argv) < 2 or argv[0] != "thread":
         return argv
     if argv[1] in {"list", "show", "-h", "--help"} or argv[1].startswith("-"):
@@ -89,11 +91,11 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if resource == "team" and command_name == "update":
             registry = storage.load(registry_path)
             return _handle_team_update(args, registry, team_metadata_path)
-        if resource == "artifact":
+        if resource == "handoff":
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
             if command_name == "add":
-                return _handle_artifact_add(
+                return _handle_handoff_add(
                     args,
                     registry,
                     collaboration_storage,
@@ -101,9 +103,9 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                     collaboration,
                 )
             if command_name == "list":
-                return _handle_artifact_list(args, collaboration)
+                return _handle_handoff_list(args, collaboration)
             if command_name == "show":
-                return _handle_artifact_show(args, collaboration)
+                return _handle_handoff_show(args, collaboration)
         if resource in TOP_LEVEL_COLLAB_COMMANDS:
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
@@ -634,7 +636,7 @@ def _handle_thread_show(args, collaboration) -> int:
     return 0
 
 
-def _handle_artifact_add(
+def _handle_handoff_add(
     args,
     registry,
     collaboration_storage,
@@ -647,15 +649,15 @@ def _handle_artifact_add(
     _require_thread_participant(
         thread,
         args.from_agent,
-        error="Artifact sender must be a participant in the thread",
+        error="Handoff sender must be a participant in the thread",
     )
     _require_thread_participant(
         thread,
         args.to_agent,
-        error="Artifact recipient must be a participant in the thread",
+        error="Handoff recipient must be a participant in the thread",
     )
 
-    artifact = HandoffRecord(
+    handoff = HandoffRecord(
         handoff_id=_new_id(),
         thread_id=thread.thread_id,
         from_agent=args.from_agent,
@@ -669,13 +671,13 @@ def _handle_artifact_add(
         collaboration_path,
         threads=list(collaboration.threads),
         messages=list(collaboration.messages),
-        handoffs=[*collaboration.handoffs, artifact],
+        handoffs=[*collaboration.handoffs, handoff],
     )
-    print(f"added {_format_handoff_line(artifact)}")
+    print(f"added {_format_handoff_line(handoff)}")
     return 0
 
 
-def _handle_artifact_list(args, collaboration) -> int:
+def _handle_handoff_list(args, collaboration) -> int:
     if args.thread_id is not None:
         _require_thread(collaboration, args.thread_id)
         handoffs = [
@@ -689,8 +691,8 @@ def _handle_artifact_list(args, collaboration) -> int:
     return 0
 
 
-def _handle_artifact_show(args, collaboration) -> int:
-    print(_format_handoff_line(_require_handoff(collaboration, args.artifact_id)))
+def _handle_handoff_show(args, collaboration) -> int:
+    print(_format_handoff_line(_require_handoff(collaboration, args.handoff_id)))
     return 0
 
 
@@ -839,7 +841,7 @@ def _format_thread_overview_fields(
         f"participant_runtime={_format_thread_participant_runtime(thread.participants, runtime_states)} "
         f"status={thread.status} updated_at={thread.updated_at} "
         f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
-        f"artifacts={len(thread_handoffs)} messages={len(thread_messages)}"
+        f"handoffs={len(thread_handoffs)} messages={len(thread_messages)}"
     )
 
 
@@ -866,7 +868,7 @@ def _require_handoff(collaboration, handoff_id: str) -> HandoffRecord:
     for handoff in collaboration.handoffs:
         if handoff.handoff_id == handoff_id:
             return handoff
-    raise LookupError(f"Artifact with id {handoff_id!r} not found")
+    raise LookupError(f"Handoff with id {handoff_id!r} not found")
 
 
 def _replace_thread(threads: list[ThreadRecord], updated: ThreadRecord) -> None:
@@ -989,7 +991,7 @@ def _format_message_line(message: MessageRecord) -> str:
 
 def _format_handoff_line(handoff: HandoffRecord) -> str:
     return (
-        f"artifact_id={handoff.handoff_id} thread_id={handoff.thread_id} "
+        f"handoff_id={handoff.handoff_id} thread_id={handoff.thread_id} "
         f"from_agent={handoff.from_agent} to_agent={handoff.to_agent} "
         f"type={handoff.kind.value} location={_format_preview_value(handoff.location)} "
         f"summary={_format_preview_value(handoff.summary)} created_at={handoff.created_at}"
@@ -1646,8 +1648,8 @@ def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
     resource = getattr(args, "resource", None)
     if resource == "agent":
         return getattr(args, "agent_command", None)
-    if resource == "artifact":
-        return getattr(args, "artifact_command", None)
+    if resource == "handoff":
+        return getattr(args, "handoff_command", None)
     if resource == "team":
         return getattr(args, "team_command", None)
     if resource == "thread":

@@ -11,7 +11,7 @@ TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor",)
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 THREAD_COMMANDS = ("list", "show")
-ARTIFACT_COMMANDS = ("add", "list", "show")
+HANDOFF_COMMANDS = ("add", "list", "show")
 AGENT_COMMANDS = (
     "new",
     "start",
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
         "  maia agent start <agent_id>\n"
         "  maia send <from_agent_id> <to_agent_id> --body 'ready for review' --topic 'phase 7 review'\n"
         "  maia reply <message_id> --from-agent <agent_id> --body 'review complete'\n"
-        "  maia artifact add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> "
+        "  maia handoff add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> "
         "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
         "  maia thread list --status open\n"
         "  maia thread show <thread_id>\n"
@@ -342,27 +342,27 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Clear the stored default agent id",
             )
 
-    artifact_parser = top_level.add_parser(
-        "artifact",
-        help="Manage thread-linked artifact metadata",
+    handoff_parser = top_level.add_parser(
+        "handoff",
+        help="Manage thread-linked handoff metadata",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    artifact_parser.set_defaults(parser=artifact_parser)
-    artifact_parser.epilog = (
+    handoff_parser.set_defaults(parser=handoff_parser)
+    handoff_parser.epilog = (
         "Examples:\n"
-        "  maia artifact add --thread-id 7f2c1a9b --from-agent planner1234 --to-agent reviewer5678 "
+        "  maia handoff add --thread-id 7f2c1a9b --from-agent planner1234 --to-agent reviewer5678 "
         "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
-        "  maia artifact list\n"
-        "  maia artifact list --thread-id 7f2c1a9b\n"
-        "  maia artifact show 9c4d0e12"
+        "  maia handoff list\n"
+        "  maia handoff list --thread-id 7f2c1a9b\n"
+        "  maia handoff show 9c4d0e12"
     )
 
-    artifact_commands = artifact_parser.add_subparsers(
-        dest="artifact_command",
-        metavar="{" + ",".join(ARTIFACT_COMMANDS) + "}",
+    handoff_commands = handoff_parser.add_subparsers(
+        dest="handoff_command",
+        metavar="{" + ",".join(HANDOFF_COMMANDS) + "}",
     )
-    for command_name in ARTIFACT_COMMANDS:
-        command_parser = artifact_commands.add_parser(command_name, help=f"{command_name} artifact")
+    for command_name in HANDOFF_COMMANDS:
+        command_parser = handoff_commands.add_parser(command_name, help=f"{command_name} handoff")
         command_parser.set_defaults(parser=command_parser)
         if command_name == "add":
             command_parser.add_argument("--thread-id", required=True, help="Existing thread id")
@@ -372,24 +372,24 @@ def build_parser() -> argparse.ArgumentParser:
                 "--type",
                 required=True,
                 choices=tuple(kind.value for kind in HandoffKind),
-                help="Artifact pointer type",
+                help="Handoff pointer type",
             )
             command_parser.add_argument(
                 "--location",
                 required=True,
-                help="Artifact pointer location (path, url, or repo ref)",
+                help="Handoff pointer location (path, url, or repo ref)",
             )
             command_parser.add_argument(
                 "--summary",
                 required=True,
-                help="Short artifact summary",
+                help="Short handoff summary",
             )
         if command_name == "list":
             command_parser.add_argument(
                 "--thread-id",
-                help="Only show artifacts for the given thread id",
+                help="Only show handoffs for the given thread id",
             )
         if command_name == "show":
-            command_parser.add_argument("artifact_id", help="Artifact id")
+            command_parser.add_argument("handoff_id", help="Handoff id")
 
     return parser

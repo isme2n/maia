@@ -1042,7 +1042,7 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
         "status": "open",
         "updated_at": thread_created_at,
         "pending_on": reviewer_id,
-        "artifacts": "0",
+        "handoffs": "0",
         "messages": "1",
         "created_at": thread_created_at,
     }
