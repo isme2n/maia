@@ -89,9 +89,13 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
-    assert "Phase 7 operator flow:" in captured.out
+    assert "Handoff-first operator flow:" in captured.out
+    assert "Phase 7" not in captured.out
     assert "maia agent start <agent_id>" in captured.out
     assert "maia send <from_agent_id> <to_agent_id>" in captured.out
+    assert "review handoff" in captured.out
+    assert "reports/review.md" in captured.out
+    assert "Review notes ready" in captured.out
     assert "maia thread show <thread_id>" in captured.out
     assert "maia workspace show <agent_id>" in captured.out
     assert "maia agent status <agent_id>" in captured.out
@@ -310,13 +314,18 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia handoff" in captured.out
+    assert "thread-linked handoff pointers" in captured.out
+    assert "stored in collaboration state" in captured.out
     assert "add" in captured.out
     assert "list" in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
     assert "maia handoff add --thread-id 7f2c1a9b" in captured.out
+    assert "reports/review.md" in captured.out
+    assert "Review notes ready" in captured.out
     assert "maia handoff list --thread-id 7f2c1a9b" in captured.out
     assert "maia handoff show 9c4d0e12" in captured.out
+    assert "Phase 7" not in captured.out
 
 
 def test_legacy_artifact_alias_maps_to_hidden_handoff_surface(
@@ -329,6 +338,7 @@ def test_legacy_artifact_alias_maps_to_hidden_handoff_surface(
     captured = capsys.readouterr()
     assert "usage: maia handoff" in captured.out
     assert "maia handoff add --thread-id 7f2c1a9b" in captured.out
+    assert "Review notes ready" in captured.out
     assert "maia artifact" not in captured.out
 
 

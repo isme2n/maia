@@ -38,11 +38,11 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 - `python -m maia inspect <path>` inspects an importable Maia snapshot before restore and prints bundle format, manifest scope metadata, bundle label/version metadata, provenance metadata, agent names, status counts, and agent profile summaries.
 - `python -m maia team show` prints the current portable team metadata from `~/.maia/team.json` using the same encoded display format as inspect output.
 - `python -m maia team update ...` updates only team-level portable metadata (`team_name`, `team_description`, `team_tags`, `default_agent_id`) and never mutates agent persona/SOUL state.
-- `python -m maia handoff add|list|show` manages thread-linked handoff metadata in collaboration state.
-- `python -m maia handoff add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it never auto-adds participants.
+- `python -m maia handoff add|list|show` records and inspects thread-linked handoff pointers in collaboration state.
+- `python -m maia handoff add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it records only the pointer metadata and never auto-adds participants.
 - `python -m maia thread list` prints thread overview lines with `thread_id`, `topic`, `participants`, `participant_runtime`, `status`, `updated_at`, derived `pending_on`, `handoffs`, and `messages`; use `--agent <id>` or `--status <open|closed>` to filter.
 - `python -m maia thread show <thread_id>` prints the same summary plus `created_by`, `created_at`, recent handoff context (`recent_handoff_*`), and the stored message history for that thread.
-- `python -m maia handoff show <handoff_id>` prints the handoff pointer plus source/target workspace context lines with `handoff_role`, `workspace_status`, `workspace_basis`, `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`.
+- `python -m maia handoff show <handoff_id>` prints the stored handoff pointer plus source/target workspace context lines derived from runtime spec data with `handoff_role`, `workspace_status`, `workspace_basis`, `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`.
 - `python -m maia workspace show <agent_id>` prints operator-visible workspace context from the stored runtime spec using terse `key=value` fields (`workspace`, `runtime_image`, `runtime_command`, `runtime_env_keys`).
 - The `.maia` bundle is a single zip-backed archive containing exactly one `manifest.json` and exactly one `registry.json` for the current v1 format.
 - `python -m maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
@@ -65,13 +65,12 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 ## Operator examples
 - Check local Docker/runtime and broker readiness:
   - `python -m maia doctor`
-- Phase 7 collaboration flow:
+- Handoff-first collaboration flow:
   - `python -m maia agent start <planner_id>`
   - `python -m maia agent start <reviewer_id>`
-  - `python -m maia send <planner_id> <reviewer_id> --body 'please review phase 7' --topic 'phase 7 review'`
+  - `python -m maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
   - `python -m maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
-  - `python -m maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/phase7.md --summary 'Phase 7 review bundle'`
-  - `python -m maia handoff list --thread-id <thread_id>`
+  - `python -m maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
   - `python -m maia thread list --status open`
   - `python -m maia thread show <thread_id>`
   - `python -m maia workspace show <reviewer_id>`

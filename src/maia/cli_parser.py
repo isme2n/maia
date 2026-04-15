@@ -43,12 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(parser=parser)
     parser.epilog = (
-        "Phase 7 operator flow:\n"
+        "Handoff-first operator flow:\n"
         "  maia agent start <agent_id>\n"
-        "  maia send <from_agent_id> <to_agent_id> --body 'ready for review' --topic 'phase 7 review'\n"
+        "  maia send <from_agent_id> <to_agent_id> --body 'ready for review' --topic 'review handoff'\n"
         "  maia reply <message_id> --from-agent <agent_id> --body 'review complete'\n"
         "  maia handoff add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> "
-        "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
+        "--type report --location reports/review.md --summary 'Review notes ready'\n"
         "  maia thread list --status open\n"
         "  maia thread show <thread_id>\n"
         "  maia workspace show <agent_id>\n"
@@ -346,7 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     workspace_parser = top_level.add_parser(
         "workspace",
-        help="Show agent workspace context",
+        help="Show stored agent workspace context",
         description="Show operator-visible workspace context from the stored agent runtime spec.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -365,17 +365,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff_parser = top_level.add_parser(
         "handoff",
-        help="Manage thread-linked handoff metadata",
+        help="Manage thread-linked handoff pointers",
+        description="Record and inspect thread-linked handoff pointers stored in collaboration state.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     handoff_parser.set_defaults(parser=handoff_parser)
     handoff_parser.epilog = (
         "Examples:\n"
-        "  maia handoff add --thread-id 7f2c1a9b --from-agent planner1234 --to-agent reviewer5678 "
-        "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
-        "  maia handoff list\n"
-        "  maia handoff list --thread-id 7f2c1a9b\n"
+        "  maia handoff add --thread-id 7f2c1a9b --from-agent reviewer5678 --to-agent planner1234 "
+        "--type report --location reports/review.md --summary 'Review notes ready'\n"
         "  maia handoff show 9c4d0e12"
+        "\n"
+        "  maia handoff list --thread-id 7f2c1a9b"
     )
 
     handoff_commands = handoff_parser.add_subparsers(
