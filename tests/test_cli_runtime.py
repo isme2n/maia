@@ -667,6 +667,58 @@ def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     )
 
 
+
+def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    cleared = run_module(tmp_path, "agent", "tune", agent_id, "--clear-runtime")
+    assert cleared.returncode == 0
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "running",
+        "persona": "∅",
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+    }
+
+
 def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
     planner_id = create_agent(tmp_path, "planner")
     reviewer_id = create_agent(tmp_path, "reviewer")

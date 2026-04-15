@@ -1144,12 +1144,10 @@ def _resolve_runtime_state_for_status(
     record: AgentRecord,
     runtime_adapter: DockerRuntimeAdapter,
 ) -> RuntimeState:
-    if record.runtime_spec is None:
-        return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
-    try:
+    stored_states = RuntimeStateStorage().load(get_runtime_state_path())
+    if record.agent_id in stored_states:
         return runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
-    except LookupError:
-        return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
+    return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
 
 
 def _handle_agent_tune(
