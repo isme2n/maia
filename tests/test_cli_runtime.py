@@ -5,20 +5,24 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from zipfile import ZipFile
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
-from maia.app_state import (
-    get_default_export_path,
-    get_exports_dir,
-    get_runtime_dir,
-)
+from maia.app_state import get_default_export_path, get_registry_path, get_team_metadata_path
+from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
 
-def run_module(home: Path, *argv: str) -> subprocess.CompletedProcess[str]:
+def run_module(
+    home: Path,
+    *argv: str,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     existing_pythonpath = env.get("PYTHONPATH")
@@ -34,12 +38,37 @@ def run_module(home: Path, *argv: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        input=input_text,
     )
 
 
 def parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"created", "updated", "exported", "imported"}:
+    if tokens[:2] == ["restored", "bundle"]:
+        tokens = tokens[2:]
+    elif tokens and tokens[0] in {
+        "created",
+        "updated",
+        "exported",
+        "imported",
+        "inspected",
+        "preview",
+        "risk",
+        "added",
+        "removed",
+        "changed",
+        "confirm",
+        "manifest",
+        "bundle",
+        "provenance",
+        "portable",
+        "runtime",
+        "description",
+        "team",
+        "agents",
+        "profiles",
+        "purged",
+    }:
         tokens = tokens[1:]
     if tokens and tokens[0] == "registry":
         tokens = tokens[1:]
@@ -48,558 +77,967 @@ def parse_fields(line: str) -> dict[str, str]:
 
 def create_agent(home: Path, name: str = "demo") -> str:
     result = run_module(home, "agent", "new", name)
-
     assert result.returncode == 0
     assert result.stderr == ""
     return parse_fields(result.stdout.strip())["agent_id"]
 
 
-def test_agent_new_persists_record(tmp_path: Path) -> None:
-    result = run_module(tmp_path, "agent", "new", "demo")
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-
-    fields = parse_fields(result.stdout.strip())
-    assert fields["name"] == "demo"
-    assert fields["status"] == "stopped"
-
-    registry_path = tmp_path / ".maia" / "registry.json"
-    assert registry_path.exists()
-    assert json.loads(registry_path.read_text(encoding="utf-8")) == {
-        "agents": [
-            {
-                "agent_id": fields["agent_id"],
-                "name": "demo",
-                "status": "stopped",
-                "persona": "",
-            }
-        ]
-    }
+def load_registry(home: Path) -> dict[str, object]:
+    return json.loads(get_registry_path({"HOME": str(home)}).read_text(encoding="utf-8"))
 
 
-def test_agent_new_duplicate_name_error(tmp_path: Path) -> None:
-    first = run_module(tmp_path, "agent", "new", "demo")
-    second = run_module(tmp_path, "agent", "new", "demo")
-
-    assert first.returncode == 0
-    assert second.returncode == 1
-    assert second.stdout == ""
-    assert second.stderr.strip() == "error: Agent with name 'demo' already exists"
+def write_registry(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def test_agent_list_preserves_storage_order(tmp_path: Path) -> None:
-    first = run_module(tmp_path, "agent", "new", "alpha")
-    second = run_module(tmp_path, "agent", "new", "beta")
-
-    first_id = parse_fields(first.stdout.strip())["agent_id"]
-    second_id = parse_fields(second.stdout.strip())["agent_id"]
-
-    result = run_module(tmp_path, "agent", "list")
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert result.stdout.strip().splitlines() == [
-        f"agent_id={first_id} name=alpha status=stopped",
-        f"agent_id={second_id} name=beta status=stopped",
-    ]
+def read_bundle_archive(path: Path) -> dict[str, object]:
+    with ZipFile(path) as archive:
+        return {
+            name: json.loads(archive.read(name).decode("utf-8"))
+            for name in archive.namelist()
+        }
 
 
-def test_agent_export_writes_registry_file(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-    export_path = tmp_path / "exports" / "registry.json"
-
-    result = run_module(tmp_path, "agent", "export", str(export_path))
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert parse_fields(result.stdout.strip()) == {
-        "path": str(export_path),
-        "agents": "1",
-    }
-
-    registry_path = tmp_path / ".maia" / "registry.json"
-    assert json.loads(export_path.read_text(encoding="utf-8")) == json.loads(
-        registry_path.read_text(encoding="utf-8")
-    )
-    assert json.loads(export_path.read_text(encoding="utf-8")) == {
-        "agents": [
-            {
-                "agent_id": agent_id,
-                "name": "demo",
-                "status": "stopped",
-                "persona": "",
-            }
-        ]
-    }
+def line_map(stdout: str) -> dict[str, str]:
+    lines = [line for line in stdout.strip().splitlines() if line]
+    return {line.split()[0]: line for line in lines}
 
 
-def test_agent_export_uses_default_export_path_when_omitted(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-    export_path = get_default_export_path({"HOME": str(tmp_path)})
+def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
 
-    result = run_module(tmp_path, "agent", "export")
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert parse_fields(result.stdout.strip()) == {
-        "path": str(export_path),
-        "agents": "1",
-    }
-    assert export_path.exists()
-    assert json.loads(export_path.read_text(encoding="utf-8")) == {
-        "agents": [
-            {
-                "agent_id": agent_id,
-                "name": "demo",
-                "status": "stopped",
-                "persona": "",
-            }
-        ]
-    }
-
-
-def test_agent_export_explicit_path_still_works(tmp_path: Path) -> None:
-    create_agent(tmp_path)
-    export_path = tmp_path / "portable" / "snapshot.json"
-    default_export_path = get_default_export_path({"HOME": str(tmp_path)})
-
-    result = run_module(tmp_path, "agent", "export", str(export_path))
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert parse_fields(result.stdout.strip()) == {
-        "path": str(export_path),
-        "agents": "1",
-    }
-    assert export_path.exists()
-    assert not default_export_path.exists()
-
-
-def test_agent_export_creates_parent_dirs(tmp_path: Path) -> None:
-    export_path = tmp_path / "nested" / "backup" / "registry.json"
-
-    result = run_module(tmp_path, "agent", "export", str(export_path))
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert parse_fields(result.stdout.strip()) == {
-        "path": str(export_path),
-        "agents": "0",
-    }
-    assert export_path.exists()
-    assert json.loads(export_path.read_text(encoding="utf-8")) == {"agents": []}
-
-
-def test_exports_dir_helper_path_under_home(tmp_path: Path) -> None:
-    assert get_exports_dir({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "exports"
-
-
-def test_runtime_dir_helper_path_under_home(tmp_path: Path) -> None:
-    assert get_runtime_dir({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "runtime"
-
-
-def test_agent_import_restores_exported_registry(tmp_path: Path) -> None:
-    alpha_id = create_agent(tmp_path, "alpha")
-    beta_id = create_agent(tmp_path, "beta")
-
-    started = run_module(tmp_path, "agent", "start", alpha_id)
-    tuned = run_module(tmp_path, "agent", "tune", beta_id, "--persona", "reviewer")
-    export_path = tmp_path / "exports" / "registry.json"
-    exported = run_module(tmp_path, "agent", "export", str(export_path))
-
-    gamma_id = create_agent(tmp_path, "gamma")
-    imported = run_module(tmp_path, "agent", "import", str(export_path))
     listed = run_module(tmp_path, "agent", "list")
-    alpha_status = run_module(tmp_path, "agent", "status", alpha_id)
-    beta_status = run_module(tmp_path, "agent", "status", beta_id)
-    gamma_status = run_module(tmp_path, "agent", "status", gamma_id)
+    assert listed.returncode == 0
+    assert listed.stderr == ""
+    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
 
-    assert started.returncode == 0
+    before = run_module(tmp_path, "agent", "status", agent_id)
+    assert before.returncode == 0
+    assert before.stderr == ""
+    assert parse_fields(before.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "stopped",
+        "persona": "∅",
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+    }
+
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--persona",
+        "nightwatch",
+        "--role",
+        "researcher",
+        "--model",
+        "gpt-5",
+        "--tags",
+        "runtime,focus,runtime",
+    )
     assert tuned.returncode == 0
+    assert tuned.stderr == ""
+    assert parse_fields(tuned.stdout.strip()) == {
+        "agent_id": agent_id,
+        "persona": "nightwatch",
+        "role": "researcher",
+        "model": "gpt-5",
+        "tags": "runtime,focus",
+    }
+
+    after = run_module(tmp_path, "agent", "status", agent_id)
+    assert after.returncode == 0
+    assert after.stderr == ""
+    assert parse_fields(after.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "stopped",
+        "persona": "nightwatch",
+        "role": "researcher",
+        "model": "gpt-5",
+        "tags": "runtime,focus",
+    }
+
+    assert load_registry(tmp_path) == {
+        "agents": [
+            {
+                "agent_id": agent_id,
+                "name": "demo",
+                "status": "stopped",
+                "persona": "nightwatch",
+                "role": "researcher",
+                "model": "gpt-5",
+                "tags": ["runtime", "focus"],
+            }
+        ]
+    }
+
+
+def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "alpha")
+
+    no_changes = run_module(tmp_path, "agent", "tune", agent_id)
+    assert no_changes.returncode == 1
+    assert no_changes.stdout == ""
+    assert no_changes.stderr.strip() == "error: Agent tune requires at least one change flag"
+
+    invalid_tags = run_module(tmp_path, "agent", "tune", agent_id, "--tags", "ok,,bad")
+    assert invalid_tags.returncode == 1
+    assert invalid_tags.stdout == ""
+    assert invalid_tags.stderr.strip() == (
+        "error: Agent tags must be a comma-separated list of non-empty values"
+    )
+
+    seeded = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--role",
+        "reviewer",
+        "--model",
+        "claude",
+        "--tags",
+        "ops,nightly",
+    )
+    assert seeded.returncode == 0
+
+    cleared = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--clear-role",
+        "--clear-model",
+        "--clear-tags",
+    )
+    assert cleared.returncode == 0
+    assert cleared.stderr == ""
+    assert parse_fields(cleared.stdout.strip()) == {
+        "agent_id": agent_id,
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+    }
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    fields = parse_fields(status.stdout.strip())
+    assert fields["role"] == "∅"
+    assert fields["model"] == "∅"
+    assert fields["tags"] == "-"
+
+
+
+def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+    persona_path = tmp_path / "persona.txt"
+    persona_path.write_text("research analyst\n", encoding="utf-8")
+
+    tuned = run_module(tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path))
+    assert tuned.returncode == 0
+    assert tuned.stderr == ""
+    assert parse_fields(tuned.stdout.strip()) == {
+        "agent_id": agent_id,
+        "persona": "research␠analyst↵",
+    }
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert status.stderr == ""
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "stopped",
+        "persona": "research␠analyst↵",
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+    }
+
+
+
+def test_agent_lifecycle_and_purge(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+
+    for command, expected_status in [
+        ("start", "running"),
+        ("stop", "stopped"),
+        ("archive", "archived"),
+        ("restore", "stopped"),
+        ("archive", "archived"),
+    ]:
+        result = run_module(tmp_path, "agent", command, agent_id)
+        assert result.returncode == 0
+        assert result.stderr == ""
+        assert parse_fields(result.stdout.strip()) == {
+            "agent_id": agent_id,
+            "status": expected_status,
+        }
+
+    team_updated = run_module(
+        tmp_path,
+        "team",
+        "update",
+        "--name",
+        "demo-team",
+        "--default-agent",
+        agent_id,
+    )
+    assert team_updated.returncode == 0
+
+    purge = run_module(tmp_path, "agent", "purge", agent_id)
+    assert purge.returncode == 0
+    assert purge.stderr == ""
+    assert parse_fields(purge.stdout.strip()) == {"agent_id": agent_id}
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert listed.stdout.strip() == ""
+    assert load_registry(tmp_path) == {"agents": []}
+    assert load_team_metadata(get_team_metadata_path({"HOME": str(tmp_path)})) == TeamMetadata(
+        team_name="demo-team",
+        team_description="",
+        team_tags=[],
+        default_agent_id="",
+    )
+
+
+def test_team_show_update_export_and_inspect_scope_v3_bundle(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+
+    shown = run_module(tmp_path, "team", "show")
+    assert shown.returncode == 0
+    assert shown.stderr == ""
+    assert parse_fields(shown.stdout.strip()) == {
+        "name": "∅",
+        "description": "∅",
+        "tags": "-",
+        "default_agent_id": "∅",
+    }
+
+    updated = run_module(
+        tmp_path,
+        "team",
+        "update",
+        "--name",
+        "research-lab",
+        "--description",
+        "Nightly migration team",
+        "--tags",
+        "research,ops,research",
+        "--default-agent",
+        agent_id,
+    )
+    assert updated.returncode == 0
+    assert updated.stderr == ""
+    assert parse_fields(updated.stdout.strip()) == {
+        "name": "research-lab",
+        "description": "Nightly␠migration␠team",
+        "tags": "research,ops",
+        "default_agent_id": agent_id,
+    }
+    assert load_team_metadata(get_team_metadata_path({"HOME": str(tmp_path)})) == TeamMetadata(
+        team_name="research-lab",
+        team_description="Nightly migration team",
+        team_tags=["research", "ops"],
+        default_agent_id=agent_id,
+    )
+
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--role",
+        "lead",
+        "--model",
+        "gpt-5",
+        "--tags",
+        "prod,nightly",
+    )
+    assert tuned.returncode == 0
+
+    export_path = get_default_export_path({"HOME": str(tmp_path)})
+    exported = run_module(tmp_path, "export")
     assert exported.returncode == 0
+    assert exported.stderr == ""
+    assert parse_fields(exported.stdout.strip()) == {
+        "path": str(export_path),
+        "format": "maia-bundle",
+        "agents": "1",
+    }
+    assert export_path.exists()
+
+    bundle_data = read_bundle_archive(export_path)
+    manifest = bundle_data["manifest.json"]
+    assert manifest["scope_version"] == 3
+    assert manifest["portable_state_kinds"] == [
+        "registry",
+        "team-metadata",
+        "agent-profile-metadata",
+    ]
+    assert manifest["team_name"] == "research-lab"
+    assert manifest["team_description"] == "Nightly migration team"
+    assert manifest["team_tags"] == ["research", "ops"]
+    assert manifest["default_agent_id"] == agent_id
+    assert bundle_data["registry.json"]["agents"][0]["role"] == "lead"
+    assert bundle_data["registry.json"]["agents"][0]["model"] == "gpt-5"
+    assert bundle_data["registry.json"]["agents"][0]["tags"] == ["prod", "nightly"]
+
+    inspected = run_module(tmp_path, "inspect", str(export_path))
+    assert inspected.returncode == 0
+    assert inspected.stderr == ""
+    lines = line_map(inspected.stdout)
+    assert parse_fields(lines["inspected"]) == {
+        "path": str(export_path),
+        "format": "maia-bundle",
+        "registry": "registry.json",
+        "agents": "1",
+    }
+    assert parse_fields(lines["manifest"])["scope_version"] == "3"
+    assert parse_fields(lines["portable"])["state_kinds"] == (
+        "registry,team-metadata,agent-profile-metadata"
+    )
+    assert parse_fields(lines["team"]) == {
+        "name": "research-lab",
+        "description": "Nightly␠migration␠team",
+        "tags": "research,ops",
+        "default_agent_id": agent_id,
+    }
+    assert parse_fields(lines["agents"]) == {
+        "names": "demo",
+        "statuses": "stopped:1",
+    }
+    assert parse_fields(lines["profiles"]) == {
+        "entries": f"{agent_id}:role=lead+model=gpt-5+tags=prod,nightly"
+    }
+
+
+def test_export_and_inspect_encode_paths_and_metadata_with_spaces(tmp_path: Path) -> None:
+    home = tmp_path / "home with spaces"
+    agent_id = create_agent(home, "night shift")
+    export_path = home / "exports dir" / "team bundle.maia"
+
+    exported = run_module(
+        home,
+        "export",
+        str(export_path),
+        "--label",
+        "prod team",
+        "--description",
+        "nightly snapshot",
+    )
+    assert exported.returncode == 0
+    assert exported.stderr == ""
+    assert parse_fields(exported.stdout.strip()) == {
+        "path": str(export_path).replace(" ", "␠"),
+        "format": "maia-bundle",
+        "agents": "1",
+    }
+
+    inspected = run_module(home, "inspect", str(export_path))
+    assert inspected.returncode == 0
+    assert inspected.stderr == ""
+    lines = line_map(inspected.stdout)
+    assert parse_fields(lines["inspected"]) == {
+        "path": str(export_path).replace(" ", "␠"),
+        "format": "maia-bundle",
+        "registry": "registry.json",
+        "agents": "1",
+    }
+    assert parse_fields(lines["bundle"]) == {
+        "label": "prod␠team",
+        "created_by": "maia-cli",
+        "maia_version": "0.1.0",
+    }
+    assert parse_fields(lines["description"]) == {"value": "nightly␠snapshot"}
+    assert parse_fields(lines["agents"]) == {
+        "names": "night␠shift",
+        "statuses": "stopped:1",
+    }
+    assert parse_fields(lines["team"]) == {
+        "name": "∅",
+        "description": "∅",
+        "tags": "-",
+        "default_agent_id": "∅",
+    }
+    assert parse_fields(lines["profiles"]) == {
+        "entries": f"{agent_id}:role=∅+model=∅+tags=-"
+    }
+
+
+def test_export_sanitizes_stale_team_default_agent_id(tmp_path: Path) -> None:
+    home = tmp_path / "stale-team-home"
+    create_agent(home, "demo")
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(home)}),
+        TeamMetadata(
+            team_name="ops-team",
+            team_description="",
+            team_tags=["ops"],
+            default_agent_id="missing-agent",
+        ),
+    )
+    export_path = home / "stale-default.maia"
+
+    exported = run_module(home, "export", str(export_path))
+    assert exported.returncode == 0
+    bundle_data = read_bundle_archive(export_path)
+    assert bundle_data["manifest.json"]["default_agent_id"] == ""
+
+    inspected = run_module(home, "inspect", str(export_path))
+    assert inspected.returncode == 0
+    assert parse_fields(line_map(inspected.stdout)["team"]) == {
+        "name": "ops-team",
+        "description": "∅",
+        "tags": "ops",
+        "default_agent_id": "∅",
+    }
+
+
+def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path) -> None:
+    source_home = tmp_path / "source"
+    dest_home = tmp_path / "dest"
+
+    agent_id = create_agent(source_home, "demo")
+    tuned = run_module(
+        source_home,
+        "agent",
+        "tune",
+        agent_id,
+        "--persona",
+        "analyst",
+        "--role",
+        "reviewer",
+        "--model",
+        "gpt-5",
+        "--tags",
+        "qa,ops",
+    )
+    assert tuned.returncode == 0
+    team_update = run_module(
+        source_home,
+        "team",
+        "update",
+        "--name",
+        "import-team",
+        "--default-agent",
+        agent_id,
+    )
+    assert team_update.returncode == 0
+
+    bundle_path = source_home / "snapshot.maia"
+    exported = run_module(source_home, "export", str(bundle_path))
+    assert exported.returncode == 0
+
+    write_registry(
+        get_registry_path({"HOME": str(dest_home)}),
+        {
+            "agents": [
+                {
+                    "agent_id": agent_id,
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "legacy-model",
+                    "tags": ["legacy"],
+                }
+            ]
+        },
+    )
+
+    preview = run_module(dest_home, "import", str(bundle_path), "--preview", "--verbose-preview")
+    assert preview.returncode == 0
+    assert preview.stderr == ""
+    lines = line_map(preview.stdout)
+    assert parse_fields(lines["preview"]) == {
+        "source": str(bundle_path),
+        "registry": "registry.json",
+        "current_agents": "1",
+        "incoming_agents": "1",
+        "added": "0",
+        "removed": "0",
+        "changed": "1",
+        "unchanged": "0",
+    }
+    changed_line = lines["changed"]
+    assert f"ids={agent_id}" in changed_line
+    assert "persona:∅->analyst" in changed_line
+    assert "role:∅->reviewer" in changed_line
+    assert "model:legacy-model->gpt-5" in changed_line
+    assert "tags:legacy->qa,ops" in changed_line
+
+    imported = run_module(dest_home, "import", str(bundle_path), "--yes")
     assert imported.returncode == 0
     assert imported.stderr == ""
-    assert parse_fields(imported.stdout.strip()) == {
-        "path": str(export_path),
-        "agents": "2",
+    import_lines = line_map(imported.stdout)
+    assert parse_fields(import_lines["imported"]) == {
+        "source": str(bundle_path),
+        "registry": "registry.json",
+        "agents": "1",
     }
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip().splitlines() == [
-        f"agent_id={alpha_id} name=alpha status=running",
-        f"agent_id={beta_id} name=beta status=stopped",
-    ]
-    assert alpha_status.returncode == 0
-    assert alpha_status.stderr == ""
-    assert (
-        alpha_status.stdout.strip()
-        == f"agent_id={alpha_id} name=alpha status=running persona="
-    )
-    assert beta_status.returncode == 0
-    assert beta_status.stderr == ""
-    assert (
-        beta_status.stdout.strip()
-        == f"agent_id={beta_id} name=beta status=stopped persona=reviewer"
-    )
-    assert gamma_status.returncode == 1
-    assert gamma_status.stdout == ""
-    assert gamma_status.stderr.strip() == f"error: Agent with id {gamma_id!r} not found"
 
-
-def test_agent_import_missing_file_error(tmp_path: Path) -> None:
-    import_path = tmp_path / "missing" / "registry.json"
-
-    result = run_module(tmp_path, "agent", "import", str(import_path))
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip() == f"error: Import file {str(import_path)!r} not found"
-
-
-def test_agent_import_invalid_file_error(tmp_path: Path) -> None:
-    import_path = tmp_path / "invalid.json"
-    import_path.write_text("{not valid json", encoding="utf-8")
-
-    result = run_module(tmp_path, "agent", "import", str(import_path))
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip().startswith(
-        f"error: Invalid registry JSON in {import_path}:"
-    )
-
-
-def test_agent_status_existing_agent(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
-
-    result = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert (
-        result.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=stopped persona="
-    )
-
-
-def test_agent_status_missing_agent_error(tmp_path: Path) -> None:
-    result = run_module(tmp_path, "agent", "status", "missing")
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
-
-
-def test_agent_tune_updates_persona_for_existing_agent(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
-
-    result = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "analyst")
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert result.stdout.strip() == f"updated agent_id={agent_id} persona=analyst"
+    status = run_module(dest_home, "agent", "status", agent_id)
     assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=stopped persona=analyst"
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "stopped",
+        "persona": "analyst",
+        "role": "reviewer",
+        "model": "gpt-5",
+        "tags": "qa,ops",
+    }
+    assert load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)})).default_agent_id == agent_id
+
+
+def test_import_preview_encodes_agent_names_with_spaces(tmp_path: Path) -> None:
+    source_home = tmp_path / "source spaces"
+    dest_home = tmp_path / "dest spaces"
+    create_agent(source_home, "alpha beta")
+    bundle_path = source_home / "preview-names.maia"
+    exported = run_module(source_home, "export", str(bundle_path))
+    assert exported.returncode == 0
+
+    preview = run_module(dest_home, "import", str(bundle_path), "--preview")
+    assert preview.returncode == 0
+    lines = line_map(preview.stdout)
+    assert parse_fields(lines["added"]) ["names"] == "alpha␠beta"
+
+
+def test_import_preview_reports_team_metadata_diffs(tmp_path: Path) -> None:
+    source_home = tmp_path / "source-team"
+    dest_home = tmp_path / "dest-team"
+
+    agent_id = create_agent(source_home, "demo")
+    updated = run_module(
+        source_home,
+        "team",
+        "update",
+        "--name",
+        "source-team",
+        "--description",
+        "incoming description",
+        "--tags",
+        "ops,nightly",
+        "--default-agent",
+        agent_id,
+    )
+    assert updated.returncode == 0
+
+    bundle_path = source_home / "team-only.maia"
+    exported = run_module(source_home, "export", str(bundle_path))
+    assert exported.returncode == 0
+
+    write_registry(
+        get_registry_path({"HOME": str(dest_home)}),
+        {
+            "agents": [
+                {
+                    "agent_id": agent_id,
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
+    )
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(dest_home)}),
+        TeamMetadata(
+            team_name="dest-team",
+            team_description="existing description",
+            team_tags=["legacy"],
+            default_agent_id="",
+        ),
     )
 
+    preview = run_module(dest_home, "import", str(bundle_path), "--preview", "--verbose-preview")
+    assert preview.returncode == 0
+    assert preview.stderr == ""
+    lines = line_map(preview.stdout)
+    assert parse_fields(lines["preview"]) == {
+        "source": str(bundle_path),
+        "registry": "registry.json",
+        "current_agents": "1",
+        "incoming_agents": "1",
+        "added": "0",
+        "removed": "0",
+        "changed": "0",
+        "unchanged": "1",
+    }
+    assert parse_fields(lines["risk"]) == {
+        "level": "low-change",
+        "reasons": "changed_team_metadata",
+    }
+    team_line = lines["team"]
+    assert "name:dest-team->source-team" in team_line
+    assert "description:existing␠description->incoming␠description" in team_line
+    assert "tags:legacy->ops,nightly" in team_line
+    assert f"default_agent_id:∅->{agent_id}" in team_line
 
-def test_agent_tune_updates_persona_from_file_for_existing_agent(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
-    persona_path = tmp_path / "persona.txt"
-    persona_path.write_text("research analyst", encoding="utf-8")
 
-    result = run_module(
-        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
+def test_import_rejects_team_default_agent_missing_from_incoming_registry(tmp_path: Path) -> None:
+    source_dir = tmp_path / "invalid-team"
+    registry_path = source_dir / "registry.json"
+    manifest_path = source_dir / "manifest.json"
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": "agent-001",
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
     )
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert (
-        result.stdout.strip()
-        == f"updated agent_id={agent_id} persona=research analyst"
-    )
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=stopped persona=research analyst"
-    )
-
-
-def test_agent_tune_persona_file_preserves_trailing_newline(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
-    persona_path = tmp_path / "persona.txt"
-    persona_path.write_text("night-shift\n", encoding="utf-8")
-
-    result = run_module(
-        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
-    )
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert result.returncode == 0
-    assert result.stderr == ""
-    assert result.stdout == f"updated agent_id={agent_id} persona=night-shift\n\n"
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout
-        == f"agent_id={agent_id} name=demo status=stopped persona=night-shift\n\n"
-    )
-
-    registry_path = tmp_path / ".maia" / "registry.json"
-    assert json.loads(registry_path.read_text(encoding="utf-8")) == {
-        "agents": [
+    manifest_path.write_text(
+        json.dumps(
             {
-                "agent_id": agent_id,
-                "name": "demo",
-                "status": "stopped",
-                "persona": "night-shift\n",
-            }
-        ]
-    }
+                "kind": "maia-backup-manifest",
+                "version": 1,
+                "scope_version": 2,
+                "created_at": "2026-04-14T22:24:00Z",
+                "label": "invalid-team",
+                "description": "invalid team metadata",
+                "created_by": "maia-cli",
+                "maia_version": "0.1.0",
+                "source_host": "test-host",
+                "source_platform": "linux",
+                "source_registry_path": str(registry_path),
+                "registry_file": "registry.json",
+                "portable_paths": ["registry.json"],
+                "portable_state_kinds": ["registry", "team-metadata"],
+                "runtime_only_paths": ["runtime/"],
+                "runtime_only_state_kinds": ["processes", "locks", "cache", "live-sessions"],
+                "agents": 1,
+                "team_name": "invalid-team",
+                "team_description": "invalid team metadata",
+                "team_tags": ["ops"],
+                "default_agent_id": "missing-agent",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    imported = run_module(tmp_path / "dest-invalid", "import", str(manifest_path), "--yes")
+    assert imported.returncode == 1
+    assert "missing-agent" in imported.stderr
 
 
-def test_agent_tune_preserves_name_and_status(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
+def test_raw_registry_import_preserves_existing_team_metadata(tmp_path: Path) -> None:
+    source_dir = tmp_path / "raw-source"
+    dest_home = tmp_path / "raw-dest"
+    registry_path = source_dir / "registry.json"
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": "agent-001",
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
+    )
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(dest_home)}),
+        TeamMetadata(
+            team_name="existing-team",
+            team_description="keep me",
+            team_tags=["ops"],
+            default_agent_id="",
+        ),
+    )
 
-    tuned = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "operator")
+    imported = run_module(dest_home, "import", str(registry_path), "--yes")
+    assert imported.returncode == 0
+    metadata = load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)}))
+    assert metadata == TeamMetadata(
+        team_name="existing-team",
+        team_description="keep me",
+        team_tags=["ops"],
+        default_agent_id="",
+    )
 
-    assert tuned.returncode == 0
 
-    registry_path = tmp_path / ".maia" / "registry.json"
-    assert json.loads(registry_path.read_text(encoding="utf-8")) == {
-        "agents": [
+def test_raw_registry_import_clears_dangling_default_agent_id(tmp_path: Path) -> None:
+    source_dir = tmp_path / "raw-dangling-source"
+    dest_home = tmp_path / "raw-dangling-dest"
+    registry_path = source_dir / "registry.json"
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": "other-agent",
+                    "name": "other",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
+    )
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(dest_home)}),
+        TeamMetadata(
+            team_name="existing-team",
+            team_description="keep me",
+            team_tags=["ops"],
+            default_agent_id="missing-agent",
+        ),
+    )
+
+    imported = run_module(dest_home, "import", str(registry_path), "--yes")
+    assert imported.returncode == 0
+    metadata = load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)}))
+    assert metadata == TeamMetadata(
+        team_name="existing-team",
+        team_description="keep me",
+        team_tags=["ops"],
+        default_agent_id="",
+    )
+
+
+def test_raw_registry_import_and_inspect_ignore_invalid_adjacent_manifest(tmp_path: Path) -> None:
+    source_dir = tmp_path / "raw-invalid-manifest"
+    registry_path = source_dir / "registry.json"
+    manifest_path = source_dir / "manifest.json"
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": "agent-001",
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
+    )
+    manifest_path.write_text("not-json\n", encoding="utf-8")
+
+    preview = run_module(tmp_path / "raw-invalid-dest", "import", str(registry_path), "--preview")
+    assert preview.returncode == 0
+    inspected = run_module(tmp_path / "raw-invalid-dest", "inspect", str(registry_path))
+    assert inspected.returncode == 0
+    assert "format=registry-json" in inspected.stdout
+
+
+def test_inspect_rejects_team_default_agent_missing_from_manifest_registry(tmp_path: Path) -> None:
+    source_dir = tmp_path / "inspect-invalid-team"
+    registry_path = source_dir / "registry.json"
+    manifest_path = source_dir / "manifest.json"
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": "agent-001",
+                    "name": "demo",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "",
+                    "model": "",
+                    "tags": [],
+                }
+            ]
+        },
+    )
+    manifest_path.write_text(
+        json.dumps(
             {
-                "agent_id": agent_id,
-                "name": "demo",
-                "status": "stopped",
-                "persona": "operator",
-            }
-        ]
+                "kind": "maia-backup-manifest",
+                "version": 1,
+                "scope_version": 2,
+                "created_at": "2026-04-14T22:24:00Z",
+                "label": "inspect-invalid-team",
+                "description": "invalid team metadata",
+                "created_by": "maia-cli",
+                "maia_version": "0.1.0",
+                "source_host": "test-host",
+                "source_platform": "linux",
+                "source_registry_path": str(registry_path),
+                "registry_file": "registry.json",
+                "portable_paths": ["registry.json"],
+                "portable_state_kinds": ["registry", "team-metadata"],
+                "runtime_only_paths": ["runtime/"],
+                "runtime_only_state_kinds": ["processes", "locks", "cache", "live-sessions"],
+                "agents": 1,
+                "team_name": "invalid-team",
+                "team_description": "invalid team metadata",
+                "team_tags": ["ops"],
+                "default_agent_id": "missing-agent",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    inspected = run_module(tmp_path / "inspect-invalid-dest", "inspect", str(manifest_path))
+    assert inspected.returncode == 1
+    assert "missing-agent" in inspected.stderr
+
+
+def test_import_without_yes_requires_confirmation_for_team_only_changes(tmp_path: Path) -> None:
+    source_home = tmp_path / "team-only-source"
+    dest_home = tmp_path / "team-only-dest"
+
+    agent_id = create_agent(source_home, "demo")
+    updated = run_module(
+        source_home,
+        "team",
+        "update",
+        "--name",
+        "incoming-team",
+        "--default-agent",
+        agent_id,
+    )
+    assert updated.returncode == 0
+
+    bundle_path = source_home / "team-only-confirm.maia"
+    exported = run_module(source_home, "export", str(bundle_path))
+    assert exported.returncode == 0
+
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(dest_home)}),
+        TeamMetadata(
+            team_name="existing-team",
+            team_description="",
+            team_tags=[],
+            default_agent_id="",
+        ),
+    )
+
+    imported = run_module(dest_home, "import", str(bundle_path))
+    assert imported.returncode == 1
+    assert "confirm prompt=Proceed with overwrite import? [y/N]" in imported.stdout
+    assert "cancelled import" in imported.stdout
+
+
+@pytest.mark.parametrize(
+    ("scope_version", "portable_state_kinds", "team_name", "expect_team_metadata"),
+    [
+        (1, ["registry"], "", False),
+        (2, ["registry", "team-metadata"], "legacy-team", True),
+    ],
+)
+def test_import_accepts_scope_version_1_and_2_manifests(
+    tmp_path: Path,
+    scope_version: int,
+    portable_state_kinds: list[str],
+    team_name: str,
+    expect_team_metadata: bool,
+) -> None:
+    source_dir = tmp_path / f"scope-{scope_version}"
+    registry_path = source_dir / "registry.json"
+    manifest_path = source_dir / "manifest.json"
+    agent_id = f"legacy0{scope_version}"
+
+    write_registry(
+        registry_path,
+        {
+            "agents": [
+                {
+                    "agent_id": agent_id,
+                    "name": f"legacy-{scope_version}",
+                    "status": "stopped",
+                    "persona": "",
+                    "role": "legacy-role",
+                    "model": "legacy-model",
+                    "tags": ["legacy", f"v{scope_version}"],
+                }
+            ]
+        },
+    )
+    manifest_payload = {
+        "kind": "maia-backup-manifest",
+        "version": 1,
+        "scope_version": scope_version,
+        "created_at": "2026-04-14T22:24:00Z",
+        "label": f"scope-{scope_version}",
+        "description": f"legacy scope {scope_version}",
+        "created_by": "maia-cli",
+        "maia_version": "0.1.0",
+        "source_host": "test-host",
+        "source_platform": "linux",
+        "source_registry_path": str(registry_path),
+        "registry_file": "registry.json",
+        "portable_paths": ["registry.json"],
+        "portable_state_kinds": portable_state_kinds,
+        "runtime_only_paths": ["runtime/"],
+        "runtime_only_state_kinds": ["processes", "locks", "cache", "live-sessions"],
+        "agents": 1,
+        "team_name": team_name,
+        "team_description": "legacy description" if expect_team_metadata else "",
+        "team_tags": ["legacy", "ops"] if expect_team_metadata else [],
+        "default_agent_id": agent_id if expect_team_metadata else "",
     }
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
 
-    listed = run_module(tmp_path, "agent", "list")
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
-
-
-def test_agent_tune_missing_agent_error(tmp_path: Path) -> None:
-    result = run_module(tmp_path, "agent", "tune", "missing", "--persona", "analyst")
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
-
-
-def test_agent_tune_missing_persona_file_error(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-    persona_path = tmp_path / "missing.txt"
-
-    result = run_module(
-        tmp_path, "agent", "tune", agent_id, "--persona-file", str(persona_path)
+    dest_home = tmp_path / f"imported-{scope_version}"
+    save_team_metadata(
+        get_team_metadata_path({"HOME": str(dest_home)}),
+        TeamMetadata(
+            team_name="stale-team",
+            team_description="stale description",
+            team_tags=["stale"],
+            default_agent_id="stale-agent",
+        ),
     )
+    imported = run_module(dest_home, "import", str(manifest_path), "--yes")
+    assert imported.returncode == 0
+    assert imported.stderr == ""
 
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert (
-        result.stderr.strip()
-        == f"error: Persona file {str(persona_path)!r} not found"
-    )
-
-
-def test_agent_tune_empty_persona_clears_value(tmp_path: Path) -> None:
-    created = run_module(tmp_path, "agent", "new", "demo")
-    agent_id = parse_fields(created.stdout.strip())["agent_id"]
-
-    first_tune = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "analyst")
-    second_tune = run_module(tmp_path, "agent", "tune", agent_id, "--persona", "")
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert first_tune.returncode == 0
-    assert second_tune.returncode == 0
-    assert second_tune.stderr == ""
-    assert second_tune.stdout.strip() == f"updated agent_id={agent_id} persona="
+    status = run_module(dest_home, "agent", "status", agent_id)
     assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=stopped persona="
-    )
+    fields = parse_fields(status.stdout.strip())
+    assert fields["role"] == "legacy-role"
+    assert fields["model"] == "legacy-model"
+    assert fields["tags"] == f"legacy,v{scope_version}"
 
-
-def test_agent_start_sets_running(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    started = run_module(tmp_path, "agent", "start", agent_id)
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert started.returncode == 0
-    assert started.stderr == ""
-    assert started.stdout.strip() == f"updated agent_id={agent_id} status=running"
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=running persona="
-    )
-
-
-def test_agent_stop_sets_stopped_after_start(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    started = run_module(tmp_path, "agent", "start", agent_id)
-    stopped = run_module(tmp_path, "agent", "stop", agent_id)
-    listed = run_module(tmp_path, "agent", "list")
-
-    assert started.returncode == 0
-    assert stopped.returncode == 0
-    assert stopped.stderr == ""
-    assert stopped.stdout.strip() == f"updated agent_id={agent_id} status=stopped"
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
-
-
-def test_agent_archive_sets_archived(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    archived = run_module(tmp_path, "agent", "archive", agent_id)
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert archived.returncode == 0
-    assert archived.stderr == ""
-    assert archived.stdout.strip() == f"updated agent_id={agent_id} status=archived"
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=archived persona="
-    )
-
-
-def test_agent_purge_archived_agent_succeeds(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    archived = run_module(tmp_path, "agent", "archive", agent_id)
-    purged = run_module(tmp_path, "agent", "purge", agent_id)
-    listed = run_module(tmp_path, "agent", "list")
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert archived.returncode == 0
-    assert purged.returncode == 0
-    assert purged.stderr == ""
-    assert purged.stdout.strip() == f"purged agent_id={agent_id}"
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip() == ""
-    assert status.returncode == 1
-    assert status.stdout == ""
-    assert status.stderr.strip() == f"error: Agent with id {agent_id!r} not found"
-
-    registry_path = tmp_path / ".maia" / "registry.json"
-    assert json.loads(registry_path.read_text(encoding="utf-8")) == {"agents": []}
-
-
-def test_agent_purge_running_agent_rejected(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    started = run_module(tmp_path, "agent", "start", agent_id)
-    purged = run_module(tmp_path, "agent", "purge", agent_id)
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert started.returncode == 0
-    assert purged.returncode == 1
-    assert purged.stdout == ""
-    assert (
-        purged.stderr.strip()
-        == f"error: Agent with id {agent_id!r} is not archived (status=running)"
-    )
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=running persona="
-    )
-
-
-def test_agent_purge_stopped_agent_rejected(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    purged = run_module(tmp_path, "agent", "purge", agent_id)
-    listed = run_module(tmp_path, "agent", "list")
-
-    assert purged.returncode == 1
-    assert purged.stdout == ""
-    assert (
-        purged.stderr.strip()
-        == f"error: Agent with id {agent_id!r} is not archived (status=stopped)"
-    )
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
-
-
-def test_agent_purge_missing_agent_error(tmp_path: Path) -> None:
-    result = run_module(tmp_path, "agent", "purge", "missing")
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
-
-
-def test_agent_purge_preserves_remaining_list_order(tmp_path: Path) -> None:
-    alpha_id = create_agent(tmp_path, "alpha")
-    beta_id = create_agent(tmp_path, "beta")
-    gamma_id = create_agent(tmp_path, "gamma")
-
-    archived = run_module(tmp_path, "agent", "archive", beta_id)
-    purged = run_module(tmp_path, "agent", "purge", beta_id)
-    listed = run_module(tmp_path, "agent", "list")
-
-    assert archived.returncode == 0
-    assert purged.returncode == 0
-    assert listed.returncode == 0
-    assert listed.stderr == ""
-    assert listed.stdout.strip().splitlines() == [
-        f"agent_id={alpha_id} name=alpha status=stopped",
-        f"agent_id={gamma_id} name=gamma status=stopped",
-    ]
-
-
-def test_agent_restore_sets_stopped_after_archive(tmp_path: Path) -> None:
-    agent_id = create_agent(tmp_path)
-
-    archived = run_module(tmp_path, "agent", "archive", agent_id)
-    restored = run_module(tmp_path, "agent", "restore", agent_id)
-    status = run_module(tmp_path, "agent", "status", agent_id)
-
-    assert archived.returncode == 0
-    assert restored.returncode == 0
-    assert restored.stderr == ""
-    assert restored.stdout.strip() == f"updated agent_id={agent_id} status=stopped"
-    assert status.returncode == 0
-    assert status.stderr == ""
-    assert (
-        status.stdout.strip()
-        == f"agent_id={agent_id} name=demo status=stopped persona="
-    )
-
-
-def test_agent_start_missing_agent_error(tmp_path: Path) -> None:
-    result = run_module(tmp_path, "agent", "start", "missing")
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-    assert result.stderr.strip() == "error: Agent with id 'missing' not found"
+    metadata = load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)}))
+    if expect_team_metadata:
+        assert metadata == TeamMetadata(
+            team_name=team_name,
+            team_description="legacy description",
+            team_tags=["legacy", "ops"],
+            default_agent_id=agent_id,
+        )
+    else:
+        assert metadata == TeamMetadata(
+            team_name="stale-team",
+            team_description="stale description",
+            team_tags=["stale"],
+            default_agent_id="",
+        )

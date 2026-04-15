@@ -103,6 +103,30 @@ def test_registry_set_persona_updates_record() -> None:
     assert record.persona == "careful"
 
 
+def test_registry_profile_tags_are_defensively_copied() -> None:
+    registry = AgentRegistry()
+    record = AgentRecord(
+        agent_id="agent-001",
+        name="planner",
+        status=AgentStatus.RUNNING,
+        persona="careful",
+        tags=["ops"],
+    )
+
+    registry.add(record)
+    record.tags.append("mutated")
+    assert registry.get("agent-001").tags == ["ops"]
+
+    retrieved = registry.get("agent-001")
+    retrieved.tags.append("leaked")
+    assert registry.get("agent-001").tags == ["ops"]
+
+    listed = registry.list()[0]
+    listed.tags.append("listed")
+    assert registry.get("agent-001").tags == ["ops"]
+
+
+
 def test_registry_remove_deletes_record_and_preserves_order() -> None:
     registry = AgentRegistry()
     alpha = AgentRecord(

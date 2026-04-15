@@ -8,16 +8,21 @@ from pathlib import Path
 
 __all__ = [
     "get_default_export_path",
+    "get_default_manifest_path",
     "get_exports_dir",
     "get_maia_home",
     "get_registry_path",
     "get_runtime_dir",
+    "get_team_metadata_path",
 ]
 
 _MAIA_HOME_DIRNAME = ".maia"
+_DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
 _EXPORTS_DIRNAME = "exports"
+_MANIFEST_FILENAME = "manifest.json"
 _REGISTRY_FILENAME = "registry.json"
 _RUNTIME_DIRNAME = "runtime"
+_TEAM_METADATA_FILENAME = "team.json"
 
 
 def get_maia_home(env: Mapping[str, str] | None = None) -> Path:
@@ -49,6 +54,18 @@ def get_runtime_dir(env: Mapping[str, str] | None = None) -> Path:
 
 
 def get_default_export_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the default path for exporting a portable registry snapshot."""
+    """Return the default path for exporting a portable Maia bundle."""
 
-    return get_exports_dir(env) / _REGISTRY_FILENAME
+    return get_exports_dir(env) / _DEFAULT_BUNDLE_FILENAME
+
+
+def get_default_manifest_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the default path for the portable backup manifest."""
+
+    return get_exports_dir(env) / _MANIFEST_FILENAME
+
+
+def get_team_metadata_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the default path for team-level metadata."""
+
+    return get_maia_home(env) / _TEAM_METADATA_FILENAME

@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 import sys
 import uuid
 
 from maia.agent_model import AgentRecord, AgentStatus
-from maia.app_state import get_default_export_path, get_registry_path
+from maia.app_state import get_default_export_path, get_registry_path, get_team_metadata_path
+from maia.backup_manifest import BackupManifest, load_backup_manifest, write_backup_manifest
+from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
+from maia.bundle_archive import (
+    inspect_bundle_archive,
+    is_bundle_archive_path,
+    write_bundle_archive,
+)
 from maia.storage import JsonRegistryStorage
 
 PLACEHOLDER_TEMPLATE = "Not implemented yet: {}"
+TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 AGENT_COMMANDS = (
     "new",
     "start",
@@ -21,11 +30,10 @@ AGENT_COMMANDS = (
     "restore",
     "status",
     "list",
-    "export",
-    "import",
     "tune",
     "purge",
 )
+TEAM_COMMANDS = ("show", "update")
 LIFECYCLE_STATUS_BY_COMMAND = {
     "start": AgentStatus.RUNNING,
     "stop": AgentStatus.STOPPED,
@@ -40,25 +48,104 @@ RUNTIME_AGENT_COMMANDS = frozenset(
         "new",
         "list",
         "status",
-        "export",
-        "import",
         "tune",
         "purge",
         *LIFECYCLE_STATUS_BY_COMMAND,
     }
 )
+RUNTIME_TOP_LEVEL_COMMANDS = frozenset(TOP_LEVEL_TRANSFER_COMMANDS)
+RUNTIME_TEAM_COMMANDS = frozenset(TEAM_COMMANDS)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="maia", description="Maia control plane CLI.")
+    parser = argparse.ArgumentParser(
+        prog="maia",
+        description="Maia control plane CLI.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.set_defaults(parser=parser)
 
     top_level = parser.add_subparsers(dest="resource")
 
+    for command_name in TOP_LEVEL_TRANSFER_COMMANDS:
+        transfer_help = {
+            "export": "Export Maia portable state",
+            "import": "Import Maia portable state safely",
+            "inspect": "Inspect an importable Maia snapshot",
+        }[command_name]
+        command_parser = top_level.add_parser(
+            command_name,
+            help=transfer_help,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        command_parser.set_defaults(
+            parser=command_parser,
+            handler=_handle_placeholder,
+            placeholder_target=command_name,
+        )
+        if command_name == "export":
+            command_parser.epilog = (
+                "Examples:\n"
+                "  maia export\n"
+                "  maia export backups/team.maia\n"
+                "  maia export backups/team.maia --label prod --description 'Nightly snapshot'"
+            )
+            command_parser.add_argument(
+                "path",
+                nargs="?",
+                help="Write a Maia bundle (.maia) or raw registry snapshot path",
+            )
+            command_parser.add_argument(
+                "--label",
+                help="Override the bundle label stored in manifest metadata",
+            )
+            command_parser.add_argument(
+                "--description",
+                help="Override the bundle description stored in manifest metadata",
+            )
+        if command_name in {"import", "inspect"}:
+            if command_name == "import":
+                command_parser.epilog = (
+                    "Examples:\n"
+                    "  maia import backups/team.maia --preview\n"
+                    "  maia import backups/team.maia --preview --verbose-preview\n"
+                    "  maia import backups/team.maia\n"
+                    "  maia import backups/team.maia --yes"
+                )
+            if command_name == "inspect":
+                command_parser.epilog = (
+                    "Examples:\n"
+                    "  maia inspect backups/team.maia\n"
+                    "  maia inspect backups/manifest.json"
+                )
+            command_parser.add_argument(
+                "path",
+                help="Read a .maia bundle, manifest.json, or raw registry snapshot path",
+            )
+        if command_name == "import":
+            command_parser.add_argument(
+                "--preview",
+                action="store_true",
+                help="Show the import preview and risk summary without changing local Maia state",
+            )
+            command_parser.add_argument(
+                "--verbose-preview",
+                action="store_true",
+                help="Show full added/removed/changed preview lists without truncation",
+            )
+            command_parser.add_argument(
+                "--yes",
+                action="store_true",
+                help="Skip overwrite confirmation for destructive imports",
+            )
+
     agent_parser = top_level.add_parser("agent", help="Manage agents")
     agent_parser.set_defaults(parser=agent_parser)
 
-    agent_commands = agent_parser.add_subparsers(dest="agent_command")
+    agent_commands = agent_parser.add_subparsers(
+        dest="agent_command",
+        metavar="{" + ",".join(AGENT_COMMANDS) + "}",
+    )
     for command_name in AGENT_COMMANDS:
         command_parser = agent_commands.add_parser(command_name, help=f"{command_name} agent placeholder")
         command_parser.set_defaults(
@@ -69,12 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
-        if command_name == "export":
-            command_parser.add_argument("path", nargs="?", help="Registry JSON path")
-        if command_name == "import":
-            command_parser.add_argument("path", help="Registry JSON path")
         if command_name == "tune":
-            persona_group = command_parser.add_mutually_exclusive_group(required=True)
+            persona_group = command_parser.add_mutually_exclusive_group()
             persona_group.add_argument(
                 "--persona",
                 help="Persona text to store for the agent",
@@ -82,6 +165,87 @@ def build_parser() -> argparse.ArgumentParser:
             persona_group.add_argument(
                 "--persona-file",
                 help="UTF-8 text file containing the persona to store for the agent",
+            )
+            role_group = command_parser.add_mutually_exclusive_group()
+            role_group.add_argument("--role", help="Set the agent role")
+            role_group.add_argument(
+                "--clear-role",
+                action="store_true",
+                help="Clear the stored agent role",
+            )
+            model_group = command_parser.add_mutually_exclusive_group()
+            model_group.add_argument("--model", help="Set the agent model id or alias")
+            model_group.add_argument(
+                "--clear-model",
+                action="store_true",
+                help="Clear the stored agent model id or alias",
+            )
+            tags_group = command_parser.add_mutually_exclusive_group()
+            tags_group.add_argument(
+                "--tags",
+                help="Comma-separated agent tags to store (for example: research,reviewer)",
+            )
+            tags_group.add_argument(
+                "--clear-tags",
+                action="store_true",
+                help="Clear all stored agent tags",
+            )
+
+    team_parser = top_level.add_parser("team", help="Manage team metadata")
+    team_parser.set_defaults(parser=team_parser)
+
+    team_commands = team_parser.add_subparsers(
+        dest="team_command",
+        metavar="{" + ",".join(TEAM_COMMANDS) + "}",
+    )
+    for command_name in TEAM_COMMANDS:
+        command_parser = team_commands.add_parser(command_name, help=f"{command_name} team placeholder")
+        command_parser.set_defaults(
+            handler=_handle_placeholder,
+            placeholder_target=f"team {command_name}",
+        )
+        if command_name == "show":
+            command_parser.epilog = "Examples:\n  maia team show"
+        if command_name == "update":
+            command_parser.epilog = (
+                "Examples:\n"
+                "  maia team update --name research-lab --tags research,ops\n"
+                "  maia team update --description 'Nightly migration team' --default-agent abcd1234\n"
+                "  maia team update --clear-default-agent --clear-tags"
+            )
+            name_group = command_parser.add_mutually_exclusive_group()
+            name_group.add_argument("--name", help="Set the team display name")
+            name_group.add_argument(
+                "--clear-name",
+                action="store_true",
+                help="Clear the stored team name",
+            )
+            description_group = command_parser.add_mutually_exclusive_group()
+            description_group.add_argument("--description", help="Set the team description")
+            description_group.add_argument(
+                "--clear-description",
+                action="store_true",
+                help="Clear the stored team description",
+            )
+            tags_group = command_parser.add_mutually_exclusive_group()
+            tags_group.add_argument(
+                "--tags",
+                help="Comma-separated team tags to store (for example: research,ops)",
+            )
+            tags_group.add_argument(
+                "--clear-tags",
+                action="store_true",
+                help="Clear all stored team tags",
+            )
+            default_agent_group = command_parser.add_mutually_exclusive_group()
+            default_agent_group.add_argument(
+                "--default-agent",
+                help="Set the default agent id for the team",
+            )
+            default_agent_group.add_argument(
+                "--clear-default-agent",
+                action="store_true",
+                help="Clear the stored default agent id",
             )
 
     return parser
@@ -114,33 +278,52 @@ def _should_handle_runtime_command(
 ) -> bool:
     return (
         argv is None
-        and getattr(args, "resource", None) == "agent"
-        and getattr(args, "agent_command", None) in RUNTIME_AGENT_COMMANDS
+        and (
+            (
+                getattr(args, "resource", None) == "agent"
+                and getattr(args, "agent_command", None) in RUNTIME_AGENT_COMMANDS
+            )
+            or (
+                getattr(args, "resource", None) == "team"
+                and getattr(args, "team_command", None) in RUNTIME_TEAM_COMMANDS
+            )
+            or getattr(args, "resource", None) in RUNTIME_TOP_LEVEL_COMMANDS
+        )
     )
 
 
 def _handle_runtime_command(args: argparse.Namespace) -> int:
     storage = JsonRegistryStorage()
     registry_path = get_registry_path()
+    team_metadata_path = get_team_metadata_path()
 
     try:
-        if args.agent_command == "import":
-            return _handle_agent_import(args, storage, registry_path)
+        command_name = _get_runtime_command_name(args)
+        if command_name == "import":
+            return _handle_transfer_import(args, storage, registry_path)
+        if command_name == "export":
+            registry = storage.load(registry_path)
+            return _handle_transfer_export(args, storage, registry)
+        if command_name == "inspect":
+            return _handle_transfer_inspect(args, storage)
+        if command_name == "show":
+            return _handle_team_show(team_metadata_path)
+        if command_name == "update":
+            registry = storage.load(registry_path)
+            return _handle_team_update(args, registry, team_metadata_path)
 
         registry = storage.load(registry_path)
-        if args.agent_command == "new":
+        if command_name == "new":
             return _handle_agent_new(args, storage, registry_path, registry)
-        if args.agent_command == "list":
+        if command_name == "list":
             return _handle_agent_list(registry)
-        if args.agent_command == "status":
+        if command_name == "status":
             return _handle_agent_status(args, registry)
-        if args.agent_command == "export":
-            return _handle_agent_export(args, storage, registry)
-        if args.agent_command == "tune":
+        if command_name == "tune":
             return _handle_agent_tune(args, storage, registry_path, registry)
-        if args.agent_command == "purge":
+        if command_name == "purge":
             return _handle_agent_purge(args, storage, registry_path, registry)
-        if args.agent_command in LIFECYCLE_STATUS_BY_COMMAND:
+        if command_name in LIFECYCLE_STATUS_BY_COMMAND:
             return _handle_agent_lifecycle(args, storage, registry_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -163,10 +346,13 @@ def _handle_agent_new(
         name=args.name,
         status=AgentStatus.STOPPED,
         persona="",
+        role="",
+        model="",
+        tags=[],
     )
     registry.add(record)
     storage.save(registry_path, registry)
-    print(f"created agent_id={record.agent_id} name={record.name} status={record.status.value}")
+    print(f"created agent_id={record.agent_id} name={_format_preview_value(record.name)} status={record.status.value}")
     return 0
 
 
@@ -176,35 +362,678 @@ def _handle_agent_list(registry) -> int:
     return 0
 
 
-def _handle_agent_export(
+def _handle_transfer_export(
     args: argparse.Namespace,
     storage: JsonRegistryStorage,
     registry,
 ) -> int:
     export_path = Path(args.path) if args.path is not None else get_default_export_path()
-    storage.save(export_path, registry)
-    print(f"exported registry path={export_path} agents={len(registry.list())}")
+    label = _normalize_export_metadata_value(args.label, field_name="label")
+    description = _normalize_export_metadata_value(
+        args.description,
+        field_name="description",
+    )
+    team_metadata = _sanitize_team_metadata_for_registry(
+        load_team_metadata(get_team_metadata_path()),
+        registry,
+    )
+    if export_path.exists() and export_path.is_dir():
+        raise ValueError(f"Export path {str(export_path)!r} is a directory")
+    if is_bundle_archive_path(export_path):
+        write_bundle_archive(
+            export_path,
+            storage,
+            registry,
+            label=label,
+            description=description,
+            source_registry_path=get_registry_path(),
+            team_metadata=team_metadata,
+        )
+        print(
+            f"exported path={_format_preview_value(str(export_path))} "
+            f"format=maia-bundle agents={len(registry.list())}"
+        )
+        return 0
+    if export_path.name == "manifest.json":
+        raise ValueError(
+            f"Export path {str(export_path)!r} is reserved for the backup manifest"
+        )
+    storage.save(export_path, registry, portable=True)
+    manifest_path = write_backup_manifest(
+        export_path,
+        agent_count=len(registry.list()),
+        label=label or export_path.stem,
+        description=description,
+        source_registry_path=get_registry_path(),
+        team_metadata=team_metadata,
+    )
+    print(
+        f"exported registry path={_format_preview_value(str(export_path))} "
+        f"manifest={_format_preview_value(str(manifest_path))} agents={len(registry.list())}"
+    )
     return 0
 
 
-def _handle_agent_import(
+def _handle_transfer_import(
     args: argparse.Namespace,
     storage: JsonRegistryStorage,
     registry_path: str,
 ) -> int:
-    import_path = Path(args.path)
-    if not import_path.exists():
-        raise ValueError(f"Import file {args.path!r} not found")
+    current_registry = storage.load(registry_path)
+    current_team_metadata = load_team_metadata(get_team_metadata_path())
+    incoming_registry, incoming_team_metadata, source_path, import_path = _load_registry_for_transfer(
+        args.path, storage
+    )
+    effective_incoming_team_metadata = (
+        _sanitize_team_metadata_for_registry(current_team_metadata, incoming_registry)
+        if incoming_team_metadata is None
+        else incoming_team_metadata
+    )
+    preview = _build_import_preview(
+        current_registry,
+        incoming_registry,
+        current_team_metadata=current_team_metadata,
+        incoming_team_metadata=effective_incoming_team_metadata,
+        verbose=args.verbose_preview,
+    )
+    if args.preview:
+        _print_import_preview(preview, source_path, import_path)
+        return 0
 
-    registry = storage.load(import_path)
-    storage.save(registry_path, registry)
-    print(f"imported registry path={args.path} agents={len(registry.list())}")
+    _print_import_preview(preview, source_path, import_path)
+    if preview["current_agents"] > 0 or preview["team_details"] != "-":
+        print("warning import will overwrite the current Maia registry with the snapshot state")
+        print("warning removed agents and changed fields will be replaced by snapshot values")
+        if not args.yes:
+            if not _confirm_import_overwrite():
+                print("cancelled import")
+                return 1
+    storage.save(registry_path, incoming_registry)
+    if effective_incoming_team_metadata != current_team_metadata:
+        save_team_metadata(get_team_metadata_path(), effective_incoming_team_metadata)
+    print(
+        f"imported source={_format_preview_value(str(source_path))} "
+        f"registry={_format_preview_value(str(import_path))} "
+        f"agents={len(incoming_registry.list())}"
+    )
     return 0
+
+
+def _print_import_preview(preview: dict[str, object], source_path: Path, import_path: Path) -> None:
+    print(
+        "preview "
+        f"source={_format_preview_value(str(source_path))} "
+        f"registry={_format_preview_value(str(import_path))} "
+        f"current_agents={preview['current_agents']} "
+        f"incoming_agents={preview['incoming_agents']} "
+        f"added={preview['added_count']} "
+        f"removed={preview['removed_count']} "
+        f"changed={preview['changed_count']} "
+        f"unchanged={preview['unchanged_count']}"
+    )
+    print(
+        "risk "
+        f"level={preview['risk_level']} "
+        f"reasons={preview['risk_reasons']}"
+    )
+    print(
+        "added "
+        f"ids={preview['added_ids']} "
+        f"names={preview['added_names']}"
+    )
+    print(
+        "removed "
+        f"ids={preview['removed_ids']} "
+        f"names={preview['removed_names']}"
+    )
+    print(
+        "changed "
+        f"ids={preview['changed_ids']} "
+        f"names={preview['changed_names']} "
+        f"details={preview['change_details']}"
+    )
+    print(f"team details={preview['team_details']}")
+
+
+def _handle_transfer_inspect(args: argparse.Namespace, storage: JsonRegistryStorage) -> int:
+    inspection = _inspect_transfer_source(args.path, storage)
+    print(
+        "inspected "
+        f"path={_format_preview_value(str(inspection['path']))} "
+        f"format={inspection['format']} "
+        f"registry={_format_preview_value(str(inspection['registry']))} "
+        f"agents={inspection['agents']}"
+    )
+    if inspection["manifest"] is not None:
+        manifest = inspection["manifest"]
+        print(
+            "manifest "
+            f"kind={manifest.kind} "
+            f"version={manifest.version} "
+            f"scope_version={manifest.scope_version} "
+            f"created_at={manifest.created_at}"
+        )
+        print(
+            "bundle "
+            f"label={_format_preview_value(manifest.label)} "
+            f"created_by={_format_preview_value(manifest.created_by)} "
+            f"maia_version={_format_preview_value(manifest.maia_version)}"
+        )
+        print(
+            "provenance "
+            f"source_host={_format_preview_value(manifest.source_host)} "
+            f"source_platform={_format_preview_value(manifest.source_platform)} "
+            f"source_registry={_format_preview_value(manifest.source_registry_path)}"
+        )
+        print(f"description value={_format_preview_value(manifest.description)}")
+        print(
+            "portable "
+            f"paths={','.join(manifest.portable_paths)} "
+            f"state_kinds={','.join(manifest.portable_state_kinds)}"
+        )
+        print(
+            "runtime "
+            f"paths={','.join(manifest.runtime_only_paths)} "
+            f"state_kinds={','.join(manifest.runtime_only_state_kinds)}"
+        )
+        if manifest.scope_version >= 2:
+            print(
+                "team "
+                f"name={_format_preview_value(manifest.team_name)} "
+                f"description={_format_preview_value(manifest.team_description)} "
+                f"tags={_format_encoded_list_or_dash(manifest.team_tags)} "
+                f"default_agent_id={_format_preview_value(manifest.default_agent_id)}"
+            )
+    print(
+        "agents "
+        f"names={inspection['agent_names']} "
+        f"statuses={inspection['status_counts']}"
+    )
+    print(f"profiles entries={inspection['agent_profiles']}")
+    return 0
+
+
+def _inspect_transfer_source(source: str, storage: JsonRegistryStorage) -> dict[str, object]:
+    source_path = Path(source)
+    if not source_path.exists():
+        raise ValueError(f"Inspect file {source!r} not found")
+    if source_path.is_dir():
+        raise ValueError(f"Inspect file {source!r} is a directory")
+    if is_bundle_archive_path(source_path):
+        manifest, registry, bundle_path, registry_path = inspect_bundle_archive(source_path, storage)
+        _validate_import_team_metadata(_team_metadata_from_manifest(manifest), registry)
+        return _build_inspection_result(
+            path=bundle_path,
+            format_name="maia-bundle",
+            manifest=manifest,
+            registry=registry,
+            registry_path=registry_path,
+        )
+    if source_path.name == "manifest.json":
+        manifest = load_backup_manifest(source_path)
+        registry_path = _resolve_import_registry_path(source_path)
+        registry = storage.load(registry_path)
+        _validate_import_team_metadata(_team_metadata_from_manifest(manifest), registry)
+        return _build_inspection_result(
+            path=source_path,
+            format_name="manifest-json",
+            manifest=manifest,
+            registry=registry,
+            registry_path=registry_path,
+        )
+
+    registry = storage.load(source_path)
+    manifest = _maybe_load_adjacent_manifest(source_path)
+    _validate_import_team_metadata(_team_metadata_from_manifest(manifest), registry)
+    return _build_inspection_result(
+        path=source_path,
+        format_name="registry-json",
+        manifest=manifest,
+        registry=registry,
+        registry_path=source_path,
+    )
+
+
+def _build_inspection_result(
+    *,
+    path: Path,
+    format_name: str,
+    manifest: BackupManifest | None,
+    registry,
+    registry_path: Path,
+) -> dict[str, object]:
+    records = registry.list()
+    status_counts = Counter(record.status.value for record in records)
+    return {
+        "path": str(path),
+        "format": format_name,
+        "manifest": manifest,
+        "registry": str(registry_path),
+        "agents": len(records),
+        "agent_names": _format_agent_names(records),
+        "status_counts": _format_status_counts(status_counts),
+        "agent_profiles": _format_agent_profiles(records),
+    }
+
+
+def _build_import_preview(
+    current_registry,
+    incoming_registry,
+    *,
+    current_team_metadata: TeamMetadata,
+    incoming_team_metadata: TeamMetadata | None,
+    verbose: bool = False,
+) -> dict[str, object]:
+    current_records = {record.agent_id: record for record in current_registry.list()}
+    incoming_records = {record.agent_id: record for record in incoming_registry.list()}
+    effective_incoming_team_metadata = (
+        current_team_metadata if incoming_team_metadata is None else incoming_team_metadata
+    )
+
+    current_ids = set(current_records)
+    incoming_ids = set(incoming_records)
+
+    added_ids = sorted(incoming_ids - current_ids)
+    removed_ids = sorted(current_ids - incoming_ids)
+    shared_ids = sorted(current_ids & incoming_ids)
+
+    changed_ids: list[str] = []
+    unchanged_count = 0
+    change_details: list[str] = []
+    for agent_id in shared_ids:
+        current_record = current_records[agent_id]
+        incoming_record = incoming_records[agent_id]
+        changes: list[str] = []
+        if current_record.name != incoming_record.name:
+            changes.append(
+                f"name:{_format_preview_value(current_record.name)}->{_format_preview_value(incoming_record.name)}"
+            )
+        if current_record.status != incoming_record.status:
+            changes.append(
+                f"status:{current_record.status.value}->{incoming_record.status.value}"
+            )
+        if current_record.persona != incoming_record.persona:
+            changes.append(
+                f"persona:{_format_preview_value(current_record.persona)}->{_format_preview_value(incoming_record.persona)}"
+            )
+        if current_record.role != incoming_record.role:
+            changes.append(
+                f"role:{_format_preview_value(current_record.role)}->{_format_preview_value(incoming_record.role)}"
+            )
+        if current_record.model != incoming_record.model:
+            changes.append(
+                f"model:{_format_preview_value(current_record.model)}->{_format_preview_value(incoming_record.model)}"
+            )
+        if current_record.tags != incoming_record.tags:
+            changes.append(
+                f"tags:{_format_encoded_list_or_dash(current_record.tags)}->{_format_encoded_list_or_dash(incoming_record.tags)}"
+            )
+        if changes:
+            changed_ids.append(agent_id)
+            change_details.append(f"{agent_id}:{'+'.join(changes)}")
+        else:
+            unchanged_count += 1
+
+    team_changes: list[str] = []
+    if current_team_metadata.team_name != effective_incoming_team_metadata.team_name:
+        team_changes.append(
+            f"name:{_format_preview_value(current_team_metadata.team_name)}->{_format_preview_value(effective_incoming_team_metadata.team_name)}"
+        )
+    if current_team_metadata.team_description != effective_incoming_team_metadata.team_description:
+        team_changes.append(
+            f"description:{_format_preview_value(current_team_metadata.team_description)}->{_format_preview_value(effective_incoming_team_metadata.team_description)}"
+        )
+    if current_team_metadata.team_tags != effective_incoming_team_metadata.team_tags:
+        team_changes.append(
+            f"tags:{_format_encoded_list_or_dash(current_team_metadata.team_tags)}->{_format_encoded_list_or_dash(effective_incoming_team_metadata.team_tags)}"
+        )
+    if current_team_metadata.default_agent_id != effective_incoming_team_metadata.default_agent_id:
+        team_changes.append(
+            f"default_agent_id:{_format_preview_value(current_team_metadata.default_agent_id)}->{_format_preview_value(effective_incoming_team_metadata.default_agent_id)}"
+        )
+
+    risk_level, risk_reasons = _classify_import_risk(
+        current_agents=len(current_records),
+        incoming_agents=len(incoming_records),
+        added_count=len(added_ids),
+        removed_count=len(removed_ids),
+        changed_count=len(changed_ids),
+        shared_count=len(shared_ids),
+        team_changed=bool(team_changes),
+    )
+
+    list_formatter = _format_list_or_dash if verbose else _format_preview_list
+
+    return {
+        "current_agents": len(current_records),
+        "incoming_agents": len(incoming_records),
+        "added_count": len(added_ids),
+        "removed_count": len(removed_ids),
+        "changed_count": len(changed_ids),
+        "unchanged_count": unchanged_count,
+        "added_ids": list_formatter(added_ids),
+        "removed_ids": list_formatter(removed_ids),
+        "changed_ids": list_formatter(changed_ids),
+        "added_names": list_formatter([
+            _format_preview_value(incoming_records[agent_id].name) for agent_id in added_ids
+        ]),
+        "removed_names": list_formatter([
+            _format_preview_value(current_records[agent_id].name) for agent_id in removed_ids
+        ]),
+        "changed_names": list_formatter([
+            _format_preview_value(incoming_records[agent_id].name) for agent_id in changed_ids
+        ]),
+        "change_details": list_formatter(change_details),
+        "team_details": list_formatter(team_changes),
+        "risk_level": risk_level,
+        "risk_reasons": risk_reasons,
+    }
+
+
+def _classify_import_risk(
+    *,
+    current_agents: int,
+    incoming_agents: int,
+    added_count: int,
+    removed_count: int,
+    changed_count: int,
+    shared_count: int,
+    team_changed: bool,
+) -> tuple[str, str]:
+    if added_count == 0 and removed_count == 0 and changed_count == 0 and not team_changed:
+        return "safe", "identical"
+
+    reasons: list[str] = []
+    if current_agents == 0:
+        reasons.append("current_empty")
+    if added_count > 0:
+        reasons.append("added_agents")
+    if removed_count > 0:
+        reasons.append("removed_agents")
+    if changed_count > 0:
+        reasons.append("changed_agents")
+    if team_changed:
+        reasons.append("changed_team_metadata")
+    if current_agents > 0 and incoming_agents > 0 and shared_count == 0:
+        reasons.append("no_shared_agent_ids")
+
+    if current_agents == 0:
+        return "low-change", _format_list_or_dash(reasons)
+    if current_agents > 0 and incoming_agents > 0 and shared_count == 0:
+        return "replacement-like", _format_list_or_dash(reasons)
+    if removed_count > 0 or changed_count > 1 or added_count > 1:
+        return "high-impact", _format_list_or_dash(reasons)
+    return "low-change", _format_list_or_dash(reasons)
+
+
+def _maybe_load_adjacent_manifest(registry_path: Path) -> BackupManifest | None:
+    manifest_path = registry_path.parent / "manifest.json"
+    if not manifest_path.exists() or manifest_path.is_dir():
+        return None
+    try:
+        manifest = load_backup_manifest(manifest_path)
+    except ValueError:
+        return None
+    return manifest if manifest.registry_file == registry_path.name else None
+
+
+def _team_metadata_from_manifest(manifest: BackupManifest | None) -> TeamMetadata | None:
+    if manifest is None or manifest.scope_version < 2:
+        return None
+    return TeamMetadata(
+        team_name=manifest.team_name,
+        team_description=manifest.team_description,
+        team_tags=list(manifest.team_tags),
+        default_agent_id=manifest.default_agent_id,
+    )
+
+
+def _handle_team_show(team_metadata_path: Path) -> int:
+    metadata = load_team_metadata(team_metadata_path)
+    print(_format_team_metadata(metadata))
+    return 0
+
+
+def _handle_team_update(args: argparse.Namespace, registry, team_metadata_path: Path) -> int:
+    metadata = load_team_metadata(team_metadata_path)
+    updated = _resolve_team_metadata_update(args, metadata, registry)
+    save_team_metadata(team_metadata_path, updated)
+    print(
+        "updated "
+        f"name={_format_preview_value(updated.team_name)} "
+        f"description={_format_preview_value(updated.team_description)} "
+        f"tags={_format_encoded_list_or_dash(updated.team_tags)} "
+        f"default_agent_id={_format_preview_value(updated.default_agent_id)}"
+    )
+    return 0
+
+
+def _resolve_team_metadata_update(args: argparse.Namespace, metadata: TeamMetadata, registry) -> TeamMetadata:
+    updates_requested = False
+
+    team_name = metadata.team_name
+    if args.clear_name:
+        team_name = ""
+        updates_requested = True
+    elif args.name is not None:
+        team_name = _normalize_optional_cli_text(args.name, field_name="team name")
+        updates_requested = True
+
+    team_description = metadata.team_description
+    if args.clear_description:
+        team_description = ""
+        updates_requested = True
+    elif args.description is not None:
+        team_description = _normalize_optional_cli_text(args.description, field_name="team description")
+        updates_requested = True
+
+    team_tags = list(metadata.team_tags)
+    if args.clear_tags:
+        team_tags = []
+        updates_requested = True
+    elif args.tags is not None:
+        team_tags = _parse_team_tags(args.tags)
+        updates_requested = True
+
+    default_agent_id = metadata.default_agent_id
+    if args.clear_default_agent:
+        default_agent_id = ""
+        updates_requested = True
+    elif args.default_agent is not None:
+        default_agent_id = _normalize_optional_cli_text(
+            args.default_agent,
+            field_name="default agent id",
+        )
+        registry.get(default_agent_id)
+        updates_requested = True
+
+    if not updates_requested:
+        raise ValueError("Team update requires at least one change flag")
+
+    return TeamMetadata(
+        team_name=team_name,
+        team_description=team_description,
+        team_tags=team_tags,
+        default_agent_id=default_agent_id,
+    )
+
+
+def _normalize_optional_cli_text(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name.capitalize()} must not be empty")
+    return normalized
+
+
+def _parse_tag_list(raw_tags: str, *, field_name: str) -> list[str]:
+    tags = [item.strip() for item in raw_tags.split(",")]
+    if any(not item for item in tags):
+        raise ValueError(f"{field_name} must be a comma-separated list of non-empty values")
+    return list(dict.fromkeys(tags))
+
+
+def _parse_team_tags(raw_tags: str) -> list[str]:
+    return _parse_tag_list(raw_tags, field_name="Team tags")
+
+
+def _format_team_metadata(metadata: TeamMetadata) -> str:
+    return (
+        "team "
+        f"name={_format_preview_value(metadata.team_name)} "
+        f"description={_format_preview_value(metadata.team_description)} "
+        f"tags={_format_encoded_list_or_dash(metadata.team_tags)} "
+        f"default_agent_id={_format_preview_value(metadata.default_agent_id)}"
+    )
+
+
+def _format_agent_profiles(records: list[AgentRecord]) -> str:
+    if not records:
+        return "-"
+    return ",".join(
+        (
+            f"{record.agent_id}:"
+            f"role={_format_preview_value(record.role)}+"
+            f"model={_format_preview_value(record.model)}+"
+            f"tags={_format_encoded_list_or_dash(record.tags)}"
+        )
+        for record in records
+    )
+
+
+def _format_agent_names(records: list[AgentRecord]) -> str:
+    return ",".join(_format_preview_value(record.name) for record in records) if records else "-"
+
+
+def _format_list_or_dash(values: list[str]) -> str:
+    return ",".join(values) if values else "-"
+
+
+def _format_encoded_list_or_dash(values: list[str]) -> str:
+    return ",".join(_format_preview_value(value) for value in values) if values else "-"
+
+
+def _format_preview_list(values: list[str], *, limit: int = 5) -> str:
+    if not values:
+        return "-"
+    if len(values) <= limit:
+        return ",".join(values)
+    visible = ",".join(values[:limit])
+    return f"{visible},...(+{len(values) - limit})"
+
+
+def _format_preview_value(value: str) -> str:
+    if not value:
+        return "∅"
+    return value.replace("\n", "↵").replace("\r", "␍").replace(" ", "␠").replace(",", "⸴")
+
+
+def _format_status_counts(status_counts: Counter[str]) -> str:
+    if not status_counts:
+        return "-"
+    ordered_statuses = (
+        AgentStatus.RUNNING.value,
+        AgentStatus.STOPPED.value,
+        AgentStatus.ARCHIVED.value,
+    )
+    return ",".join(
+        f"{status}:{status_counts[status]}"
+        for status in ordered_statuses
+        if status_counts[status]
+    )
+
+
+def _confirm_import_overwrite() -> bool:
+    print("confirm prompt=Proceed with overwrite import? [y/N]")
+    try:
+        response = input()
+    except EOFError:
+        return False
+    return response.strip().lower() in {"y", "yes"}
+
+
+def _normalize_export_metadata_value(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"Export {field_name} must not be empty")
+    return normalized
+
+
+def _load_registry_for_transfer(
+    source: str,
+    storage: JsonRegistryStorage,
+) -> tuple[object, TeamMetadata | None, Path, Path]:
+    source_path = Path(source)
+    if not source_path.exists():
+        raise ValueError(f"Import file {source!r} not found")
+    if source_path.is_dir():
+        raise ValueError(f"Import file {source!r} is a directory")
+    if is_bundle_archive_path(source_path):
+        manifest, registry, bundle_path, registry_path = inspect_bundle_archive(source_path, storage)
+        team_metadata = _team_metadata_from_manifest(manifest)
+        _validate_import_team_metadata(team_metadata, registry)
+        return registry, team_metadata, bundle_path, registry_path
+
+    import_path = _resolve_import_registry_path(source_path)
+    registry = storage.load(import_path)
+    manifest = load_backup_manifest(source_path) if source_path.name == "manifest.json" else _maybe_load_adjacent_manifest(source_path)
+    team_metadata = _team_metadata_from_manifest(manifest)
+    _validate_import_team_metadata(team_metadata, registry)
+    return registry, team_metadata, source_path, import_path
+
+
+def _validate_import_team_metadata(team_metadata: TeamMetadata | None, registry) -> None:
+    if team_metadata is None or not team_metadata.default_agent_id:
+        return
+    registry.get(team_metadata.default_agent_id)
+
+
+def _sanitize_team_metadata_for_registry(metadata: TeamMetadata, registry) -> TeamMetadata:
+    if not metadata.default_agent_id:
+        return metadata
+    try:
+        registry.get(metadata.default_agent_id)
+    except LookupError:
+        return TeamMetadata(
+            team_name=metadata.team_name,
+            team_description=metadata.team_description,
+            team_tags=list(metadata.team_tags),
+            default_agent_id="",
+        )
+    return metadata
+
+
+def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
+    return (
+        getattr(args, "agent_command", None)
+        or getattr(args, "team_command", None)
+        or getattr(args, "resource", None)
+    )
+
+
+def _resolve_import_registry_path(source_path: Path) -> Path:
+    if source_path.name != "manifest.json":
+        return source_path
+
+    manifest = load_backup_manifest(source_path)
+    registry_path = source_path.parent / manifest.registry_file
+    if not registry_path.exists():
+        raise ValueError(
+            f"Manifest {str(source_path)!r} references missing registry file "
+            f"{manifest.registry_file!r}"
+        )
+    if registry_path.is_dir():
+        raise ValueError(
+            f"Manifest {str(source_path)!r} references registry path "
+            f"{str(registry_path)!r} which is a directory"
+        )
+    return registry_path
 
 
 def _handle_agent_status(args: argparse.Namespace, registry) -> int:
     record = registry.get(args.agent_id)
-    print(f"{_format_record(record)} persona={record.persona}")
+    print(_format_agent_status(record))
     return 0
 
 
@@ -214,9 +1043,19 @@ def _handle_agent_tune(
     registry_path: str,
     registry,
 ) -> int:
-    updated = registry.set_persona(args.agent_id, _resolve_persona(args))
+    updates = _resolve_agent_tune_updates(args)
+    updated = registry.get(args.agent_id)
+    if "persona" in updates:
+        updated = registry.set_persona(args.agent_id, updates["persona"])
+    profile_updates = {
+        key: updates[key]
+        for key in ("role", "model", "tags")
+        if key in updates
+    }
+    if profile_updates:
+        updated = registry.set_profile_metadata(args.agent_id, **profile_updates)
     storage.save(registry_path, registry)
-    print(f"updated agent_id={updated.agent_id} persona={updated.persona}")
+    print(_format_agent_tune_result(updated, updates))
     return 0
 
 
@@ -249,12 +1088,72 @@ def _handle_agent_purge(
 
     registry.remove(args.agent_id)
     storage.save(registry_path, registry)
+    team_metadata_path = get_team_metadata_path()
+    team_metadata = load_team_metadata(team_metadata_path)
+    if team_metadata.default_agent_id == args.agent_id:
+        save_team_metadata(
+            team_metadata_path,
+            TeamMetadata(
+                team_name=team_metadata.team_name,
+                team_description=team_metadata.team_description,
+                team_tags=list(team_metadata.team_tags),
+                default_agent_id="",
+            ),
+        )
     print(f"purged agent_id={args.agent_id}")
     return 0
 
 
 def _format_record(record: AgentRecord) -> str:
-    return f"agent_id={record.agent_id} name={record.name} status={record.status.value}"
+    return (
+        f"agent_id={record.agent_id} "
+        f"name={_format_preview_value(record.name)} "
+        f"status={record.status.value}"
+    )
+
+
+def _format_agent_status(record: AgentRecord) -> str:
+    return (
+        f"{_format_record(record)} "
+        f"persona={_format_preview_value(record.persona)} "
+        f"role={_format_preview_value(record.role)} "
+        f"model={_format_preview_value(record.model)} "
+        f"tags={_format_encoded_list_or_dash(record.tags)}"
+    )
+
+
+def _format_agent_tune_result(record: AgentRecord, updates: dict[str, object]) -> str:
+    parts = [f"updated agent_id={record.agent_id}"]
+    if "persona" in updates:
+        parts.append(f"persona={_format_preview_value(record.persona)}")
+    if "role" in updates:
+        parts.append(f"role={_format_preview_value(record.role)}")
+    if "model" in updates:
+        parts.append(f"model={_format_preview_value(record.model)}")
+    if "tags" in updates:
+        parts.append(f"tags={_format_encoded_list_or_dash(record.tags)}")
+    return " ".join(parts)
+
+
+def _resolve_agent_tune_updates(args: argparse.Namespace) -> dict[str, object]:
+    updates: dict[str, object] = {}
+    if args.persona is not None or args.persona_file is not None:
+        updates["persona"] = _resolve_persona(args)
+    if args.clear_role:
+        updates["role"] = ""
+    elif args.role is not None:
+        updates["role"] = _normalize_optional_cli_text(args.role, field_name="agent role")
+    if args.clear_model:
+        updates["model"] = ""
+    elif args.model is not None:
+        updates["model"] = _normalize_optional_cli_text(args.model, field_name="agent model")
+    if args.clear_tags:
+        updates["tags"] = []
+    elif args.tags is not None:
+        updates["tags"] = _parse_tag_list(args.tags, field_name="Agent tags")
+    if not updates:
+        raise ValueError("Agent tune requires at least one change flag")
+    return updates
 
 
 def _resolve_persona(args: argparse.Namespace) -> str:

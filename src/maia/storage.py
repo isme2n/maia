@@ -16,13 +16,32 @@ class JsonRegistryStorage:
 
     _REQUIRED_RECORD_FIELDS = ("agent_id", "name", "status", "persona")
 
-    def save(self, path: Path | str, registry: AgentRegistry) -> None:
+    def save(self, path: Path | str, registry: AgentRegistry, *, portable: bool = False) -> None:
         """Write the registry as a single JSON object."""
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"agents": [record.to_dict() for record in registry.list()]}
+        payload = {
+            "agents": [
+                self._serialize_record(record, portable=portable) for record in registry.list()
+            ]
+        }
         target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def _serialize_record(self, record: AgentRecord, *, portable: bool) -> dict[str, object]:
+        """Serialize a record for local persistence or portable export."""
+
+        if not portable:
+            return record.to_dict()
+        return {
+            "agent_id": record.agent_id,
+            "name": record.name,
+            "status": record.status.value,
+            "persona": record.persona,
+            "role": record.role,
+            "model": record.model,
+            "tags": list(record.tags),
+        }
 
     def load(self, path: Path | str) -> AgentRegistry:
         """Load registry contents from a JSON file, or return an empty registry."""
