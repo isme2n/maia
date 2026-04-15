@@ -399,21 +399,20 @@ def _handle_inbox(
             if pulled_messages:
                 print(
                     f"inbox agent_id={args.agent_id} messages={len(pulled_messages)} "
-                    "source=broker ack=deferred"
+                    "source=broker ack=after-print"
                 )
                 for envelope, _metadata in pulled_messages:
                     print(_format_envelope_line(envelope))
+                _ack_broker_messages(
+                    message_broker,
+                    [envelope for envelope, _metadata in pulled_messages],
+                    agent_id=args.agent_id,
+                )
                 return 0
-            inbox_messages = [
-                message for message in collaboration.messages if message.to_agent == args.agent_id
-            ]
-            inbox_messages = list(reversed(inbox_messages))[:limit]
             print(
-                f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
-                "source=local-cache ack=deferred"
+                f"inbox agent_id={args.agent_id} messages=0 "
+                "source=broker ack=complete"
             )
-            for message in inbox_messages:
-                print(_format_message_line(message))
             return 0
         pull_result = message_broker.pull(agent_id=args.agent_id, limit=limit)
         collaboration = _merge_broker_inbox_messages(
@@ -426,21 +425,20 @@ def _handle_inbox(
         if inbox_messages:
             print(
                 f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
-                "source=broker ack=deferred"
+                "source=broker ack=after-print"
             )
             for envelope in pull_result.messages:
                 print(_format_envelope_line(envelope))
+            _ack_broker_messages(
+                message_broker,
+                pull_result.messages,
+                agent_id=args.agent_id,
+            )
             return 0
-        inbox_messages = [
-            message for message in collaboration.messages if message.to_agent == args.agent_id
-        ]
-        inbox_messages = list(reversed(inbox_messages))[:limit]
         print(
-            f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
-            "source=local-cache ack=deferred"
+            f"inbox agent_id={args.agent_id} messages=0 "
+            "source=broker ack=complete"
         )
-        for message in inbox_messages:
-            print(_format_message_line(message))
         return 0
     inbox_messages = [
         message for message in collaboration.messages if message.to_agent == args.agent_id
@@ -642,6 +640,23 @@ def _format_envelope_line(envelope: BrokerMessageEnvelope) -> str:
         + f" receipt_handle={envelope.receipt_handle}"
         + f" delivery_attempt={envelope.delivery_attempt}"
     )
+
+
+def _ack_broker_messages(
+    message_broker: MessageBroker,
+    envelopes: list[BrokerMessageEnvelope],
+    *,
+    agent_id: str,
+) -> None:
+    for envelope in envelopes:
+        try:
+            message_broker.ack(envelope)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(
+                f"Broker inbox ack failed for agent {agent_id!r}: {exc}"
+            ) from exc
 
 
 def _format_message_line(message: MessageRecord) -> str:

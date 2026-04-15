@@ -110,10 +110,7 @@ class RabbitMQBroker(MessageBroker):
             channel.queue_declare(queue=queue_name, passive=True)
         except Exception as exc:
             if self._is_missing_queue_error(exc):
-                raise self._value_error(
-                    f"pull failed for queue {queue_name!r}",
-                    ValueError(f"agent inbox queue is missing for agent {agent_id!r}"),
-                ) from exc
+                return []
             raise self._value_error(
                 f"pull failed for queue {queue_name!r}", exc
             ) from exc

@@ -13,7 +13,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.app_state import get_collaboration_path
-from maia.broker import BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
+from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
 from maia import cli as cli_module
 from maia.cli_parser import build_parser
@@ -33,6 +33,8 @@ class FakeMessageBroker:
         self.published: list[MessageRecord] = []
         self.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
         self.publish_error: Exception | None = None
+        self.acked: list[BrokerMessageEnvelope] = []
+        self.ack_error: Exception | None = None
         self.closed = False
 
     def publish(self, message: MessageRecord) -> BrokerPublishResult:
@@ -49,8 +51,15 @@ class FakeMessageBroker:
         assert isinstance(limit, int)
         return self.pull_result
 
-    def ack(self, envelope: BrokerMessageEnvelope):
-        raise AssertionError("ack should not be called in Task 063")
+    def ack(self, envelope: BrokerMessageEnvelope) -> BrokerAckResult:
+        if self.ack_error is not None:
+            raise self.ack_error
+        self.acked.append(envelope)
+        return BrokerAckResult(
+            status=BrokerDeliveryStatus.ACKNOWLEDGED,
+            message_id=envelope.message.message_id,
+            receipt_handle=envelope.receipt_handle,
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -400,8 +409,10 @@ def test_inbox_uses_broker_pull_when_configured(
         "agent_id": reviewer_id,
         "messages": "1",
         "source": "broker",
-        "ack": "deferred",
+        "ack": "after-print",
     }
+    assert len(fake_broker.acked) == 1
+    assert fake_broker.acked[0].receipt_handle == "42"
     message_fields = _parse_fields(lines[1])
     assert message_fields["message_id"] == "msg-001"
     assert message_fields["body"] == "broker␠delivery"
@@ -411,6 +422,42 @@ def test_inbox_uses_broker_pull_when_configured(
     assert '"thread_id": "thread-001"' in payload
     assert '"message_id": "msg-001"' in payload
     assert fake_broker.closed is True
+
+
+def test_inbox_surfaces_broker_ack_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    fake_broker.ack_error = ValueError("ack failed")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    fake_broker.pull_result = BrokerPullResult(
+        status=BrokerDeliveryStatus.DELIVERED,
+        messages=[
+            BrokerMessageEnvelope(
+                message=MessageRecord(
+                    message_id="msg-001",
+                    thread_id="thread-001",
+                    from_agent="planner",
+                    to_agent=reviewer_id,
+                    kind=MessageKind.REQUEST,
+                    body="broker delivery",
+                    created_at="2026-04-15T12:00:00Z",
+                ),
+                receipt_handle="42",
+                delivery_attempt=1,
+            )
+        ],
+    )
+
+    assert main(["inbox", reviewer_id]) == 1
+    captured = capsys.readouterr()
+    assert "ack failed" in captured.err
 
 
 def test_broker_inbox_message_can_be_replied_to_after_local_merge(
@@ -503,11 +550,11 @@ def test_broker_inbox_empty_pull_falls_back_to_local_cache(
     lines = capsys.readouterr().out.strip().splitlines()
     assert _parse_fields(lines[0]) == {
         "agent_id": reviewer_id,
-        "messages": "1",
-        "source": "local-cache",
-        "ack": "deferred",
+        "messages": "0",
+        "source": "broker",
+        "ack": "complete",
     }
-    assert _parse_fields(lines[1])["message_id"] == "msg-001"
+    assert len(lines) == 1
     assert fake_broker.closed is True
 
 

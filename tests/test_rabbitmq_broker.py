@@ -213,16 +213,14 @@ def test_pull_with_metadata_returns_thread_topic() -> None:
     assert pulled[0][1] == {"thread_topic": "phase 6 review"}
 
 
-def test_pull_missing_queue_surfaces_operator_facing_value_error() -> None:
+def test_pull_missing_queue_returns_empty_result() -> None:
     broker, channel, _connection = _build_broker()
     channel.queue_declare_error = FakeBrokerError("NOT_FOUND - no queue", reply_code=404)
 
-    with pytest.raises(
-        ValueError,
-        match=r"RabbitMQ broker pull failed for queue 'maia\.inbox\.reviewer': agent inbox queue is missing for agent 'reviewer'",
-    ):
-        broker.pull(agent_id="reviewer")
+    result = broker.pull(agent_id="reviewer")
 
+    assert result.status is BrokerDeliveryStatus.EMPTY
+    assert result.messages == []
     assert channel.basic_get_calls == []
 
 
