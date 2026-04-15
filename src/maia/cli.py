@@ -119,13 +119,27 @@ def _handle_doctor() -> int:
     for check in checks:
         print(
             f"doctor check={check['name']} status={check['status']} "
-            f"detail={_format_preview_value(check['detail'])}"
+            f"detail={_format_preview_value(check['detail'])} "
+            f"remediation={_format_preview_value(check['remediation'])}"
         )
     print(
         f"doctor kind=summary status={'ok' if not failed_checks else 'fail'} "
-        f"failed={','.join(failed_checks) if failed_checks else '-'}"
+        f"failed={','.join(failed_checks) if failed_checks else '-'} "
+        f"next_step={_format_preview_value(_doctor_next_step(failed_checks))}"
     )
     return 0 if not failed_checks else 1
+
+
+def _doctor_next_step(failed_checks: list[str]) -> str:
+    if not failed_checks:
+        return "phase4 runtime prerequisites satisfied"
+    if "docker_cli" in failed_checks:
+        return "install docker then rerun maia doctor"
+    if "docker_compose" in failed_checks:
+        return "install docker compose plugin then rerun maia doctor"
+    if "docker_daemon" in failed_checks:
+        return "start docker daemon then rerun maia doctor"
+    return "fix reported doctor failures then rerun maia doctor"
 
 
 def _collect_doctor_checks() -> list[dict[str, str]]:
@@ -136,16 +150,19 @@ def _collect_doctor_checks() -> list[dict[str, str]]:
                 "name": "docker_cli",
                 "status": "missing",
                 "detail": "docker binary not found in PATH",
+                "remediation": "install docker cli or docker engine on this host",
             },
             {
                 "name": "docker_compose",
                 "status": "missing",
                 "detail": "docker compose unavailable because docker CLI is missing",
+                "remediation": "install docker first, then verify docker compose plugin",
             },
             {
                 "name": "docker_daemon",
                 "status": "missing",
                 "detail": "docker daemon unreachable because docker CLI is missing",
+                "remediation": "install docker engine and start the docker daemon",
             },
         ]
 
@@ -154,22 +171,35 @@ def _collect_doctor_checks() -> list[dict[str, str]]:
             "docker_cli",
             [docker_bin, "--version"],
             success_detail=docker_bin,
+            success_remediation="no action needed",
+            failure_remediation="verify the docker binary is executable on PATH",
         ),
         _run_doctor_probe(
             "docker_compose",
             [docker_bin, "compose", "version"],
             success_detail="docker compose available",
+            success_remediation="no action needed",
+            failure_remediation="install or enable the docker compose plugin",
         ),
         _run_doctor_probe(
             "docker_daemon",
             [docker_bin, "info"],
             success_detail="docker daemon reachable",
+            success_remediation="no action needed",
+            failure_remediation="start the docker daemon or fix daemon access permissions",
         ),
     ]
     return checks
 
 
-def _run_doctor_probe(name: str, command: list[str], *, success_detail: str) -> dict[str, str]:
+def _run_doctor_probe(
+    name: str,
+    command: list[str],
+    *,
+    success_detail: str,
+    success_remediation: str,
+    failure_remediation: str,
+) -> dict[str, str]:
     try:
         result = subprocess.run(
             command,
@@ -179,13 +209,28 @@ def _run_doctor_probe(name: str, command: list[str], *, success_detail: str) -> 
         )
     except OSError as exc:
         detail = exc.strerror or str(exc)
-        return {"name": name, "status": "missing", "detail": detail}
+        return {
+            "name": name,
+            "status": "missing",
+            "detail": detail,
+            "remediation": failure_remediation,
+        }
 
     if result.returncode == 0:
-        return {"name": name, "status": "ok", "detail": success_detail}
+        return {
+            "name": name,
+            "status": "ok",
+            "detail": success_detail,
+            "remediation": success_remediation,
+        }
 
     detail = (result.stderr or result.stdout or "probe failed").strip()
-    return {"name": name, "status": "fail", "detail": detail}
+    return {
+        "name": name,
+        "status": "fail",
+        "detail": detail,
+        "remediation": failure_remediation,
+    }
 
 
 def _build_runtime_adapter() -> DockerRuntimeAdapter:

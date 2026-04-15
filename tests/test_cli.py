@@ -108,6 +108,7 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "Check local Phase 4 runtime prerequisites" in captured.out
     assert "Examples:" in captured.out
     assert "maia doctor" in captured.out
+    assert "doctor" in captured.out
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:

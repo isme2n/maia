@@ -198,11 +198,13 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
         'check': 'docker_cli',
         'status': 'missing',
         'detail': 'docker␠binary␠not␠found␠in␠PATH',
+        'remediation': 'install␠docker␠cli␠or␠docker␠engine␠on␠this␠host',
     }
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
         'failed': 'docker_cli,docker_compose,docker_daemon',
+        'next_step': 'install␠docker␠then␠rerun␠maia␠doctor',
     }
 
 
@@ -221,21 +223,25 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
         'check': 'docker_cli',
         'status': 'ok',
         'detail': str(fake_docker),
+        'remediation': 'no␠action␠needed',
     }
     assert parse_fields(lines[1]) == {
         'check': 'docker_compose',
         'status': 'ok',
         'detail': 'docker␠compose␠available',
+        'remediation': 'no␠action␠needed',
     }
     assert parse_fields(lines[2]) == {
         'check': 'docker_daemon',
         'status': 'ok',
         'detail': 'docker␠daemon␠reachable',
+        'remediation': 'no␠action␠needed',
     }
     assert parse_fields(lines[3]) == {
         'kind': 'summary',
         'status': 'ok',
         'failed': '-',
+        'next_step': 'phase4␠runtime␠prerequisites␠satisfied',
     }
 
 
