@@ -1187,7 +1187,12 @@ def _handle_agent_stop(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     registry.get(args.agent_id)
-    if args.agent_id not in RuntimeStateStorage().load(get_runtime_state_path()):
+    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
+    if stored_runtime_state is None or stored_runtime_state.runtime_status not in {
+        RuntimeStatus.STARTING,
+        RuntimeStatus.RUNNING,
+        RuntimeStatus.STOPPING,
+    }:
         raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
     try:
         stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
@@ -1216,7 +1221,12 @@ def _handle_agent_logs(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     registry.get(args.agent_id)
-    if args.agent_id not in RuntimeStateStorage().load(get_runtime_state_path()):
+    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
+    if stored_runtime_state is None or stored_runtime_state.runtime_status not in {
+        RuntimeStatus.STARTING,
+        RuntimeStatus.RUNNING,
+        RuntimeStatus.STOPPING,
+    }:
         raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
     try:
         logs_result = runtime_adapter.logs(

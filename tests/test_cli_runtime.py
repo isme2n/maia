@@ -630,6 +630,14 @@ def test_agent_runtime_start_status_logs_stop_flow(
         "runtime_handle": "runtime-001",
     }
 
+    stopped_again = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped_again.returncode == 1
+    assert stopped_again.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+
+    logs_after_stop = run_module(tmp_path, "agent", "logs", agent_id)
+    assert logs_after_stop.returncode == 1
+    assert logs_after_stop.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+
 
 
 def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
