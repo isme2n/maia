@@ -1114,6 +1114,13 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
         "handoffs": "0",
         "messages": "1",
         "created_at": thread_created_at,
+        "recent_handoff_id": "-",
+        "recent_handoff_from": "-",
+        "recent_handoff_to": "-",
+        "recent_handoff_type": "-",
+        "recent_handoff_location": "-",
+        "recent_handoff_summary": "-",
+        "recent_handoff_created_at": "-",
     }
     thread_message = parse_fields(thread_lines[1])
     assert thread_message["message_id"] == first_message_id

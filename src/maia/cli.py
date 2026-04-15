@@ -108,7 +108,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             if command_name == "list":
                 return _handle_handoff_list(args, collaboration)
             if command_name == "show":
-                return _handle_handoff_show(args, collaboration)
+                return _handle_handoff_show(args, collaboration, registry)
         if resource in TOP_LEVEL_COLLAB_COMMANDS:
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
@@ -632,7 +632,8 @@ def _handle_thread_show(args, collaboration) -> int:
     runtime_states = _load_thread_runtime_states()
     print(
         f"thread {_format_thread_overview_fields(thread, thread_messages, thread_handoffs, runtime_states)} "
-        f"created_by={thread.created_by} created_at={thread.created_at}"
+        f"created_by={thread.created_by} created_at={thread.created_at} "
+        f"{_format_recent_handoff_fields(_select_recent_handoff(thread_handoffs))}"
     )
     for message in thread_messages[:limit]:
         print(_format_message_line(message))
@@ -694,8 +695,23 @@ def _handle_handoff_list(args, collaboration) -> int:
     return 0
 
 
-def _handle_handoff_show(args, collaboration) -> int:
-    print(_format_handoff_line(_require_handoff(collaboration, args.handoff_id)))
+def _handle_handoff_show(args, collaboration, registry) -> int:
+    handoff = _require_handoff(collaboration, args.handoff_id)
+    print(_format_handoff_line(handoff))
+    print(
+        _format_handoff_workspace_context_line(
+            handoff.from_agent,
+            registry,
+            handoff_role="source",
+        )
+    )
+    print(
+        _format_handoff_workspace_context_line(
+            handoff.to_agent,
+            registry,
+            handoff_role="target",
+        )
+    )
     return 0
 
 
@@ -794,6 +810,16 @@ def _group_handoffs_by_thread(handoffs: Sequence[HandoffRecord]) -> dict[str, li
     for handoff in handoffs:
         grouped.setdefault(handoff.thread_id, []).append(handoff)
     return grouped
+
+
+def _handoff_sort_key(handoff: HandoffRecord) -> tuple[str, str]:
+    return (handoff.created_at, handoff.handoff_id)
+
+
+def _select_recent_handoff(thread_handoffs: Sequence[HandoffRecord]) -> HandoffRecord | None:
+    if not thread_handoffs:
+        return None
+    return max(thread_handoffs, key=_handoff_sort_key)
 
 
 def _derive_thread_pending_on(thread_messages: Sequence[MessageRecord]) -> str:
@@ -999,6 +1025,85 @@ def _format_handoff_line(handoff: HandoffRecord) -> str:
         f"type={handoff.kind.value} location={_format_preview_value(handoff.location)} "
         f"summary={_format_preview_value(handoff.summary)} created_at={handoff.created_at}"
     )
+
+
+def _format_recent_handoff_fields(handoff: HandoffRecord | None) -> str:
+    if handoff is None:
+        return (
+            "recent_handoff_id=- recent_handoff_from=- recent_handoff_to=- "
+            "recent_handoff_type=- recent_handoff_location=- "
+            "recent_handoff_summary=- recent_handoff_created_at=-"
+        )
+    return (
+        f"recent_handoff_id={handoff.handoff_id} "
+        f"recent_handoff_from={handoff.from_agent} "
+        f"recent_handoff_to={handoff.to_agent} "
+        f"recent_handoff_type={handoff.kind.value} "
+        f"recent_handoff_location={_format_preview_value(handoff.location)} "
+        f"recent_handoff_summary={_format_preview_value(handoff.summary)} "
+        f"recent_handoff_created_at={handoff.created_at}"
+    )
+
+
+def _format_handoff_workspace_context_line(
+    agent_id: str,
+    registry,
+    *,
+    handoff_role: str,
+) -> str:
+    parts = [
+        "workspace",
+        f"handoff_role={handoff_role}",
+        f"agent_id={agent_id}",
+    ]
+    try:
+        record = registry.get(agent_id)
+    except LookupError:
+        parts.extend(
+            [
+                "workspace_status=agent-missing",
+                "workspace_basis=runtime_spec.workspace",
+                "workspace=-",
+                "runtime_image=-",
+                "runtime_command=-",
+                "runtime_env_keys=-",
+            ]
+        )
+        return " ".join(parts)
+
+    runtime_spec = record.runtime_spec
+    if runtime_spec is None:
+        parts.extend(
+            [
+                "workspace_status=runtime-spec-missing",
+                "workspace_basis=runtime_spec.workspace",
+                "workspace=-",
+                "runtime_image=-",
+                "runtime_command=-",
+                "runtime_env_keys=-",
+            ]
+        )
+        return " ".join(parts)
+
+    parts.extend(
+        [
+            (
+                "workspace_status=configured"
+                if runtime_spec.workspace
+                else "workspace_status=runtime-workspace-missing"
+            ),
+            "workspace_basis=runtime_spec.workspace",
+            (
+                f"workspace={_format_preview_value(runtime_spec.workspace)}"
+                if runtime_spec.workspace
+                else "workspace=-"
+            ),
+            f"runtime_image={_format_preview_value(runtime_spec.image)}",
+            f"runtime_command={_format_encoded_list_or_dash(runtime_spec.command)}",
+            f"runtime_env_keys={_format_encoded_list_or_dash(sorted(runtime_spec.env))}",
+        ]
+    )
+    return " ".join(parts)
 
 
 def _handle_transfer_export(

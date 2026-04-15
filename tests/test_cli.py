@@ -444,6 +444,34 @@ def _create_agent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     return fields["agent_id"]
 
 
+def _configure_runtime_spec(
+    capsys: pytest.CaptureFixture[str],
+    agent_id: str,
+    *,
+    role_name: str,
+    workspace_path: str,
+) -> None:
+    assert main([
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        f"ghcr.io/example/{role_name}:latest",
+        "--runtime-workspace",
+        workspace_path,
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        role_name,
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        f"MAIA_ROLE={role_name}",
+    ]) == 0
+    capsys.readouterr()
+
+
 def test_send_and_reply_publish_to_broker_and_persist_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -815,6 +843,18 @@ def test_handoff_add_list_and_show_round_trip(
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    _configure_runtime_spec(
+        capsys,
+        planner_id,
+        role_name="planner",
+        workspace_path="/workspace/planner",
+    )
+    _configure_runtime_spec(
+        capsys,
+        reviewer_id,
+        role_name="reviewer",
+        workspace_path="/workspace/reviewer",
+    )
 
     assert main([
         "send",
@@ -871,10 +911,34 @@ def test_handoff_add_list_and_show_round_trip(
     assert filtered_fields["handoff_id"] == handoff_id
 
     assert main(["handoff", "show", handoff_id]) == 0
-    show_fields = _parse_fields(capsys.readouterr().out.strip())
+    show_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(show_lines) == 3
+    show_fields = _parse_fields(show_lines[0])
     assert show_fields["handoff_id"] == handoff_id
     assert show_fields["location"] == "reports/phase7.md"
     assert show_fields["summary"] == "phase␠7␠review␠bundle"
+    source_workspace_fields = _parse_fields(show_lines[1])
+    assert source_workspace_fields == {
+        "handoff_role": "source",
+        "agent_id": planner_id,
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
+        "workspace": "/workspace/planner",
+        "runtime_image": "ghcr.io/example/planner:latest",
+        "runtime_command": "python,-m,planner",
+        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+    }
+    target_workspace_fields = _parse_fields(show_lines[2])
+    assert target_workspace_fields == {
+        "handoff_role": "target",
+        "agent_id": reviewer_id,
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
+        "workspace": "/workspace/reviewer",
+        "runtime_image": "ghcr.io/example/reviewer:latest",
+        "runtime_command": "python,-m,reviewer",
+        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+    }
 
 
 def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
@@ -919,8 +983,20 @@ def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
     handoff_id = add_fields["handoff_id"]
 
     assert main(["artifact", "show", handoff_id]) == 0
-    show_fields = _parse_fields(capsys.readouterr().out.strip())
+    show_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(show_lines) == 3
+    show_fields = _parse_fields(show_lines[0])
     assert show_fields["handoff_id"] == handoff_id
+    source_workspace_fields = _parse_fields(show_lines[1])
+    assert source_workspace_fields["handoff_role"] == "source"
+    assert source_workspace_fields["workspace_status"] == "runtime-spec-missing"
+    assert source_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
+    assert source_workspace_fields["workspace"] == "-"
+    target_workspace_fields = _parse_fields(show_lines[2])
+    assert target_workspace_fields["handoff_role"] == "target"
+    assert target_workspace_fields["workspace_status"] == "runtime-spec-missing"
+    assert target_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
+    assert target_workspace_fields["workspace"] == "-"
 
 
 def test_handoff_add_rejects_non_participant_agents(
@@ -1131,6 +1207,13 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert show_fields["messages"] == "2"
     assert show_fields["created_by"] == "planner"
     assert show_fields["created_at"] == "2026-04-15T12:00:00Z"
+    assert show_fields["recent_handoff_id"] == "artifact-001"
+    assert show_fields["recent_handoff_from"] == "planner"
+    assert show_fields["recent_handoff_to"] == "reviewer"
+    assert show_fields["recent_handoff_type"] == "report"
+    assert show_fields["recent_handoff_location"] == "reports/phase6.md"
+    assert show_fields["recent_handoff_summary"] == "phase␠6␠bundle"
+    assert show_fields["recent_handoff_created_at"] == "2026-04-15T12:01:00Z"
     first_message_fields = _parse_fields(show_lines[1])
     second_message_fields = _parse_fields(show_lines[2])
     assert first_message_fields["message_id"] == "msg-001"

@@ -41,7 +41,8 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 - `python -m maia handoff add|list|show` manages thread-linked handoff metadata in collaboration state.
 - `python -m maia handoff add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it never auto-adds participants.
 - `python -m maia thread list` prints thread overview lines with `thread_id`, `topic`, `participants`, `participant_runtime`, `status`, `updated_at`, derived `pending_on`, `handoffs`, and `messages`; use `--agent <id>` or `--status <open|closed>` to filter.
-- `python -m maia thread show <thread_id>` prints the same summary plus `created_by`, `created_at`, and the stored message history for that thread.
+- `python -m maia thread show <thread_id>` prints the same summary plus `created_by`, `created_at`, recent handoff context (`recent_handoff_*`), and the stored message history for that thread.
+- `python -m maia handoff show <handoff_id>` prints the handoff pointer plus source/target workspace context lines with `handoff_role`, `workspace_status`, `workspace_basis`, `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`.
 - `python -m maia workspace show <agent_id>` prints operator-visible workspace context from the stored runtime spec using terse `key=value` fields (`workspace`, `runtime_image`, `runtime_command`, `runtime_env_keys`).
 - The `.maia` bundle is a single zip-backed archive containing exactly one `manifest.json` and exactly one `registry.json` for the current v1 format.
 - `python -m maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
