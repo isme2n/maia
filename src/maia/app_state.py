@@ -12,6 +12,8 @@ __all__ = [
     "get_exports_dir",
     "get_maia_home",
     "get_registry_path",
+    "get_runtime_dir",
+    "get_runtime_state_path",
     "get_team_metadata_path",
 ]
 
@@ -20,6 +22,8 @@ _COLLABORATION_FILENAME = "collaboration.json"
 _DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
 _EXPORTS_DIRNAME = "exports"
 _REGISTRY_FILENAME = "registry.json"
+_RUNTIME_DIRNAME = "runtime"
+_RUNTIME_STATE_FILENAME = "runtime-state.json"
 _TEAM_METADATA_FILENAME = "team.json"
 
 
@@ -55,6 +59,18 @@ def get_default_export_path(env: Mapping[str, str] | None = None) -> Path:
     """Return the default path for exporting a portable Maia bundle."""
 
     return get_exports_dir(env) / _DEFAULT_BUNDLE_FILENAME
+
+
+def get_runtime_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Return the directory for runtime-only state."""
+
+    return get_maia_home(env) / _RUNTIME_DIRNAME
+
+
+def get_runtime_state_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the default runtime state JSON path."""
+
+    return get_runtime_dir(env) / _RUNTIME_STATE_FILENAME
 
 
 def get_team_metadata_path(env: Mapping[str, str] | None = None) -> Path:
