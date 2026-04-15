@@ -24,6 +24,10 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage: maia" in captured.out
     assert "agent" in captured.out
     assert "team" in captured.out
+    assert "send" in captured.out
+    assert "inbox" in captured.out
+    assert "thread" in captured.out
+    assert "reply" in captured.out
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
@@ -159,6 +163,30 @@ def test_inspect_placeholder_contract(
     assert main(["inspect", str(inspect_path)]) == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == "Not implemented yet: inspect"
+
+
+def test_send_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["send", "planner", "reviewer", "--body", "hello", "--topic", "phase-3"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: send"
+
+
+def test_inbox_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["inbox", "reviewer", "--limit", "5"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: inbox"
+
+
+def test_thread_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["thread", "thread1234", "--limit", "10"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: thread"
+
+
+def test_reply_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["reply", "msg1234", "--from-agent", "reviewer", "--body", "done"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Not implemented yet: reply"
 
 
 def test_team_show_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:

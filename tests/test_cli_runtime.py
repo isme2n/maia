@@ -14,7 +14,12 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
-from maia.app_state import get_default_export_path, get_registry_path, get_team_metadata_path
+from maia.app_state import (
+    get_collaboration_path,
+    get_default_export_path,
+    get_registry_path,
+    get_team_metadata_path,
+)
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
 
@@ -52,6 +57,10 @@ def parse_fields(line: str) -> dict[str, str]:
         "exported",
         "imported",
         "inspected",
+        "sent",
+        "inbox",
+        "thread",
+        "replied",
         "preview",
         "risk",
         "added",
@@ -84,6 +93,10 @@ def create_agent(home: Path, name: str = "demo") -> str:
 
 def load_registry(home: Path) -> dict[str, object]:
     return json.loads(get_registry_path({"HOME": str(home)}).read_text(encoding="utf-8"))
+
+
+def load_collaboration(home: Path) -> dict[str, object]:
+    return json.loads(get_collaboration_path({"HOME": str(home)}).read_text(encoding="utf-8"))
 
 
 def write_registry(path: Path, payload: dict[str, object]) -> None:
@@ -305,6 +318,204 @@ def test_agent_lifecycle_and_purge(tmp_path: Path) -> None:
         team_tags=[],
         default_agent_id="",
     )
+
+
+def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
+    planner_id = create_agent(tmp_path, "planner")
+    reviewer_id = create_agent(tmp_path, "reviewer")
+
+    sent = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review phase 3",
+        "--topic",
+        "phase 3 review",
+        "--kind",
+        "request",
+    )
+    assert sent.returncode == 0
+    assert sent.stderr == ""
+    sent_fields = parse_fields(sent.stdout.strip())
+    assert sent_fields["from_agent"] == planner_id
+    assert sent_fields["to_agent"] == reviewer_id
+    assert sent_fields["kind"] == "request"
+    thread_id = sent_fields["thread_id"]
+    first_message_id = sent_fields["message_id"]
+
+    inbox = run_module(tmp_path, "inbox", reviewer_id)
+    assert inbox.returncode == 0
+    lines = line_map(inbox.stdout)
+    assert parse_fields(lines["inbox"]) == {
+        "agent_id": reviewer_id,
+        "messages": "1",
+    }
+    inbox_message = parse_fields(inbox.stdout.strip().splitlines()[1])
+    assert inbox_message["thread_id"] == thread_id
+    assert inbox_message["from_agent"] == planner_id
+    assert inbox_message["to_agent"] == reviewer_id
+    assert inbox_message["kind"] == "request"
+    assert inbox_message["body"] == "please␠review␠phase␠3"
+    assert inbox_message["reply_to_message_id"] == "-"
+
+    thread = run_module(tmp_path, "thread", thread_id)
+    assert thread.returncode == 0
+    thread_lines = thread.stdout.strip().splitlines()
+    assert parse_fields(thread_lines[0]) == {
+        "thread_id": thread_id,
+        "topic": "phase␠3␠review",
+        "participants": f"{planner_id},{reviewer_id}",
+        "created_by": planner_id,
+        "status": "open",
+        "messages": "1",
+    }
+    thread_message = parse_fields(thread_lines[1])
+    assert thread_message["message_id"] == first_message_id
+
+    replied = run_module(
+        tmp_path,
+        "reply",
+        first_message_id,
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "looks good",
+    )
+    assert replied.returncode == 0
+    reply_fields = parse_fields(replied.stdout.strip())
+    assert reply_fields["thread_id"] == thread_id
+    assert reply_fields["reply_to_message_id"] == first_message_id
+    assert reply_fields["from_agent"] == reviewer_id
+    assert reply_fields["to_agent"] == planner_id
+    assert reply_fields["kind"] == "answer"
+
+    planner_inbox = run_module(tmp_path, "inbox", planner_id)
+    assert planner_inbox.returncode == 0
+    planner_lines = planner_inbox.stdout.strip().splitlines()
+    assert parse_fields(planner_lines[0]) == {
+        "agent_id": planner_id,
+        "messages": "1",
+    }
+    planner_message = parse_fields(planner_lines[1])
+    assert planner_message["reply_to_message_id"] == first_message_id
+    assert planner_message["body"] == "looks␠good"
+
+    collaboration = load_collaboration(tmp_path)
+    assert len(collaboration["threads"]) == 1
+    assert len(collaboration["messages"]) == 2
+
+
+def test_send_to_existing_thread_and_validation(tmp_path: Path) -> None:
+    planner_id = create_agent(tmp_path, "planner")
+    reviewer_id = create_agent(tmp_path, "reviewer")
+    analyst_id = create_agent(tmp_path, "analyst")
+
+    first = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "first",
+        "--topic",
+        "phase 3",
+    )
+    thread_id = parse_fields(first.stdout.strip())["thread_id"]
+
+    second = run_module(
+        tmp_path,
+        "send",
+        reviewer_id,
+        analyst_id,
+        "--body",
+        "loop analyst in",
+        "--thread-id",
+        thread_id,
+        "--kind",
+        "note",
+    )
+    assert second.returncode == 0
+
+    thread = run_module(tmp_path, "thread", thread_id)
+    assert thread.returncode == 0
+    thread_fields = parse_fields(thread.stdout.strip().splitlines()[0])
+    assert thread_fields["participants"] == f"{planner_id},{reviewer_id},{analyst_id}"
+    assert thread_fields["messages"] == "2"
+
+    missing_topic = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "oops",
+    )
+    assert missing_topic.returncode == 2
+
+    bad_limit = run_module(tmp_path, "inbox", reviewer_id, "--limit", "0")
+    assert bad_limit.returncode == 1
+    assert "Inbox limit must be >= 1" in bad_limit.stderr
+
+
+def test_reply_validation_errors(tmp_path: Path) -> None:
+    planner_id = create_agent(tmp_path, "planner")
+    reviewer_id = create_agent(tmp_path, "reviewer")
+    outsider_id = create_agent(tmp_path, "outsider")
+
+    sent = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please answer",
+        "--topic",
+        "reply validation",
+    )
+    message_id = parse_fields(sent.stdout.strip())["message_id"]
+
+    outsider_reply = run_module(
+        tmp_path,
+        "reply",
+        message_id,
+        "--from-agent",
+        outsider_id,
+        "--body",
+        "hi",
+    )
+    assert outsider_reply.returncode == 1
+    assert "Reply sender must match the original message recipient" in outsider_reply.stderr
+
+    missing_message = run_module(
+        tmp_path,
+        "reply",
+        "missing123",
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "hi",
+    )
+    assert missing_message.returncode == 1
+    assert "Message with id 'missing123' not found" in missing_message.stderr
+
+    archived = run_module(tmp_path, "agent", "archive", planner_id)
+    assert archived.returncode == 0
+    purged = run_module(tmp_path, "agent", "purge", planner_id)
+    assert purged.returncode == 0
+
+    purged_target_reply = run_module(
+        tmp_path,
+        "reply",
+        message_id,
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "cannot deliver",
+    )
+    assert purged_target_reply.returncode == 1
+    assert f"Agent with id '{planner_id}' not found" in purged_target_reply.stderr
 
 
 def test_team_show_update_export_and_inspect_scope_v3_bundle(tmp_path: Path) -> None:

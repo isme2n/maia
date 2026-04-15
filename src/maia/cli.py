@@ -5,23 +5,32 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 import uuid
 
 from maia.agent_model import AgentRecord, AgentStatus
-from maia.app_state import get_default_export_path, get_registry_path, get_team_metadata_path
+from maia.app_state import (
+    get_collaboration_path,
+    get_default_export_path,
+    get_registry_path,
+    get_team_metadata_path,
+)
 from maia.backup_manifest import BackupManifest, load_backup_manifest, write_backup_manifest
+from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 from maia.bundle_archive import (
     inspect_bundle_archive,
     is_bundle_archive_path,
     write_bundle_archive,
 )
+from maia.collaboration_storage import CollaborationStorage
 from maia.storage import JsonRegistryStorage
 
 PLACEHOLDER_TEMPLATE = "Not implemented yet: {}"
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
+TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 AGENT_COMMANDS = (
     "new",
     "start",
@@ -53,7 +62,7 @@ RUNTIME_AGENT_COMMANDS = frozenset(
         *LIFECYCLE_STATUS_BY_COMMAND,
     }
 )
-RUNTIME_TOP_LEVEL_COMMANDS = frozenset(TOP_LEVEL_TRANSFER_COMMANDS)
+RUNTIME_TOP_LEVEL_COMMANDS = frozenset((*TOP_LEVEL_TRANSFER_COMMANDS, *TOP_LEVEL_COLLAB_COMMANDS))
 RUNTIME_TEAM_COMMANDS = frozenset(TEAM_COMMANDS)
 
 
@@ -137,6 +146,49 @@ def build_parser() -> argparse.ArgumentParser:
                 "--yes",
                 action="store_true",
                 help="Skip overwrite confirmation for destructive imports",
+            )
+
+    for command_name in TOP_LEVEL_COLLAB_COMMANDS:
+        help_text = {
+            "send": "Send a collaboration message",
+            "inbox": "Show an agent inbox",
+            "thread": "Show a collaboration thread",
+            "reply": "Reply to an existing message",
+        }[command_name]
+        command_parser = top_level.add_parser(command_name, help=help_text)
+        command_parser.set_defaults(
+            parser=command_parser,
+            handler=_handle_placeholder,
+            placeholder_target=command_name,
+        )
+        if command_name == "send":
+            command_parser.add_argument("from_agent", help="Sender agent id")
+            command_parser.add_argument("to_agent", help="Recipient agent id")
+            command_parser.add_argument("--body", required=True, help="Message body")
+            route_group = command_parser.add_mutually_exclusive_group(required=True)
+            route_group.add_argument("--topic", help="Topic for creating a new thread")
+            route_group.add_argument("--thread-id", help="Existing thread id")
+            command_parser.add_argument(
+                "--kind",
+                choices=("request", "question", "answer", "report", "handoff", "note"),
+                default="request",
+                help="Message kind",
+            )
+        if command_name == "inbox":
+            command_parser.add_argument("agent_id", help="Agent id")
+            command_parser.add_argument("--limit", type=int, default=20, help="Max messages to show")
+        if command_name == "thread":
+            command_parser.add_argument("thread_id", help="Thread id")
+            command_parser.add_argument("--limit", type=int, default=50, help="Max messages to show")
+        if command_name == "reply":
+            command_parser.add_argument("message_id", help="Message id to reply to")
+            command_parser.add_argument("--from-agent", required=True, help="Reply sender agent id")
+            command_parser.add_argument("--body", required=True, help="Reply body")
+            command_parser.add_argument(
+                "--kind",
+                choices=("answer", "report", "note"),
+                default="answer",
+                help="Reply message kind",
             )
 
     agent_parser = top_level.add_parser("agent", help="Manage agents")
@@ -294,7 +346,9 @@ def _should_handle_runtime_command(
 
 def _handle_runtime_command(args: argparse.Namespace) -> int:
     storage = JsonRegistryStorage()
+    collaboration_storage = CollaborationStorage()
     registry_path = get_registry_path()
+    collaboration_path = get_collaboration_path()
     team_metadata_path = get_team_metadata_path()
 
     try:
@@ -311,6 +365,17 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if command_name == "update":
             registry = storage.load(registry_path)
             return _handle_team_update(args, registry, team_metadata_path)
+        if command_name in TOP_LEVEL_COLLAB_COMMANDS:
+            registry = storage.load(registry_path)
+            collaboration = collaboration_storage.load(collaboration_path)
+            if command_name == "send":
+                return _handle_send(args, registry, collaboration_storage, collaboration_path, collaboration)
+            if command_name == "inbox":
+                return _handle_inbox(args, registry, collaboration)
+            if command_name == "thread":
+                return _handle_thread(args, collaboration)
+            if command_name == "reply":
+                return _handle_reply(args, registry, collaboration_storage, collaboration_path, collaboration)
 
         registry = storage.load(registry_path)
         if command_name == "new":
@@ -360,6 +425,193 @@ def _handle_agent_list(registry) -> int:
     for record in registry.list():
         print(_format_record(record))
     return 0
+
+
+def _handle_send(args, registry, collaboration_storage, collaboration_path: Path, collaboration) -> int:
+    registry.get(args.from_agent)
+    registry.get(args.to_agent)
+    kind = MessageKind(args.kind)
+    threads = list(collaboration.threads)
+    messages = list(collaboration.messages)
+    now = _timestamp_now()
+
+    if args.thread_id is None:
+        thread = ThreadRecord(
+            thread_id=_new_id(),
+            topic=args.topic,
+            participants=[args.from_agent, args.to_agent],
+            created_by=args.from_agent,
+            status="open",
+            created_at=now,
+            updated_at=now,
+        )
+        threads.append(thread)
+    else:
+        thread = _require_thread(collaboration, args.thread_id)
+        participants = list(thread.participants)
+        if args.from_agent not in participants:
+            participants.append(args.from_agent)
+        if args.to_agent not in participants:
+            participants.append(args.to_agent)
+        thread = ThreadRecord(
+            thread_id=thread.thread_id,
+            topic=thread.topic,
+            participants=participants,
+            created_by=thread.created_by,
+            status=thread.status,
+            created_at=thread.created_at,
+            updated_at=now,
+        )
+        _replace_thread(threads, thread)
+
+    message = MessageRecord(
+        message_id=_new_id(),
+        thread_id=thread.thread_id,
+        from_agent=args.from_agent,
+        to_agent=args.to_agent,
+        kind=kind,
+        body=args.body,
+        created_at=now,
+    )
+    messages.append(message)
+    collaboration_storage.save(
+        collaboration_path,
+        threads=threads,
+        messages=messages,
+    )
+    print(
+        f"sent thread_id={thread.thread_id} message_id={message.message_id} "
+        f"from_agent={message.from_agent} to_agent={message.to_agent} kind={message.kind.value}"
+    )
+    return 0
+
+
+def _handle_inbox(args, registry, collaboration) -> int:
+    registry.get(args.agent_id)
+    limit = _validate_positive_limit(args.limit, field_name="Inbox limit")
+    inbox_messages = [
+        message for message in collaboration.messages if message.to_agent == args.agent_id
+    ]
+    inbox_messages = list(reversed(inbox_messages))[:limit]
+    print(f"inbox agent_id={args.agent_id} messages={len(inbox_messages)}")
+    for message in inbox_messages:
+        print(_format_message_line(message))
+    return 0
+
+
+def _handle_thread(args, collaboration) -> int:
+    limit = _validate_positive_limit(args.limit, field_name="Thread limit")
+    thread = _require_thread(collaboration, args.thread_id)
+    thread_messages = [
+        message for message in collaboration.messages if message.thread_id == thread.thread_id
+    ][:limit]
+    print(
+        f"thread thread_id={thread.thread_id} topic={_format_preview_value(thread.topic)} "
+        f"participants={_format_encoded_list_or_dash(thread.participants)} "
+        f"created_by={thread.created_by} status={thread.status} messages={len(thread_messages)}"
+    )
+    for message in thread_messages:
+        print(_format_message_line(message))
+    return 0
+
+
+def _handle_reply(args, registry, collaboration_storage, collaboration_path: Path, collaboration) -> int:
+    registry.get(args.from_agent)
+    source_message = _require_message(collaboration, args.message_id)
+    registry.get(source_message.from_agent)
+    thread = _require_thread(collaboration, source_message.thread_id)
+    if args.from_agent != source_message.to_agent:
+        raise ValueError(
+            "Reply sender must match the original message recipient"
+        )
+    if args.from_agent not in thread.participants:
+        raise ValueError("Reply sender must be a participant in the thread")
+
+    now = _timestamp_now()
+    threads = list(collaboration.threads)
+    messages = list(collaboration.messages)
+    thread = ThreadRecord(
+        thread_id=thread.thread_id,
+        topic=thread.topic,
+        participants=list(thread.participants),
+        created_by=thread.created_by,
+        status=thread.status,
+        created_at=thread.created_at,
+        updated_at=now,
+    )
+    _replace_thread(threads, thread)
+    message = MessageRecord(
+        message_id=_new_id(),
+        thread_id=thread.thread_id,
+        from_agent=args.from_agent,
+        to_agent=source_message.from_agent,
+        kind=MessageKind(args.kind),
+        body=args.body,
+        created_at=now,
+        reply_to_message_id=source_message.message_id,
+    )
+    messages.append(message)
+    collaboration_storage.save(
+        collaboration_path,
+        threads=threads,
+        messages=messages,
+    )
+    print(
+        f"replied thread_id={thread.thread_id} message_id={message.message_id} "
+        f"reply_to_message_id={source_message.message_id} from_agent={message.from_agent} "
+        f"to_agent={message.to_agent} kind={message.kind.value}"
+    )
+    return 0
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def _timestamp_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _validate_positive_limit(value: int, *, field_name: str) -> int:
+    if value < 1:
+        raise ValueError(f"{field_name} must be >= 1")
+    return value
+
+
+def _require_thread(collaboration, thread_id: str) -> ThreadRecord:
+    for thread in collaboration.threads:
+        if thread.thread_id == thread_id:
+            return thread
+    raise LookupError(f"Thread with id {thread_id!r} not found")
+
+
+def _require_message(collaboration, message_id: str) -> MessageRecord:
+    for message in collaboration.messages:
+        if message.message_id == message_id:
+            return message
+    raise LookupError(f"Message with id {message_id!r} not found")
+
+
+def _replace_thread(threads: list[ThreadRecord], updated: ThreadRecord) -> None:
+    for index, thread in enumerate(threads):
+        if thread.thread_id == updated.thread_id:
+            threads[index] = updated
+            return
+    raise LookupError(f"Thread with id {updated.thread_id!r} not found")
+
+
+def _format_message_line(message: MessageRecord) -> str:
+    reply_to = (
+        _format_preview_value(message.reply_to_message_id)
+        if message.reply_to_message_id is not None
+        else "-"
+    )
+    return (
+        f"message_id={message.message_id} thread_id={message.thread_id} "
+        f"from_agent={message.from_agent} to_agent={message.to_agent} "
+        f"kind={message.kind.value} body={_format_preview_value(message.body)} "
+        f"created_at={message.created_at} reply_to_message_id={reply_to}"
+    )
 
 
 def _handle_transfer_export(
