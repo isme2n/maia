@@ -48,3 +48,21 @@ class RuntimeStateStorage:
             "runtimes": [states[agent_id].to_dict() for agent_id in sorted(states)]
         }
         target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def remove(self, path: Path | str, agent_id: str) -> None:
+        states = self.load(path)
+        if agent_id not in states:
+            return
+        del states[agent_id]
+        self.save(path, states)
+
+    def prune(self, path: Path | str, valid_agent_ids: set[str]) -> None:
+        states = self.load(path)
+        pruned = {
+            agent_id: state
+            for agent_id, state in states.items()
+            if agent_id in valid_agent_ids
+        }
+        if pruned == states and Path(path).exists():
+            return
+        self.save(path, pruned)

@@ -499,6 +499,10 @@ def _handle_transfer_import(
                 print("cancelled import")
                 return 1
     storage.save(registry_path, incoming_registry)
+    RuntimeStateStorage().prune(
+        get_runtime_state_path(),
+        {record.agent_id for record in incoming_registry.list()},
+    )
     if effective_incoming_team_metadata != current_team_metadata:
         save_team_metadata(get_team_metadata_path(), effective_incoming_team_metadata)
     print(
@@ -1203,6 +1207,7 @@ def _handle_agent_purge(
 
     registry.remove(args.agent_id)
     storage.save(registry_path, registry)
+    RuntimeStateStorage().remove(get_runtime_state_path(), args.agent_id)
     team_metadata_path = get_team_metadata_path()
     team_metadata = load_team_metadata(team_metadata_path)
     if team_metadata.default_agent_id == args.agent_id:

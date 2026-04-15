@@ -18,6 +18,7 @@ from maia.app_state import (
     get_collaboration_path,
     get_default_export_path,
     get_registry_path,
+    get_runtime_state_path,
     get_team_metadata_path,
 )
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
@@ -95,6 +96,10 @@ def create_agent(home: Path, name: str = "demo") -> str:
 
 def load_registry(home: Path) -> dict[str, object]:
     return json.loads(get_registry_path({"HOME": str(home)}).read_text(encoding="utf-8"))
+
+
+def load_runtime_state(home: Path) -> dict[str, object]:
+    return json.loads(get_runtime_state_path({"HOME": str(home)}).read_text(encoding="utf-8"))
 
 
 def load_collaboration(home: Path) -> dict[str, object]:
@@ -717,6 +722,105 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
         "runtime_status": "running",
         "runtime_handle": "runtime-001",
     }
+
+
+
+def test_agent_purge_removes_runtime_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    archived = run_module(tmp_path, "agent", "archive", agent_id)
+    assert archived.returncode == 0
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    assert purged.returncode == 0
+
+    assert load_runtime_state(tmp_path) == {"runtimes": []}
+
+
+
+def test_import_prunes_dangling_runtime_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    source_home = tmp_path / "source"
+    dest_home = tmp_path / "dest"
+    source_agent = create_agent(source_home, "source-agent")
+    dest_agent = create_agent(dest_home, "dest-agent")
+
+    tuned = run_module(
+        dest_home,
+        "agent",
+        "tune",
+        dest_agent,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(dest_home, "agent", "start", dest_agent)
+    assert started.returncode == 0
+
+    bundle_path = source_home / "snapshot.maia"
+    exported = run_module(source_home, "export", str(bundle_path))
+    assert exported.returncode == 0
+
+    imported = run_module(dest_home, "import", str(bundle_path), "--yes")
+    assert imported.returncode == 0
+
+    assert load_registry(dest_home) == {
+        "agents": [
+            {
+                "agent_id": source_agent,
+                "name": "source-agent",
+                "status": "stopped",
+                "persona": "",
+            }
+        ]
+    }
+    assert load_runtime_state(dest_home) == {"runtimes": []}
+
 
 
 def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
