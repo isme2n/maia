@@ -12,6 +12,7 @@ TOP_LEVEL_INFO_COMMANDS = ("doctor",)
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 THREAD_COMMANDS = ("list", "show")
 HANDOFF_COMMANDS = ("add", "list", "show")
+WORKSPACE_COMMANDS = ("show",)
 AGENT_COMMANDS = (
     "new",
     "start",
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
         "  maia thread list --status open\n"
         "  maia thread show <thread_id>\n"
+        "  maia workspace show <agent_id>\n"
         "  maia agent status <agent_id>"
     )
 
@@ -341,6 +343,25 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Clear the stored default agent id",
             )
+
+    workspace_parser = top_level.add_parser(
+        "workspace",
+        help="Show agent workspace context",
+        description="Show operator-visible workspace context from the stored agent runtime spec.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    workspace_parser.set_defaults(parser=workspace_parser)
+    workspace_parser.epilog = (
+        "Examples:\n"
+        "  maia workspace show reviewer5678"
+    )
+    workspace_commands = workspace_parser.add_subparsers(
+        dest="workspace_command",
+        metavar="{" + ",".join(WORKSPACE_COMMANDS) + "}",
+    )
+    show_parser = workspace_commands.add_parser("show", help="Show agent workspace context")
+    show_parser.set_defaults(parser=show_parser)
+    show_parser.add_argument("agent_id", help="Agent id")
 
     handoff_parser = top_level.add_parser(
         "handoff",

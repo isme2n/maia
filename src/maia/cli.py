@@ -91,6 +91,9 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if resource == "team" and command_name == "update":
             registry = storage.load(registry_path)
             return _handle_team_update(args, registry, team_metadata_path)
+        if resource == "workspace" and command_name == "show":
+            registry = storage.load(registry_path)
+            return _handle_workspace_show(args, registry)
         if resource == "handoff":
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
@@ -1448,6 +1451,29 @@ def _handle_team_update(args: argparse.Namespace, registry, team_metadata_path: 
     return 0
 
 
+def _handle_workspace_show(args: argparse.Namespace, registry) -> int:
+    record = registry.get(args.agent_id)
+    runtime_spec = record.runtime_spec
+    if runtime_spec is None:
+        raise ValueError(
+            f"Workspace context unavailable for agent {args.agent_id!r}: runtime spec is not configured"
+        )
+    if not runtime_spec.workspace:
+        raise ValueError(
+            f"Workspace context unavailable for agent {args.agent_id!r}: runtime workspace is not configured"
+        )
+    print(
+        "workspace "
+        f"agent_id={record.agent_id} "
+        "source=runtime_spec "
+        f"workspace={_format_preview_value(runtime_spec.workspace)} "
+        f"runtime_image={_format_preview_value(runtime_spec.image)} "
+        f"runtime_command={_format_encoded_list_or_dash(runtime_spec.command)} "
+        f"runtime_env_keys={_format_encoded_list_or_dash(sorted(runtime_spec.env))}"
+    )
+    return 0
+
+
 def _resolve_team_metadata_update(args: argparse.Namespace, metadata: TeamMetadata, registry) -> TeamMetadata:
     updates_requested = False
 
@@ -1652,6 +1678,8 @@ def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
         return getattr(args, "handoff_command", None)
     if resource == "team":
         return getattr(args, "team_command", None)
+    if resource == "workspace":
+        return getattr(args, "workspace_command", None)
     if resource == "thread":
         return resource if getattr(args, "thread_command", None) is not None else None
     return resource

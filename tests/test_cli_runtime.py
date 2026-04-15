@@ -81,6 +81,7 @@ def parse_fields(line: str) -> dict[str, str]:
         "purged",
         "doctor",
         "logs",
+        "workspace",
     }:
         tokens = tokens[1:]
     if tokens and tokens[0] == "registry":
@@ -532,6 +533,74 @@ def test_agent_tune_runtime_spec_persists_and_can_clear(tmp_path: Path) -> None:
         "runtime": "cleared",
     }
     assert "runtime_spec" not in load_registry(tmp_path)["agents"][0]
+
+
+def test_workspace_show_surfaces_runtime_spec_context(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ROLE=review",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    shown = run_module(tmp_path, "workspace", "show", agent_id)
+
+    assert shown.returncode == 0
+    assert shown.stderr == ""
+    assert parse_fields(shown.stdout.strip()) == {
+        "agent_id": agent_id,
+        "source": "runtime_spec",
+        "workspace": "/workspace/reviewer",
+        "runtime_image": "ghcr.io/example/reviewer:latest",
+        "runtime_command": "python,-m,reviewer",
+        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+    }
+
+
+def test_workspace_show_rejects_agent_without_runtime_spec(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+
+    shown = run_module(tmp_path, "workspace", "show", agent_id)
+
+    assert shown.returncode == 1
+    assert shown.stderr.strip() == (
+        f"error: Workspace context unavailable for agent {agent_id!r}: runtime spec is not configured"
+    )
+
+
+def test_workspace_show_rejects_agent_with_missing_runtime_workspace(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+    registry = load_registry(tmp_path)
+    registry["agents"][0]["runtime_spec"] = {
+        "image": "ghcr.io/example/reviewer:latest",
+        "workspace": "",
+        "command": ["python", "-m", "reviewer"],
+        "env": {"MAIA_ENV": "test"},
+    }
+    write_registry(get_registry_path({"HOME": str(tmp_path)}), registry)
+
+    shown = run_module(tmp_path, "workspace", "show", agent_id)
+
+    assert shown.returncode == 1
+    assert shown.stderr.strip() == (
+        f"error: Workspace context unavailable for agent {agent_id!r}: runtime workspace is not configured"
+    )
 
 
 def test_agent_tune_runtime_spec_validation_errors(tmp_path: Path) -> None:

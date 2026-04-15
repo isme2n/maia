@@ -25,7 +25,7 @@ from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 
 def _parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id", "thread"}:
+    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id", "thread", "workspace"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -84,6 +84,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "thread" in captured.out
     assert "reply" in captured.out
     assert "handoff" in captured.out
+    assert "workspace" in captured.out
     assert "artifact" not in captured.out
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
@@ -92,6 +93,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "maia agent start <agent_id>" in captured.out
     assert "maia send <from_agent_id> <to_agent_id>" in captured.out
     assert "maia thread show <thread_id>" in captured.out
+    assert "maia workspace show <agent_id>" in captured.out
     assert "maia agent status <agent_id>" in captured.out
 
 
@@ -165,6 +167,14 @@ def test_build_parser_thread_show_shape() -> None:
     assert args.limit == 10
 
 
+def test_build_parser_workspace_show_shape() -> None:
+    args = build_parser().parse_args(["workspace", "show", "reviewer1234"])
+
+    assert args.resource == "workspace"
+    assert args.workspace_command == "show"
+    assert args.agent_id == "reviewer1234"
+
+
 def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["thread", "--help"])
@@ -176,6 +186,19 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "Examples:" in captured.out
     assert "maia thread list --status open" in captured.out
     assert "maia thread show 7f2c1a9b" in captured.out
+
+
+def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["workspace", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: maia workspace" in captured.out
+    assert "operator-visible workspace context" in captured.out
+    assert "show" in captured.out
+    assert "Examples:" in captured.out
+    assert "maia workspace show reviewer5678" in captured.out
 
 
 def test_build_parser_handoff_add_shape() -> None:
