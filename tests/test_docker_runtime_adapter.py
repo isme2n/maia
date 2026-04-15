@@ -184,3 +184,42 @@ def test_docker_runtime_adapter_surfaces_command_failures(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="Docker start failed: boom"):
         adapter.start(RuntimeStartRequest(agent=_build_agent()))
+
+
+def test_docker_runtime_adapter_collects_successful_stderr_logs(tmp_path: Path) -> None:
+    docker_script = tmp_path / "docker"
+    docker_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "if args[:2] == ['inspect', '--format']:\n"
+        "    print('running')\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['logs', '--tail']:\n"
+        "    print('stderr line', file=sys.stderr)\n"
+        "    raise SystemExit(0)\n"
+        "print('ok')\n"
+        "raise SystemExit(0)\n",
+        encoding='utf-8',
+    )
+    docker_script.chmod(0o755)
+    state_path = tmp_path / "runtime-state.json"
+    RuntimeStateStorage().save(
+        state_path,
+        {
+            "agent-001": RuntimeState(
+                agent_id="agent-001",
+                runtime_status=RuntimeStatus.RUNNING,
+                runtime_handle="runtime-001",
+            )
+        },
+    )
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=state_path,
+        docker_bin=str(docker_script),
+    )
+
+    result = adapter.logs(RuntimeLogsRequest(agent_id="agent-001", tail_lines=10))
+
+    assert result.lines == ["stderr line"]

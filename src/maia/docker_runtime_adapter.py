@@ -104,7 +104,10 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             [docker_bin, "logs", "--tail", str(request.tail_lines), runtime_handle],
             failure_prefix="Docker logs failed",
         )
-        lines = [line for line in result.stdout.splitlines() if line]
+        log_stream = result.stdout
+        if result.stderr.strip():
+            log_stream = f"{log_stream}\n{result.stderr}" if log_stream.strip() else result.stderr
+        lines = [line for line in log_stream.splitlines() if line]
         return RuntimeLogsResult(runtime=status_result.runtime, lines=lines)
 
     def _require_docker_bin(self) -> str:
