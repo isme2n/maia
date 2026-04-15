@@ -1060,51 +1060,50 @@ def _format_handoff_workspace_context_line(
     try:
         record = registry.get(agent_id)
     except LookupError:
-        parts.extend(
-            [
-                "workspace_status=agent-missing",
-                "workspace_basis=runtime_spec.workspace",
-                "workspace=-",
-                "runtime_image=-",
-                "runtime_command=-",
-                "runtime_env_keys=-",
-            ]
-        )
+        parts.extend(_format_workspace_context_fields(None))
         return " ".join(parts)
+    parts.extend(_format_workspace_context_fields(record))
+    return " ".join(parts)
+
+
+def _format_workspace_context_fields(record: AgentRecord | None) -> list[str]:
+    if record is None:
+        return [
+            "workspace_status=agent-missing",
+            "workspace_basis=runtime_spec.workspace",
+            "workspace=-",
+            "runtime_image=-",
+            "runtime_command=-",
+            "runtime_env_keys=-",
+        ]
 
     runtime_spec = record.runtime_spec
     if runtime_spec is None:
-        parts.extend(
-            [
-                "workspace_status=runtime-spec-missing",
-                "workspace_basis=runtime_spec.workspace",
-                "workspace=-",
-                "runtime_image=-",
-                "runtime_command=-",
-                "runtime_env_keys=-",
-            ]
-        )
-        return " ".join(parts)
-
-    parts.extend(
-        [
-            (
-                "workspace_status=configured"
-                if runtime_spec.workspace
-                else "workspace_status=runtime-workspace-missing"
-            ),
+        return [
+            "workspace_status=runtime-spec-missing",
             "workspace_basis=runtime_spec.workspace",
-            (
-                f"workspace={_format_preview_value(runtime_spec.workspace)}"
-                if runtime_spec.workspace
-                else "workspace=-"
-            ),
-            f"runtime_image={_format_preview_value(runtime_spec.image)}",
-            f"runtime_command={_format_encoded_list_or_dash(runtime_spec.command)}",
-            f"runtime_env_keys={_format_encoded_list_or_dash(sorted(runtime_spec.env))}",
+            "workspace=-",
+            "runtime_image=-",
+            "runtime_command=-",
+            "runtime_env_keys=-",
         ]
-    )
-    return " ".join(parts)
+
+    return [
+        (
+            "workspace_status=configured"
+            if runtime_spec.workspace
+            else "workspace_status=runtime-workspace-missing"
+        ),
+        "workspace_basis=runtime_spec.workspace",
+        (
+            f"workspace={_format_preview_value(runtime_spec.workspace)}"
+            if runtime_spec.workspace
+            else "workspace=-"
+        ),
+        f"runtime_image={_format_preview_value(runtime_spec.image)}",
+        f"runtime_command={_format_encoded_list_or_dash(runtime_spec.command)}",
+        f"runtime_env_keys={_format_encoded_list_or_dash(sorted(runtime_spec.env))}",
+    ]
 
 
 def _handle_transfer_export(
@@ -1571,11 +1570,7 @@ def _handle_workspace_show(args: argparse.Namespace, registry) -> int:
     print(
         "workspace "
         f"agent_id={record.agent_id} "
-        "source=runtime_spec "
-        f"workspace={_format_preview_value(runtime_spec.workspace)} "
-        f"runtime_image={_format_preview_value(runtime_spec.image)} "
-        f"runtime_command={_format_encoded_list_or_dash(runtime_spec.command)} "
-        f"runtime_env_keys={_format_encoded_list_or_dash(sorted(runtime_spec.env))}"
+        + " ".join(_format_workspace_context_fields(record))
     )
     return 0
 

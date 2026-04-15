@@ -60,9 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--type report --location reports/review.md --summary 'Review notes ready'\n"
         "  maia thread list --status open\n"
         "  maia thread show <thread_id>\n"
-        "  maia workspace show <reviewer_id>\n"
+        "  maia handoff show <handoff_id>\n"
+        "  maia workspace show <planner_id>\n"
         "  maia agent status <planner_id>\n"
-        "  maia agent logs <reviewer_id> --tail-lines 20"
+        "  maia agent logs <planner_id> --tail-lines 20"
     )
 
     top_level = parser.add_subparsers(dest="resource")
@@ -161,7 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
         }[command_name]
         parser_kwargs: dict[str, object] = {"help": help_text}
         if command_name == "thread":
-            parser_kwargs["description"] = "Inspect collaboration threads with participant runtime summaries."
+            parser_kwargs["description"] = (
+                "Inspect collaboration threads with recent handoff pointers "
+                "and participant runtime summaries."
+            )
             parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
         command_parser = top_level.add_parser(command_name, **parser_kwargs)
         command_parser.set_defaults(parser=command_parser)
@@ -186,7 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
                 "Examples:\n"
                 "  maia thread list --status open\n"
                 "  maia thread list --agent reviewer1234\n"
-                "  maia thread show 7f2c1a9b"
+                "  maia thread show 7f2c1a9b\n"
+                "  maia handoff show 9c4d0e12"
             )
             thread_commands = command_parser.add_subparsers(
                 dest="thread_command",
@@ -357,13 +362,18 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_parser = top_level.add_parser(
         "workspace",
         help="Show stored agent workspace context",
-        description="Show operator-visible workspace context from the stored agent runtime spec.",
+        description=(
+            "Show operator-visible workspace context for a handoff participant "
+            "from the stored agent runtime spec."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     workspace_parser.set_defaults(parser=workspace_parser)
     workspace_parser.epilog = (
         "Examples:\n"
-        "  maia workspace show reviewer5678"
+        "  maia workspace show planner1234\n"
+        "  maia agent status planner1234\n"
+        "  maia agent logs planner1234 --tail-lines 20"
     )
     workspace_commands = workspace_parser.add_subparsers(
         dest="workspace_command",
@@ -376,7 +386,10 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_parser = top_level.add_parser(
         "handoff",
         help="Manage thread-linked handoff pointers",
-        description="Record and inspect thread-linked handoff pointers stored in collaboration state.",
+        description=(
+            "Record and inspect thread-linked handoff pointers stored in "
+            "collaboration state, then follow them into workspace/runtime checks."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     handoff_parser.set_defaults(parser=handoff_parser)
@@ -384,8 +397,10 @@ def build_parser() -> argparse.ArgumentParser:
         "Examples:\n"
         "  maia handoff add --thread-id 7f2c1a9b --from-agent reviewer5678 --to-agent planner1234 "
         "--type report --location reports/review.md --summary 'Review notes ready'\n"
-        "  maia handoff show 9c4d0e12"
-        "\n"
+        "  maia handoff show 9c4d0e12\n"
+        "  maia workspace show planner1234\n"
+        "  maia agent status planner1234\n"
+        "  maia agent logs planner1234 --tail-lines 20\n"
         "  maia handoff list --thread-id 7f2c1a9b"
     )
 

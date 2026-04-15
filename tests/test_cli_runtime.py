@@ -734,7 +734,8 @@ def test_workspace_show_surfaces_runtime_spec_context(tmp_path: Path) -> None:
     assert shown.stderr == ""
     assert parse_fields(shown.stdout.strip()) == {
         "agent_id": agent_id,
-        "source": "runtime_spec",
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
         "workspace": "/workspace/reviewer",
         "runtime_image": "ghcr.io/example/reviewer:latest",
         "runtime_command": "python,-m,reviewer",
@@ -1395,14 +1396,49 @@ def test_v1_golden_flow_smoke_contract(
         "reply_to_message_id": first_message_id,
     }
 
-    workspace = run_module(tmp_path, "workspace", "show", reviewer_id)
-    assert workspace.returncode == 0
-    assert parse_fields(workspace.stdout.strip()) == {
+    handoff_show = run_module(tmp_path, "handoff", "show", flow["handoff_id"])
+    assert handoff_show.returncode == 0
+    handoff_lines = handoff_show.stdout.strip().splitlines()
+    assert parse_fields(handoff_lines[0]) == {
+        "handoff_id": flow["handoff_id"],
+        "thread_id": thread_id,
+        "from_agent": reviewer_id,
+        "to_agent": planner_id,
+        "type": "report",
+        "location": "reports/review.md",
+        "summary": "Review␠notes␠ready",
+        "created_at": flow["handoff_created_at"],
+    }
+    assert parse_fields(handoff_lines[1]) == {
+        "handoff_role": "source",
         "agent_id": reviewer_id,
-        "source": "runtime_spec",
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
         "workspace": "/workspace/reviewer",
         "runtime_image": "ghcr.io/example/reviewer:latest",
         "runtime_command": "python,-m,reviewer",
+        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+    }
+    assert parse_fields(handoff_lines[2]) == {
+        "handoff_role": "target",
+        "agent_id": planner_id,
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
+        "workspace": "/workspace/planner",
+        "runtime_image": "ghcr.io/example/planner:latest",
+        "runtime_command": "python,-m,planner",
+        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+    }
+
+    workspace = run_module(tmp_path, "workspace", "show", planner_id)
+    assert workspace.returncode == 0
+    assert parse_fields(workspace.stdout.strip()) == {
+        "agent_id": planner_id,
+        "workspace_status": "configured",
+        "workspace_basis": "runtime_spec.workspace",
+        "workspace": "/workspace/planner",
+        "runtime_image": "ghcr.io/example/planner:latest",
+        "runtime_command": "python,-m,planner",
         "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
     }
 
@@ -1420,13 +1456,13 @@ def test_v1_golden_flow_smoke_contract(
         "runtime_handle": "runtime-001",
     }
 
-    logs = run_module(tmp_path, "agent", "logs", reviewer_id, "--tail-lines", "2")
+    logs = run_module(tmp_path, "agent", "logs", planner_id, "--tail-lines", "2")
     assert logs.returncode == 0
     log_lines = logs.stdout.strip().splitlines()
     assert parse_fields(log_lines[0]) == {
-        "agent_id": reviewer_id,
+        "agent_id": planner_id,
         "runtime_status": "running",
-        "runtime_handle": "runtime-002",
+        "runtime_handle": "runtime-001",
         "lines": "2",
     }
     assert parse_fields(log_lines[1]) == {"line": "line␠1"}
@@ -1445,14 +1481,14 @@ def test_v1_golden_flow_reports_malformed_runtime_state_at_status_and_logs_steps
         "Expecting property name enclosed in double quotes"
     )
 
-    workspace = run_module(tmp_path, "workspace", "show", flow["reviewer_id"])
+    workspace = run_module(tmp_path, "workspace", "show", flow["planner_id"])
     assert workspace.returncode == 0
 
     status = run_module(tmp_path, "agent", "status", flow["planner_id"])
     assert status.returncode == 1
     assert status.stderr.strip() == expected_error
 
-    logs = run_module(tmp_path, "agent", "logs", flow["reviewer_id"])
+    logs = run_module(tmp_path, "agent", "logs", flow["planner_id"])
     assert logs.returncode == 1
     assert logs.stderr.strip() == expected_error
 
@@ -1500,7 +1536,7 @@ def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
     assert thread_list.returncode == 1
     assert thread_list.stderr.strip() == expected_error
 
-    workspace = run_module(tmp_path, "workspace", "show", flow["reviewer_id"])
+    workspace = run_module(tmp_path, "workspace", "show", flow["planner_id"])
     assert workspace.returncode == 0
 
     status = run_module(tmp_path, "agent", "status", flow["planner_id"])

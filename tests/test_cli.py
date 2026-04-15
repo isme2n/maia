@@ -110,9 +110,10 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Review notes ready" in captured.out
     assert "maia thread list --status open" in captured.out
     assert "maia thread show <thread_id>" in captured.out
-    assert "maia workspace show <reviewer_id>" in captured.out
+    assert "maia handoff show <handoff_id>" in captured.out
+    assert "maia workspace show <planner_id>" in captured.out
     assert "maia agent status <planner_id>" in captured.out
-    assert "maia agent logs <reviewer_id> --tail-lines 20" in captured.out
+    assert "maia agent logs <planner_id> --tail-lines 20" in captured.out
 
 
 def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -200,10 +201,12 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia thread" in captured.out
+    assert "recent handoff pointers" in captured.out
     assert "participant runtime summaries" in captured.out
     assert "Examples:" in captured.out
     assert "maia thread list --status open" in captured.out
     assert "maia thread show 7f2c1a9b" in captured.out
+    assert "maia handoff show 9c4d0e12" in captured.out
 
 
 def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -213,10 +216,12 @@ def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) ->
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia workspace" in captured.out
-    assert "operator-visible workspace context" in captured.out
+    assert "handoff participant" in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
-    assert "maia workspace show reviewer5678" in captured.out
+    assert "maia workspace show planner1234" in captured.out
+    assert "maia agent status planner1234" in captured.out
+    assert "maia agent logs planner1234 --tail-lines 20" in captured.out
 
 
 def test_build_parser_handoff_add_shape() -> None:
@@ -329,7 +334,7 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     captured = capsys.readouterr()
     assert "usage: maia handoff" in captured.out
     assert "thread-linked handoff pointers" in captured.out
-    assert "stored in collaboration state" in captured.out
+    assert "workspace/runtime checks" in captured.out
     assert "add" in captured.out
     assert "list" in captured.out
     assert "show" in captured.out
@@ -339,6 +344,9 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert "Review notes ready" in captured.out
     assert "maia handoff list --thread-id 7f2c1a9b" in captured.out
     assert "maia handoff show 9c4d0e12" in captured.out
+    assert "maia workspace show planner1234" in captured.out
+    assert "maia agent status planner1234" in captured.out
+    assert "maia agent logs planner1234 --tail-lines 20" in captured.out
     assert "Phase 7" not in captured.out
 
 
