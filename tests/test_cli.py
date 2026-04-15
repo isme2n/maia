@@ -89,16 +89,30 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
-    assert "Handoff-first operator flow:" in captured.out
+    assert "Golden flow smoke contract:" in captured.out
     assert "Phase 7" not in captured.out
-    assert "maia agent start <agent_id>" in captured.out
-    assert "maia send <from_agent_id> <to_agent_id>" in captured.out
-    assert "review handoff" in captured.out
+    assert "maia agent new planner" in captured.out
+    assert "maia agent new reviewer" in captured.out
+    assert "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest" in captured.out
+    assert "--runtime-workspace /workspace/planner" in captured.out
+    assert "--runtime-command planner" in captured.out
+    assert "--runtime-env MAIA_ROLE=planner" in captured.out
+    assert "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest" in captured.out
+    assert "--runtime-workspace /workspace/reviewer" in captured.out
+    assert "--runtime-command reviewer" in captured.out
+    assert "--runtime-env MAIA_ROLE=reviewer" in captured.out
+    assert "maia agent start <planner_id>" in captured.out
+    assert "maia agent start <reviewer_id>" in captured.out
+    assert "maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'" in captured.out
+    assert "maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'" in captured.out
+    assert "maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id>" in captured.out
     assert "reports/review.md" in captured.out
     assert "Review notes ready" in captured.out
+    assert "maia thread list --status open" in captured.out
     assert "maia thread show <thread_id>" in captured.out
-    assert "maia workspace show <agent_id>" in captured.out
-    assert "maia agent status <agent_id>" in captured.out
+    assert "maia workspace show <reviewer_id>" in captured.out
+    assert "maia agent status <planner_id>" in captured.out
+    assert "maia agent logs <reviewer_id> --tail-lines 20" in captured.out
 
 
 def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:

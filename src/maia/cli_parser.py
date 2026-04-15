@@ -43,16 +43,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(parser=parser)
     parser.epilog = (
-        "Handoff-first operator flow:\n"
-        "  maia agent start <agent_id>\n"
-        "  maia send <from_agent_id> <to_agent_id> --body 'ready for review' --topic 'review handoff'\n"
-        "  maia reply <message_id> --from-agent <agent_id> --body 'review complete'\n"
-        "  maia handoff add --thread-id <thread_id> --from-agent <from_agent_id> --to-agent <to_agent_id> "
+        "Golden flow smoke contract:\n"
+        "  maia agent new planner\n"
+        "  maia agent new reviewer\n"
+        "  maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest "
+        "--runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m "
+        "--runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner\n"
+        "  maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest "
+        "--runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m "
+        "--runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer\n"
+        "  maia agent start <planner_id>\n"
+        "  maia agent start <reviewer_id>\n"
+        "  maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'\n"
+        "  maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'\n"
+        "  maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> "
         "--type report --location reports/review.md --summary 'Review notes ready'\n"
         "  maia thread list --status open\n"
         "  maia thread show <thread_id>\n"
-        "  maia workspace show <agent_id>\n"
-        "  maia agent status <agent_id>"
+        "  maia workspace show <reviewer_id>\n"
+        "  maia agent status <planner_id>\n"
+        "  maia agent logs <reviewer_id> --tail-lines 20"
     )
 
     top_level = parser.add_subparsers(dest="resource")

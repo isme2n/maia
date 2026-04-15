@@ -65,7 +65,11 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 ## Operator examples
 - Check local Docker/runtime and broker readiness:
   - `python -m maia doctor`
-- Handoff-first collaboration flow:
+- v1 golden flow smoke contract:
+  - `python -m maia agent new planner`
+  - `python -m maia agent new reviewer`
+  - `python -m maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
+  - `python -m maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
   - `python -m maia agent start <planner_id>`
   - `python -m maia agent start <reviewer_id>`
   - `python -m maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
@@ -75,6 +79,7 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
   - `python -m maia thread show <thread_id>`
   - `python -m maia workspace show <reviewer_id>`
   - `python -m maia agent status <planner_id>`
+  - `python -m maia agent logs <reviewer_id> --tail-lines 20`
 - Default export bundle:
   - `python -m maia export`
 - Inspect a bundle before import:
