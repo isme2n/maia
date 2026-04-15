@@ -1,6 +1,6 @@
 # Maia
 
-Control plane for managing a team of Hermes agents with Docker, Compose, DB, and queue infrastructure.
+Control plane for operating a Maia team with portable state, runtime control, collaboration threads, and handoffs.
 
 ## Development notes
 - Codex CLI is used as the primary coding agent.
@@ -12,10 +12,10 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 ## Registry persistence
 - `JsonRegistryStorage` saves the agent registry as a single JSON object with an `agents` array.
 - Missing registry files load as an empty `AgentRegistry`.
-- Runtime CLI commands `python -m maia export|import|inspect` operate on Maia portable state using the default registry path `~/.maia/registry.json` as the current source/target state.
-- `python -m maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`.
-- `python -m maia export [path] --label <label> --description <text>` lets the operator override manifest metadata while keeping the same bundle/import contract.
-- `python -m maia import <path> --preview` shows an import diff summary plus a risk classification line without mutating the current local registry.
+- Runtime CLI commands `maia export|import|inspect` operate on Maia portable state using the default registry path `~/.maia/registry.json` as the current source/target state.
+- `maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`.
+- `maia export [path] --label <label> --description <text>` lets the operator override manifest metadata while keeping the same bundle/import contract.
+- `maia import <path> --preview` shows an import diff summary plus a risk classification line without mutating the current local registry.
 - The preview also includes a `team` diff line so team-level portable metadata changes are visible before apply.
 - Long preview value lists (`added`, `removed`, `changed`) truncate after 5 entries and append `...(+X)` while keeping the summary counts intact.
 - Add `--verbose-preview` to print full added/removed/changed preview lists without truncation.
@@ -33,27 +33,27 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
   - `changed_agents`
   - `changed_team_metadata`
   - `no_shared_agent_ids`
-- `python -m maia import <path>` always prints the preview/risk block first. When the current registry is non-empty or team-level portable metadata would be overwritten, it then performs a destructive-import preflight: warns about overwrite behavior and asks for confirmation.
-- `python -m maia import <path> --yes` skips the interactive confirmation but still prints the preview/risk summary and overwrite warning.
-- `python -m maia inspect <path>` inspects an importable Maia snapshot before restore and prints bundle format, manifest scope metadata, bundle label/version metadata, provenance metadata, agent names, status counts, and agent profile summaries.
-- `python -m maia team show` prints the current portable team metadata from `~/.maia/team.json` using the same encoded display format as inspect output.
-- `python -m maia team update ...` updates only team-level portable metadata (`team_name`, `team_description`, `team_tags`, `default_agent_id`) and never mutates agent persona/SOUL state.
-- `python -m maia handoff add|list|show` records and inspects thread-linked handoff pointers in collaboration state.
-- `python -m maia handoff add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it records only the pointer metadata and never auto-adds participants.
-- `python -m maia thread list` prints thread overview lines with `thread_id`, `topic`, `participants`, `participant_runtime`, `status`, `updated_at`, derived `pending_on`, `handoffs`, and `messages`; use `--agent <id>` or `--status <open|closed>` to filter.
-- `python -m maia thread show <thread_id>` prints the same summary plus `created_by`, `created_at`, recent handoff context (`recent_handoff_*`), and the stored message history for that thread; use `recent_handoff_id` with `python -m maia handoff show <handoff_id>` to inspect the linked handoff.
-- `python -m maia handoff show <handoff_id>` prints the stored handoff pointer plus source/target workspace context lines derived from runtime spec data with `handoff_role`, `workspace_status`, `workspace_basis`, `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`; use the returned `agent_id` to continue with `workspace show`, `agent status`, or `agent logs`.
-- `python -m maia workspace show <agent_id>` prints the same `workspace_status` / `workspace_basis` contract for a single agent, plus `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`.
+- `maia import <path>` always prints the preview/risk block first. When the current registry is non-empty or team-level portable metadata would be overwritten, it then performs a destructive-import preflight: warns about overwrite behavior and asks for confirmation.
+- `maia import <path> --yes` skips the interactive confirmation but still prints the preview/risk summary and overwrite warning.
+- `maia inspect <path>` inspects an importable Maia snapshot before restore and prints bundle format, manifest scope metadata, bundle label/version metadata, provenance metadata, agent names, status counts, and agent profile summaries.
+- `maia team show` prints the current portable team metadata from `~/.maia/team.json` using the same encoded display format as inspect output.
+- `maia team update ...` updates only team-level portable metadata (`team_name`, `team_description`, `team_tags`, `default_agent_id`) and never mutates agent persona/SOUL state.
+- `maia handoff add|list|show` records and inspects thread-linked handoff pointers in collaboration state.
+- `maia handoff add --thread-id <id> --from-agent <id> --to-agent <id> --type <type> --location <pointer> --summary <text>` validates that the thread exists, both agents exist, and both agents are already participants in that thread; it records only the pointer metadata and never auto-adds participants.
+- `maia thread list` prints thread overview lines with `thread_id`, `topic`, `participants`, `participant_runtime`, `status`, `updated_at`, derived `pending_on`, `handoffs`, and `messages`; use `--agent <id>` or `--status <open|closed>` to filter.
+- `maia thread show <thread_id>` prints the same summary plus `created_by`, `created_at`, recent handoff context (`recent_handoff_*`), and the stored message history for that thread; use `recent_handoff_id` with `maia handoff show <handoff_id>` to inspect the linked handoff.
+- `maia handoff show <handoff_id>` prints the stored handoff pointer plus source/target workspace context lines derived from runtime spec data with `handoff_role`, `workspace_status`, `workspace_basis`, `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`; use the returned `agent_id` to continue with `workspace show`, `agent status`, or `agent logs`.
+- `maia workspace show <agent_id>` prints the same `workspace_status` / `workspace_basis` contract for a single agent, plus `workspace`, `runtime_image`, `runtime_command`, and `runtime_env_keys`.
 - The `.maia` bundle is a single zip-backed archive containing exactly one `manifest.json` and exactly one `registry.json` for the current v1 format.
-- `python -m maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
+- `maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
 - `~/.maia/exports/` is the portable snapshot area, while `~/.maia/runtime/` is reserved for runtime-only state that should not be treated as a portable backup.
-- `python -m maia agent start|stop <agent_id>` updates the stored lifecycle status and prints the lightweight runtime signal returned by the configured runtime adapter (`runtime_status`, `runtime_handle`).
-- `python -m maia agent status <agent_id>` confirms the stored/runtime status for the handoff source or target agent chosen from `thread show`, `handoff show`, or `workspace show`.
-- `python -m maia agent logs <agent_id> --tail-lines <n>` tails recent runtime log lines for the same agent after the workspace/status check.
-- `python -m maia agent archive|restore <agent_id>` updates only the stored lifecycle status and prints `updated agent_id=<id> status=<status>`.
-- `python -m maia agent tune <agent_id> ...` updates agent persona/profile metadata in place. Supported flags now include persona (`--persona`, `--persona-file`), role (`--role`, `--clear-role`), model (`--model`, `--clear-model`), and tags (`--tags`, `--clear-tags`).
-- `python -m maia export <path>` writes a `.maia` single-file bundle when `<path>` ends with `.maia`; otherwise it writes the current registry JSON plus a sibling `manifest.json` for debugging/backcompat flows.
-- `python -m maia import <path>` replaces the current registry with the snapshot at `<path>` and preserves the stored agent order, lifecycle status, persona, role, model, and tags from that bundle.
+- `maia agent start|stop <agent_id>` updates the stored lifecycle status and prints the lightweight runtime signal returned by the configured runtime adapter (`runtime_status`, `runtime_handle`).
+- `maia agent status <agent_id>` confirms the stored/runtime status for the handoff source or target agent chosen from `thread show`, `handoff show`, or `workspace show`.
+- `maia agent logs <agent_id> --tail-lines <n>` tails recent runtime log lines for the same agent after the workspace/status check.
+- `maia agent archive|restore <agent_id>` updates only the stored lifecycle status and prints `updated agent_id=<id> status=<status>`.
+- `maia agent tune <agent_id> ...` updates agent persona/profile metadata in place. Supported flags now include persona (`--persona`, `--persona-file`), role (`--role`, `--clear-role`), model (`--model`, `--clear-model`), and tags (`--tags`, `--clear-tags`).
+- `maia export <path>` writes a `.maia` single-file bundle when `<path>` ends with `.maia`; otherwise it writes the current registry JSON plus a sibling `manifest.json` for debugging/backcompat flows.
+- `maia import <path>` replaces the current registry with the snapshot at `<path>` and preserves the stored agent order, lifecycle status, persona, role, model, and tags from that bundle.
 - Portable agent profile metadata is now preserved in the registry/export/import contract:
   - `role`
   - `model`
@@ -65,44 +65,60 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
   - `default_agent_id`
 
 ## Operator examples
+- Public examples use the installed `maia` entrypoint.
 - Check local Docker/runtime and broker readiness:
-  - `python -m maia doctor`
+  - `maia doctor`
 - v1 golden flow smoke contract:
-  - `python -m maia agent new planner`
-  - `python -m maia agent new reviewer`
-  - `python -m maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
-  - `python -m maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
-  - `python -m maia agent start <planner_id>`
-  - `python -m maia agent start <reviewer_id>`
-  - `python -m maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
-  - `python -m maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
-  - `python -m maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
-  - `python -m maia thread list --status open`
-  - `python -m maia thread show <thread_id>`
-  - `python -m maia handoff show <handoff_id>`
-  - `python -m maia workspace show <planner_id>`
-  - `python -m maia agent status <planner_id>`
-  - `python -m maia agent logs <planner_id> --tail-lines 20`
-- Default export bundle:
-  - `python -m maia export`
-- Inspect a bundle before import:
-  - `python -m maia inspect ~/.maia/exports/maia-state.maia`
+  - `maia agent new planner`
+  - `maia agent new reviewer`
+  - `maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
+  - `maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
+  - `maia agent start <planner_id>`
+  - `maia agent start <reviewer_id>`
+  - `maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
+  - `maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
+  - `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
+  - `maia thread list --status open`
+  - `maia thread show <thread_id>`
+  - `maia handoff show <handoff_id>`
+  - `maia workspace show <planner_id>`
+  - `maia agent status <planner_id>`
+  - `maia agent logs <planner_id> --tail-lines 20`
+- Export portable state:
+  - `maia export`
+  - `maia export backups/team.maia`
+  - `maia export backups/team.maia --label prod --description 'Nightly snapshot'`
+- Inspect a snapshot before import:
+  - `maia inspect backups/team.maia`
+  - `maia inspect backups/manifest.json`
 - Show current team metadata:
-  - `python -m maia team show`
+  - `maia team show`
 - Update team metadata safely:
-  - `python -m maia team update --name research-lab --description 'Nightly migration team' --tags research,ops --default-agent <agent_id>`
+  - `maia team update --name research-lab --tags research,ops`
+  - `maia team update --description 'Nightly migration team' --default-agent <agent_id>`
+  - `maia team update --clear-default-agent --clear-tags`
+- Review open thread state:
+  - `maia thread list --status open`
+  - `maia thread list --agent <reviewer_id>`
+  - `maia thread show <thread_id>`
+- Follow a handoff into workspace/runtime checks:
+  - `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
+  - `maia handoff show <handoff_id>`
+  - `maia handoff list --thread-id <thread_id>`
+  - `maia workspace show <planner_id>`
+  - `maia agent status <planner_id>`
+  - `maia agent logs <planner_id> --tail-lines 20`
 - Tune agent profile metadata:
-  - `python -m maia agent tune <agent_id> --role researcher --model gpt-5 --tags runtime,focus`
+  - `maia agent tune <agent_id> --role researcher --model gpt-5 --tags runtime,focus`
 - Clear agent profile metadata fields:
-  - `python -m maia agent tune <agent_id> --clear-role --clear-model --clear-tags`
+  - `maia agent tune <agent_id> --clear-role --clear-model --clear-tags`
 - Clear optional team metadata fields:
-  - `python -m maia team update --clear-description --clear-tags --clear-default-agent`
-- Preview an import without changing local state:
-  - `python -m maia import backups/team.maia --preview`
-- Preview large imports with full details:
-  - `python -m maia import backups/team.maia --preview --verbose-preview`
-- Apply a reviewed import without interactive confirmation:
-  - `python -m maia import backups/team.maia --yes`
+  - `maia team update --clear-description --clear-tags --clear-default-agent`
+- Preview or apply an import:
+  - `maia import backups/team.maia --preview`
+  - `maia import backups/team.maia --preview --verbose-preview`
+  - `maia import backups/team.maia`
+  - `maia import backups/team.maia --yes`
 
 ## Portable state scope
 - Portable state kinds currently exported:

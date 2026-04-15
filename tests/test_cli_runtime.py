@@ -1238,9 +1238,9 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
         planner_id,
         reviewer_id,
         "--body",
-        "please review phase 3",
+        "please review the latest patch",
         "--topic",
-        "phase 3 review",
+        "review handoff",
         "--kind",
         "request",
     )
@@ -1265,7 +1265,7 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
     assert inbox_message["from_agent"] == planner_id
     assert inbox_message["to_agent"] == reviewer_id
     assert inbox_message["kind"] == "request"
-    assert inbox_message["body"] == "please␠review␠phase␠3"
+    assert inbox_message["body"] == "please␠review␠the␠latest␠patch"
     assert inbox_message["reply_to_message_id"] == "-"
 
     thread_created_at = load_collaboration(tmp_path)["threads"][0]["created_at"]
@@ -1274,7 +1274,7 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
     thread_lines = thread.stdout.strip().splitlines()
     assert parse_fields(thread_lines[0]) == {
         "thread_id": thread_id,
-        "topic": "phase␠3␠review",
+        "topic": "review␠handoff",
         "participants": f"{planner_id},{reviewer_id}",
         "participant_runtime": f"{planner_id}:stopped,{reviewer_id}:stopped",
         "created_by": planner_id,
@@ -1556,7 +1556,7 @@ def test_send_to_existing_thread_and_validation(tmp_path: Path) -> None:
         "--body",
         "first",
         "--topic",
-        "phase 3",
+        "review handoff",
     )
     thread_id = parse_fields(first.stdout.strip())["thread_id"]
 

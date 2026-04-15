@@ -17,10 +17,25 @@ from maia.app_state import get_collaboration_path, get_runtime_state_path
 from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
 from maia import cli as cli_module
-from maia.cli_parser import build_parser
+from maia.cli_parser import (
+    AGENT_TUNE_EXAMPLES,
+    DOCTOR_EXAMPLES,
+    EXPORT_EXAMPLES,
+    GOLDEN_FLOW_SMOKE_CONTRACT,
+    HANDOFF_EXAMPLES,
+    IMPORT_EXAMPLES,
+    INSPECT_EXAMPLES,
+    TEAM_SHOW_EXAMPLES,
+    TEAM_UPDATE_EXAMPLES,
+    THREAD_EXAMPLES,
+    WORKSPACE_EXAMPLES,
+    build_parser,
+)
 from maia.collaboration_storage import CollaborationStorage
 from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+
+README_PATH = REPO_ROOT / "README.md"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
@@ -67,6 +82,11 @@ class FakeMessageBroker:
         self.closed = True
 
 
+def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
+    for line in lines:
+        assert line in text
+
+
 
 
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -91,29 +111,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Inspect an importable Maia snapshot" in captured.out
     assert "Golden flow smoke contract:" in captured.out
     assert "Phase 7" not in captured.out
-    assert "maia agent new planner" in captured.out
-    assert "maia agent new reviewer" in captured.out
-    assert "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest" in captured.out
-    assert "--runtime-workspace /workspace/planner" in captured.out
-    assert "--runtime-command planner" in captured.out
-    assert "--runtime-env MAIA_ROLE=planner" in captured.out
-    assert "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest" in captured.out
-    assert "--runtime-workspace /workspace/reviewer" in captured.out
-    assert "--runtime-command reviewer" in captured.out
-    assert "--runtime-env MAIA_ROLE=reviewer" in captured.out
-    assert "maia agent start <planner_id>" in captured.out
-    assert "maia agent start <reviewer_id>" in captured.out
-    assert "maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'" in captured.out
-    assert "maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'" in captured.out
-    assert "maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id>" in captured.out
-    assert "reports/review.md" in captured.out
-    assert "Review notes ready" in captured.out
-    assert "maia thread list --status open" in captured.out
-    assert "maia thread show <thread_id>" in captured.out
-    assert "maia handoff show <handoff_id>" in captured.out
-    assert "maia workspace show <planner_id>" in captured.out
-    assert "maia agent status <planner_id>" in captured.out
-    assert "maia agent logs <planner_id> --tail-lines 20" in captured.out
+    _assert_contains_lines(captured.out, GOLDEN_FLOW_SMOKE_CONTRACT)
 
 
 def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -144,14 +142,14 @@ def test_team_help(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_build_parser_send_shape() -> None:
     args = build_parser().parse_args(
-        ["send", "planner", "reviewer", "--body", "hello", "--topic", "phase-3"]
+        ["send", "planner", "reviewer", "--body", "hello", "--topic", "review handoff"]
     )
 
     assert args.resource == "send"
     assert args.from_agent == "planner"
     assert args.to_agent == "reviewer"
     assert args.body == "hello"
-    assert args.topic == "phase-3"
+    assert args.topic == "review handoff"
     assert args.thread_id is None
     assert args.kind == "request"
 
@@ -204,9 +202,7 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "recent handoff pointers" in captured.out
     assert "participant runtime summaries" in captured.out
     assert "Examples:" in captured.out
-    assert "maia thread list --status open" in captured.out
-    assert "maia thread show 7f2c1a9b" in captured.out
-    assert "maia handoff show 9c4d0e12" in captured.out
+    _assert_contains_lines(captured.out, THREAD_EXAMPLES)
 
 
 def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -219,9 +215,7 @@ def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) ->
     assert "handoff participant" in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
-    assert "maia workspace show planner1234" in captured.out
-    assert "maia agent status planner1234" in captured.out
-    assert "maia agent logs planner1234 --tail-lines 20" in captured.out
+    _assert_contains_lines(captured.out, WORKSPACE_EXAMPLES)
 
 
 def test_build_parser_handoff_add_shape() -> None:
@@ -238,9 +232,9 @@ def test_build_parser_handoff_add_shape() -> None:
             "--type",
             "report",
             "--location",
-            "reports/phase7.md",
+            "reports/review.md",
             "--summary",
-            "phase 7 handoff",
+            "Review notes ready",
         ]
     )
 
@@ -250,8 +244,8 @@ def test_build_parser_handoff_add_shape() -> None:
     assert args.from_agent == "planner"
     assert args.to_agent == "reviewer"
     assert args.type == "report"
-    assert args.location == "reports/phase7.md"
-    assert args.summary == "phase 7 handoff"
+    assert args.location == "reports/review.md"
+    assert args.summary == "Review notes ready"
 
 
 def test_build_parser_team_update_shape() -> None:
@@ -274,7 +268,7 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     captured = capsys.readouterr()
     assert "Check local runtime and broker prerequisites" in captured.out
     assert "Examples:" in captured.out
-    assert "maia doctor" in captured.out
+    _assert_contains_lines(captured.out, DOCTOR_EXAMPLES)
     assert "doctor" in captured.out
 
 
@@ -294,9 +288,18 @@ def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) 
     assert "truncation" in captured.out
     assert "Skip overwrite confirmation for destructive imports" in captured.out
     assert "Examples:" in captured.out
-    assert "maia import backups/team.maia --preview" in captured.out
-    assert "maia import backups/team.maia --preview --verbose-preview" in captured.out
-    assert "maia import backups/team.maia --yes" in captured.out
+    _assert_contains_lines(captured.out, IMPORT_EXAMPLES)
+
+
+def test_inspect_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["inspect", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Read a .maia bundle, manifest.json" in captured.out
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, INSPECT_EXAMPLES)
 
 
 def test_export_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -308,9 +311,18 @@ def test_export_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "Write a Maia bundle (.maia) or raw registry snapshot" in captured.out
     assert "path" in captured.out
     assert "Examples:" in captured.out
-    assert "maia export" in captured.out
-    assert "maia export backups/team.maia" in captured.out
-    assert "maia export backups/team.maia --label prod --description 'Nightly snapshot'" in captured.out
+    _assert_contains_lines(captured.out, EXPORT_EXAMPLES)
+
+
+def test_team_show_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["team", "show", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: maia team show" in captured.out
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, TEAM_SHOW_EXAMPLES)
 
 
 def test_team_update_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -323,7 +335,7 @@ def test_team_update_help_includes_examples(capsys: pytest.CaptureFixture[str]) 
     assert "Comma-separated team tags" in captured.out
     assert "Clear the stored default agent id" in captured.out
     assert "Examples:" in captured.out
-    assert "maia team update --name research-lab --tags research,ops" in captured.out
+    _assert_contains_lines(captured.out, TEAM_UPDATE_EXAMPLES)
 
 
 def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -339,14 +351,7 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert "list" in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
-    assert "maia handoff add --thread-id 7f2c1a9b" in captured.out
-    assert "reports/review.md" in captured.out
-    assert "Review notes ready" in captured.out
-    assert "maia handoff list --thread-id 7f2c1a9b" in captured.out
-    assert "maia handoff show 9c4d0e12" in captured.out
-    assert "maia workspace show planner1234" in captured.out
-    assert "maia agent status planner1234" in captured.out
-    assert "maia agent logs planner1234 --tail-lines 20" in captured.out
+    _assert_contains_lines(captured.out, HANDOFF_EXAMPLES)
     assert "Phase 7" not in captured.out
 
 
@@ -359,9 +364,33 @@ def test_legacy_artifact_alias_maps_to_hidden_handoff_surface(
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia handoff" in captured.out
-    assert "maia handoff add --thread-id 7f2c1a9b" in captured.out
+    assert HANDOFF_EXAMPLES[0] in captured.out
     assert "Review notes ready" in captured.out
     assert "maia artifact" not in captured.out
+
+
+def test_readme_examples_align_with_public_help() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "Hermes agents" not in readme
+    assert "python -m maia" not in readme
+    assert "Public examples use the installed `maia` entrypoint." in readme
+    assert "v1 golden flow smoke contract:" in readme
+    for lines in (
+        DOCTOR_EXAMPLES,
+        GOLDEN_FLOW_SMOKE_CONTRACT,
+        AGENT_TUNE_EXAMPLES,
+        EXPORT_EXAMPLES,
+        IMPORT_EXAMPLES,
+        INSPECT_EXAMPLES,
+        TEAM_SHOW_EXAMPLES,
+        TEAM_UPDATE_EXAMPLES,
+        THREAD_EXAMPLES,
+        WORKSPACE_EXAMPLES,
+        HANDOFF_EXAMPLES,
+    ):
+        for line in lines:
+            assert f"`{line}`" in readme
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(
@@ -382,6 +411,9 @@ def test_agent_tune_help_includes_profile_flags(capsys: pytest.CaptureFixture[st
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, AGENT_TUNE_EXAMPLES)
+    assert "maia agent tune <planner_id> --role planner" in captured.out
     assert "--persona" in captured.out
     assert "--role" in captured.out
     assert "--model" in captured.out
@@ -522,9 +554,9 @@ def test_send_and_reply_publish_to_broker_and_persist_metadata(
         planner_id,
         reviewer_id,
         "--body",
-        "please review phase 6",
+        "please review the latest patch",
         "--topic",
-        "phase 6 review",
+        "review handoff",
     ]) == 0
     sent_fields = _parse_fields(capsys.readouterr().out.strip())
     assert len(fake_broker.published) == 1
@@ -550,8 +582,8 @@ def test_send_and_reply_publish_to_broker_and_persist_metadata(
     assert fake_broker.closed is True
 
     payload = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
-    assert "phase 6 review" in payload
-    assert "please review phase 6" in payload
+    assert "review handoff" in payload
+    assert "please review the latest patch" in payload
     assert "looks good" in payload
 
 
@@ -763,12 +795,12 @@ def test_merge_broker_inbox_messages_preserves_thread_topic(tmp_path: Path) -> N
                     receipt_handle="42",
                     delivery_attempt=1,
                 ),
-                {"thread_topic": "phase 6 review"},
+                {"thread_topic": "review handoff"},
             )
         ],
     )
 
-    assert merged.threads[0].topic == "phase 6 review"
+    assert merged.threads[0].topic == "review handoff"
 
 
 def test_send_does_not_persist_metadata_when_broker_publish_fails(
@@ -792,7 +824,7 @@ def test_send_does_not_persist_metadata_when_broker_publish_fails(
         "--body",
         "should fail",
         "--topic",
-        "phase 6 review",
+        "review handoff",
     ]) == 1
     captured = capsys.readouterr()
     assert "broker publish failed" in captured.err
@@ -820,7 +852,7 @@ def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
         "--body",
         "initial",
         "--topic",
-        "phase 6 thread",
+        "review thread",
     ]) == 0
     sent_fields = _parse_fields(capsys.readouterr().out.strip())
     thread_id = sent_fields["thread_id"]
@@ -893,9 +925,9 @@ def test_handoff_add_list_and_show_round_trip(
         planner_id,
         reviewer_id,
         "--body",
-        "phase 7 package ready",
+        "review package ready",
         "--topic",
-        "phase 7 review",
+        "review handoff",
     ]) == 0
     thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
 
@@ -911,9 +943,9 @@ def test_handoff_add_list_and_show_round_trip(
         "--type",
         "report",
         "--location",
-        "reports/phase7.md",
+        "reports/review.md",
         "--summary",
-        "phase 7 review bundle",
+        "Review notes ready",
     ]) == 0
     add_fields = _parse_fields(capsys.readouterr().out.strip())
     handoff_id = add_fields["handoff_id"]
@@ -921,8 +953,8 @@ def test_handoff_add_list_and_show_round_trip(
     assert add_fields["from_agent"] == planner_id
     assert add_fields["to_agent"] == reviewer_id
     assert add_fields["type"] == "report"
-    assert add_fields["location"] == "reports/phase7.md"
-    assert add_fields["summary"] == "phase␠7␠review␠bundle"
+    assert add_fields["location"] == "reports/review.md"
+    assert add_fields["summary"] == "Review␠notes␠ready"
 
     collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
     assert len(collaboration.handoffs) == 1
@@ -947,8 +979,8 @@ def test_handoff_add_list_and_show_round_trip(
     assert len(show_lines) == 3
     show_fields = _parse_fields(show_lines[0])
     assert show_fields["handoff_id"] == handoff_id
-    assert show_fields["location"] == "reports/phase7.md"
-    assert show_fields["summary"] == "phase␠7␠review␠bundle"
+    assert show_fields["location"] == "reports/review.md"
+    assert show_fields["summary"] == "Review␠notes␠ready"
     source_workspace_fields = _parse_fields(show_lines[1])
     assert source_workspace_fields == {
         "handoff_role": "source",
@@ -989,9 +1021,9 @@ def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
         planner_id,
         reviewer_id,
         "--body",
-        "phase 7 package ready",
+        "review package ready",
         "--topic",
-        "phase 7 review",
+        "review handoff",
     ]) == 0
     thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
 
@@ -1007,9 +1039,9 @@ def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
         "--type",
         "report",
         "--location",
-        "reports/phase7.md",
+        "reports/review.md",
         "--summary",
-        "phase 7 review bundle",
+        "Review notes ready",
     ]) == 0
     add_fields = _parse_fields(capsys.readouterr().out.strip())
     handoff_id = add_fields["handoff_id"]
@@ -1048,9 +1080,9 @@ def test_handoff_add_rejects_non_participant_agents(
         planner_id,
         reviewer_id,
         "--body",
-        "phase 7 package ready",
+        "review package ready",
         "--topic",
-        "phase 7 review",
+        "review handoff",
     ]) == 0
     thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
 
@@ -1066,9 +1098,9 @@ def test_handoff_add_rejects_non_participant_agents(
         "--type",
         "report",
         "--location",
-        "reports/phase7.md",
+        "reports/review.md",
         "--summary",
-        "phase 7 review bundle",
+        "Review notes ready",
     ]) == 1
     captured = capsys.readouterr()
     assert "Handoff recipient must be a participant in the thread" in captured.err
@@ -1105,7 +1137,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
         threads=[
             ThreadRecord(
                 thread_id="thread-001",
-                topic="phase 6 review",
+                topic="review handoff",
                 participants=["planner", "reviewer"],
                 created_by="planner",
                 status="open",
@@ -1168,8 +1200,8 @@ def test_thread_list_and_show_surface_control_plane_summary(
                 from_agent="planner",
                 to_agent="reviewer",
                 kind=HandoffKind.REPORT,
-                location="reports/phase6.md",
-                summary="phase 6 bundle",
+                location="reports/review.md",
+                summary="Review notes ready",
                 created_at="2026-04-15T12:01:00Z",
             )
         ],
@@ -1202,7 +1234,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert len(list_lines) == 3
     open_fields = _parse_fields(list_lines[0])
     assert open_fields["thread_id"] == "thread-001"
-    assert open_fields["topic"] == "phase␠6␠review"
+    assert open_fields["topic"] == "review␠handoff"
     assert open_fields["participants"] == "planner,reviewer"
     assert open_fields["participant_runtime"] == "planner:running,reviewer:stopped"
     assert open_fields["status"] == "open"
@@ -1243,8 +1275,8 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert show_fields["recent_handoff_from"] == "planner"
     assert show_fields["recent_handoff_to"] == "reviewer"
     assert show_fields["recent_handoff_type"] == "report"
-    assert show_fields["recent_handoff_location"] == "reports/phase6.md"
-    assert show_fields["recent_handoff_summary"] == "phase␠6␠bundle"
+    assert show_fields["recent_handoff_location"] == "reports/review.md"
+    assert show_fields["recent_handoff_summary"] == "Review␠notes␠ready"
     assert show_fields["recent_handoff_created_at"] == "2026-04-15T12:01:00Z"
     first_message_fields = _parse_fields(show_lines[1])
     second_message_fields = _parse_fields(show_lines[2])

@@ -33,6 +33,80 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "restore": AgentStatus.STOPPED,
 }
 AGENT_ID_COMMANDS = frozenset({"status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+GOLDEN_FLOW_SMOKE_CONTRACT = (
+    "maia agent new planner",
+    "maia agent new reviewer",
+    "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest "
+    "--runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m "
+    "--runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner",
+    "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest "
+    "--runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m "
+    "--runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer",
+    "maia agent start <planner_id>",
+    "maia agent start <reviewer_id>",
+    "maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'",
+    "maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'",
+    "maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> "
+    "--type report --location reports/review.md --summary 'Review notes ready'",
+    "maia thread list --status open",
+    "maia thread show <thread_id>",
+    "maia handoff show <handoff_id>",
+    "maia workspace show <planner_id>",
+    "maia agent status <planner_id>",
+    "maia agent logs <planner_id> --tail-lines 20",
+)
+EXPORT_EXAMPLES = (
+    "maia export",
+    "maia export backups/team.maia",
+    "maia export backups/team.maia --label prod --description 'Nightly snapshot'",
+)
+IMPORT_EXAMPLES = (
+    "maia import backups/team.maia --preview",
+    "maia import backups/team.maia --preview --verbose-preview",
+    "maia import backups/team.maia",
+    "maia import backups/team.maia --yes",
+)
+INSPECT_EXAMPLES = (
+    "maia inspect backups/team.maia",
+    "maia inspect backups/manifest.json",
+)
+DOCTOR_EXAMPLES = ("maia doctor",)
+THREAD_EXAMPLES = (
+    "maia thread list --status open",
+    "maia thread list --agent <reviewer_id>",
+    "maia thread show <thread_id>",
+    "maia handoff show <handoff_id>",
+)
+TEAM_SHOW_EXAMPLES = ("maia team show",)
+TEAM_UPDATE_EXAMPLES = (
+    "maia team update --name research-lab --tags research,ops",
+    "maia team update --description 'Nightly migration team' --default-agent <agent_id>",
+    "maia team update --clear-description --clear-tags --clear-default-agent",
+)
+AGENT_TUNE_EXAMPLES = (
+    "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner",
+    "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer",
+    "maia agent tune <agent_id> --role researcher --model gpt-5 --tags runtime,focus",
+    "maia agent tune <agent_id> --clear-role --clear-model --clear-tags",
+)
+WORKSPACE_EXAMPLES = (
+    "maia workspace show <planner_id>",
+    "maia agent status <planner_id>",
+    "maia agent logs <planner_id> --tail-lines 20",
+)
+HANDOFF_EXAMPLES = (
+    "maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> "
+    "--type report --location reports/review.md --summary 'Review notes ready'",
+    "maia handoff show <handoff_id>",
+    "maia workspace show <planner_id>",
+    "maia agent status <planner_id>",
+    "maia agent logs <planner_id> --tail-lines 20",
+    "maia handoff list --thread-id <thread_id>",
+)
+
+
+def _format_epilog(heading: str, lines: tuple[str, ...]) -> str:
+    return "\n".join((heading, *(f"  {line}" for line in lines)))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,29 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.set_defaults(parser=parser)
-    parser.epilog = (
-        "Golden flow smoke contract:\n"
-        "  maia agent new planner\n"
-        "  maia agent new reviewer\n"
-        "  maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest "
-        "--runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m "
-        "--runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner\n"
-        "  maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest "
-        "--runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m "
-        "--runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer\n"
-        "  maia agent start <planner_id>\n"
-        "  maia agent start <reviewer_id>\n"
-        "  maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'\n"
-        "  maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'\n"
-        "  maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> "
-        "--type report --location reports/review.md --summary 'Review notes ready'\n"
-        "  maia thread list --status open\n"
-        "  maia thread show <thread_id>\n"
-        "  maia handoff show <handoff_id>\n"
-        "  maia workspace show <planner_id>\n"
-        "  maia agent status <planner_id>\n"
-        "  maia agent logs <planner_id> --tail-lines 20"
-    )
+    parser.epilog = _format_epilog("Golden flow smoke contract:", GOLDEN_FLOW_SMOKE_CONTRACT)
 
     top_level = parser.add_subparsers(dest="resource")
 
@@ -81,12 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "export":
-            command_parser.epilog = (
-                "Examples:\n"
-                "  maia export\n"
-                "  maia export backups/team.maia\n"
-                "  maia export backups/team.maia --label prod --description 'Nightly snapshot'"
-            )
+            command_parser.epilog = _format_epilog("Examples:", EXPORT_EXAMPLES)
             command_parser.add_argument(
                 "path",
                 nargs="?",
@@ -102,19 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command_name in {"import", "inspect"}:
             if command_name == "import":
-                command_parser.epilog = (
-                    "Examples:\n"
-                    "  maia import backups/team.maia --preview\n"
-                    "  maia import backups/team.maia --preview --verbose-preview\n"
-                    "  maia import backups/team.maia\n"
-                    "  maia import backups/team.maia --yes"
-                )
+                command_parser.epilog = _format_epilog("Examples:", IMPORT_EXAMPLES)
             if command_name == "inspect":
-                command_parser.epilog = (
-                    "Examples:\n"
-                    "  maia inspect backups/team.maia\n"
-                    "  maia inspect backups/manifest.json"
-                )
+                command_parser.epilog = _format_epilog("Examples:", INSPECT_EXAMPLES)
             command_parser.add_argument(
                 "path",
                 help="Read a .maia bundle, manifest.json, or raw registry snapshot path",
@@ -148,10 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "doctor":
-            command_parser.epilog = (
-                "Examples:\n"
-                "  maia doctor"
-            )
+            command_parser.epilog = _format_epilog("Examples:", DOCTOR_EXAMPLES)
 
     for command_name in TOP_LEVEL_COLLAB_COMMANDS:
         help_text = {
@@ -186,13 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("agent_id", help="Agent id")
             command_parser.add_argument("--limit", type=int, default=20, help="Max messages to show")
         if command_name == "thread":
-            command_parser.epilog = (
-                "Examples:\n"
-                "  maia thread list --status open\n"
-                "  maia thread list --agent reviewer1234\n"
-                "  maia thread show 7f2c1a9b\n"
-                "  maia handoff show 9c4d0e12"
-            )
+            command_parser.epilog = _format_epilog("Examples:", THREAD_EXAMPLES)
             thread_commands = command_parser.add_subparsers(
                 dest="thread_command",
                 metavar="{" + ",".join(THREAD_COMMANDS) + "}",
@@ -231,7 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{" + ",".join(AGENT_COMMANDS) + "}",
     )
     for command_name in AGENT_COMMANDS:
-        command_parser = agent_commands.add_parser(command_name, help=f"{command_name} agent")
+        command_parser = agent_commands.add_parser(
+            command_name,
+            help=f"{command_name} agent",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "new":
             command_parser.add_argument("name", help="Agent name")
@@ -245,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Number of recent runtime log lines to show",
             )
         if command_name == "tune":
+            command_parser.epilog = _format_epilog("Examples:", AGENT_TUNE_EXAMPLES)
             persona_group = command_parser.add_mutually_exclusive_group()
             persona_group.add_argument(
                 "--persona",
@@ -313,17 +346,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{" + ",".join(TEAM_COMMANDS) + "}",
     )
     for command_name in TEAM_COMMANDS:
-        command_parser = team_commands.add_parser(command_name, help=f"{command_name} team")
+        command_parser = team_commands.add_parser(
+            command_name,
+            help=f"{command_name} team",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "show":
-            command_parser.epilog = "Examples:\n  maia team show"
+            command_parser.epilog = _format_epilog("Examples:", TEAM_SHOW_EXAMPLES)
         if command_name == "update":
-            command_parser.epilog = (
-                "Examples:\n"
-                "  maia team update --name research-lab --tags research,ops\n"
-                "  maia team update --description 'Nightly migration team' --default-agent abcd1234\n"
-                "  maia team update --clear-default-agent --clear-tags"
-            )
+            command_parser.epilog = _format_epilog("Examples:", TEAM_UPDATE_EXAMPLES)
             name_group = command_parser.add_mutually_exclusive_group()
             name_group.add_argument("--name", help="Set the team display name")
             name_group.add_argument(
@@ -369,12 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     workspace_parser.set_defaults(parser=workspace_parser)
-    workspace_parser.epilog = (
-        "Examples:\n"
-        "  maia workspace show planner1234\n"
-        "  maia agent status planner1234\n"
-        "  maia agent logs planner1234 --tail-lines 20"
-    )
+    workspace_parser.epilog = _format_epilog("Examples:", WORKSPACE_EXAMPLES)
     workspace_commands = workspace_parser.add_subparsers(
         dest="workspace_command",
         metavar="{" + ",".join(WORKSPACE_COMMANDS) + "}",
@@ -393,16 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     handoff_parser.set_defaults(parser=handoff_parser)
-    handoff_parser.epilog = (
-        "Examples:\n"
-        "  maia handoff add --thread-id 7f2c1a9b --from-agent reviewer5678 --to-agent planner1234 "
-        "--type report --location reports/review.md --summary 'Review notes ready'\n"
-        "  maia handoff show 9c4d0e12\n"
-        "  maia workspace show planner1234\n"
-        "  maia agent status planner1234\n"
-        "  maia agent logs planner1234 --tail-lines 20\n"
-        "  maia handoff list --thread-id 7f2c1a9b"
-    )
+    handoff_parser.epilog = _format_epilog("Examples:", HANDOFF_EXAMPLES)
 
     handoff_commands = handoff_parser.add_subparsers(
         dest="handoff_command",
