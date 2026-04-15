@@ -13,6 +13,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.cli import main
+from maia.cli_parser import build_parser
 
 
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -58,66 +59,42 @@ def test_team_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "agent" not in captured.out
 
 
-def test_agent_new_placeholder(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["agent", "new", "demo"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: agent new"
+def test_build_parser_send_shape() -> None:
+    args = build_parser().parse_args(
+        ["send", "planner", "reviewer", "--body", "hello", "--topic", "phase-3"]
+    )
+
+    assert args.resource == "send"
+    assert args.from_agent == "planner"
+    assert args.to_agent == "reviewer"
+    assert args.body == "hello"
+    assert args.topic == "phase-3"
+    assert args.thread_id is None
+    assert args.kind == "request"
 
 
-def test_agent_purge_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["agent", "purge", "demo1234"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: agent purge"
+def test_build_parser_reply_shape() -> None:
+    args = build_parser().parse_args(
+        ["reply", "msg1234", "--from-agent", "reviewer", "--body", "done"]
+    )
+
+    assert args.resource == "reply"
+    assert args.message_id == "msg1234"
+    assert args.from_agent == "reviewer"
+    assert args.body == "done"
+    assert args.kind == "answer"
 
 
-def test_export_placeholder_contract(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    export_path = tmp_path / "bundle" / "registry.json"
+def test_build_parser_team_update_shape() -> None:
+    args = build_parser().parse_args(
+        ["team", "update", "--name", "research-lab", "--tags", "research,ops"]
+    )
 
-    assert main(["export", str(export_path), "--label", "prod"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: export"
-
-
-def test_export_placeholder_contract_with_description(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    export_path = tmp_path / "bundle" / "team.maia"
-
-    assert main(["export", str(export_path), "--description", "nightly snapshot"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: export"
-
-
-def test_import_placeholder_contract(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    import_path = tmp_path / "bundle" / "manifest.json"
-
-    assert main(["import", str(import_path), "--preview"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: import"
-
-
-def test_import_placeholder_contract_with_yes(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    import_path = tmp_path / "bundle" / "manifest.json"
-
-    assert main(["import", str(import_path), "--yes"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: import"
-
-
-def test_import_placeholder_contract_with_verbose_preview(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    import_path = tmp_path / "bundle" / "manifest.json"
-
-    assert main(["import", str(import_path), "--preview", "--verbose-preview"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: import"
+    assert args.resource == "team"
+    assert args.team_command == "update"
+    assert args.name == "research-lab"
+    assert args.tags == "research,ops"
+    assert args.default_agent is None
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:
@@ -155,52 +132,6 @@ def test_export_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "maia export backups/team.maia --label prod --description 'Nightly snapshot'" in captured.out
 
 
-def test_inspect_placeholder_contract(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    inspect_path = tmp_path / "bundle" / "team.maia"
-
-    assert main(["inspect", str(inspect_path)]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: inspect"
-
-
-def test_send_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["send", "planner", "reviewer", "--body", "hello", "--topic", "phase-3"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: send"
-
-
-def test_inbox_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["inbox", "reviewer", "--limit", "5"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: inbox"
-
-
-def test_thread_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["thread", "thread1234", "--limit", "10"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: thread"
-
-
-def test_reply_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["reply", "msg1234", "--from-agent", "reviewer", "--body", "done"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: reply"
-
-
-def test_team_show_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["team", "show"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: team show"
-
-
-def test_team_update_placeholder_contract(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["team", "update", "--name", "research-lab"]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: team update"
-
-
 def test_team_update_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["team", "update", "--help"])
@@ -218,22 +149,12 @@ def test_team_update_parser_rejects_conflicting_name_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        main(["team", "update", "--name", "research-lab", "--clear-name"])
+        build_parser().parse_args(["team", "update", "--name", "research-lab", "--clear-name"])
 
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
     assert "--clear-name" in captured.err
     assert "not allowed" in captured.err
-
-
-def test_agent_tune_placeholder_contract_with_persona_file(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    persona_path = tmp_path / "persona.txt"
-
-    assert main(["agent", "tune", "demo1234", "--persona-file", str(persona_path)]) == 0
-    captured = capsys.readouterr()
-    assert captured.out.strip() == "Not implemented yet: agent tune"
 
 
 def test_agent_tune_help_includes_profile_flags(capsys: pytest.CaptureFixture[str]) -> None:
@@ -257,7 +178,7 @@ def test_agent_tune_parser_rejects_both_persona_sources(
     persona_path = tmp_path / "persona.txt"
 
     with pytest.raises(SystemExit) as exc_info:
-        main(
+        build_parser().parse_args(
             [
                 "agent",
                 "tune",
@@ -280,7 +201,7 @@ def test_agent_tune_parser_rejects_conflicting_role_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        main(["agent", "tune", "demo1234", "--role", "research", "--clear-role"])
+        build_parser().parse_args(["agent", "tune", "demo1234", "--role", "research", "--clear-role"])
 
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
