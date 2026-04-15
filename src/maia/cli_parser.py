@@ -16,6 +16,7 @@ AGENT_COMMANDS = (
     "archive",
     "restore",
     "status",
+    "logs",
     "list",
     "tune",
     "purge",
@@ -27,7 +28,7 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "archive": AgentStatus.ARCHIVED,
     "restore": AgentStatus.STOPPED,
 }
-AGENT_ID_COMMANDS = frozenset({"status", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+AGENT_ID_COMMANDS = frozenset({"status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -178,6 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
             command_parser.add_argument("agent_id", help="Agent id")
+        if command_name == "logs":
+            command_parser.add_argument(
+                "--tail-lines",
+                type=int,
+                default=100,
+                help="Number of recent runtime log lines to show",
+            )
         if command_name == "tune":
             persona_group = command_parser.add_mutually_exclusive_group()
             persona_group.add_argument(

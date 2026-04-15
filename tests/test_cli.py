@@ -43,6 +43,7 @@ def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert "usage: maia agent" in captured.out
     assert "new" in captured.out
+    assert "logs" in captured.out
     assert "purge" in captured.out
     assert "export" not in captured.out
     assert "import" not in captured.out
@@ -252,6 +253,14 @@ def test_build_parser_runtime_tune_shape() -> None:
     assert args.runtime_command == ["python", "-m", "reviewer"]
     assert args.runtime_env == ["MAIA_ENV=test"]
     assert args.clear_runtime is False
+
+
+def test_build_parser_logs_shape() -> None:
+    args = build_parser().parse_args(["agent", "logs", "demo1234", "--tail-lines", "25"])
+
+    assert args.agent_command == "logs"
+    assert args.agent_id == "demo1234"
+    assert args.tail_lines == 25
 
 
 @pytest.mark.parametrize(

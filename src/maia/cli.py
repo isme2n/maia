@@ -18,6 +18,7 @@ from maia.app_state import (
     get_collaboration_path,
     get_default_export_path,
     get_registry_path,
+    get_runtime_state_path,
     get_team_metadata_path,
 )
 from maia.backup_manifest import BackupManifest, load_backup_manifest, write_backup_manifest
@@ -33,7 +34,10 @@ from maia.cli_parser import (
     build_parser,
 )
 from maia.collaboration_storage import CollaborationStorage
+from maia.docker_runtime_adapter import DockerRuntimeAdapter
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
+from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
@@ -83,17 +87,24 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                 return _handle_reply(args, registry, collaboration_storage, collaboration_path, collaboration)
 
         registry = storage.load(registry_path)
+        runtime_adapter = _build_runtime_adapter()
         if command_name == "new":
             return _handle_agent_new(args, storage, registry_path, registry)
         if command_name == "list":
             return _handle_agent_list(registry)
         if command_name == "status":
-            return _handle_agent_status(args, registry)
+            return _handle_agent_status(args, registry, runtime_adapter)
+        if command_name == "logs":
+            return _handle_agent_logs(args, registry, runtime_adapter)
+        if command_name == "start":
+            return _handle_agent_start(args, storage, registry_path, registry, runtime_adapter)
+        if command_name == "stop":
+            return _handle_agent_stop(args, storage, registry_path, registry, runtime_adapter)
         if command_name == "tune":
             return _handle_agent_tune(args, storage, registry_path, registry)
         if command_name == "purge":
             return _handle_agent_purge(args, storage, registry_path, registry)
-        if command_name in LIFECYCLE_STATUS_BY_COMMAND:
+        if command_name in {"archive", "restore"}:
             return _handle_agent_lifecycle(args, storage, registry_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -175,6 +186,13 @@ def _run_doctor_probe(name: str, command: list[str], *, success_detail: str) -> 
 
     detail = (result.stderr or result.stdout or "probe failed").strip()
     return {"name": name, "status": "fail", "detail": detail}
+
+
+def _build_runtime_adapter() -> DockerRuntimeAdapter:
+    return DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=get_runtime_state_path(),
+    )
 
 
 def _handle_agent_new(
@@ -1063,10 +1081,75 @@ def _resolve_import_registry_path(source_path: Path) -> Path:
     return registry_path
 
 
-def _handle_agent_status(args: argparse.Namespace, registry) -> int:
+def _handle_agent_status(args: argparse.Namespace, registry, runtime_adapter: DockerRuntimeAdapter) -> int:
     record = registry.get(args.agent_id)
-    print(_format_agent_status(record))
+    runtime_state = _resolve_runtime_state_for_status(record, runtime_adapter)
+    print(_format_agent_status(record, runtime_state))
     return 0
+
+
+def _handle_agent_start(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> int:
+    record = registry.get(args.agent_id)
+    start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
+    updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
+    storage.save(registry_path, registry)
+    print(
+        f"updated agent_id={updated.agent_id} status={updated.status.value} "
+        f"runtime_status={start_result.runtime.runtime_status.value} "
+        f"runtime_handle={_format_preview_value(start_result.runtime.runtime_handle)}"
+    )
+    return 0
+
+
+def _handle_agent_stop(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> int:
+    registry.get(args.agent_id)
+    stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
+    updated = registry.set_status(args.agent_id, AgentStatus.STOPPED)
+    storage.save(registry_path, registry)
+    print(
+        f"updated agent_id={updated.agent_id} status={updated.status.value} "
+        f"runtime_status={stop_result.runtime.runtime_status.value} "
+        f"runtime_handle={_format_preview_value(stop_result.runtime.runtime_handle)}"
+    )
+    return 0
+
+
+def _handle_agent_logs(args: argparse.Namespace, registry, runtime_adapter: DockerRuntimeAdapter) -> int:
+    registry.get(args.agent_id)
+    logs_result = runtime_adapter.logs(
+        RuntimeLogsRequest(agent_id=args.agent_id, tail_lines=args.tail_lines)
+    )
+    print(
+        f"logs agent_id={args.agent_id} runtime_status={logs_result.runtime.runtime_status.value} "
+        f"runtime_handle={_format_preview_value(logs_result.runtime.runtime_handle)} lines={len(logs_result.lines)}"
+    )
+    for line in logs_result.lines:
+        print(f"line={_format_preview_value(line)}")
+    return 0
+
+
+def _resolve_runtime_state_for_status(
+    record: AgentRecord,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> RuntimeState:
+    if record.runtime_spec is None:
+        return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
+    try:
+        return runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
+    except LookupError:
+        return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
 
 
 def _handle_agent_tune(
@@ -1146,13 +1229,20 @@ def _format_record(record: AgentRecord) -> str:
     )
 
 
-def _format_agent_status(record: AgentRecord) -> str:
+def _format_agent_status(record: AgentRecord, runtime_state: RuntimeState) -> str:
+    runtime_handle = (
+        _format_preview_value(runtime_state.runtime_handle)
+        if runtime_state.runtime_handle is not None
+        else "-"
+    )
     return (
         f"{_format_record(record)} "
         f"persona={_format_preview_value(record.persona)} "
         f"role={_format_preview_value(record.role)} "
         f"model={_format_preview_value(record.model)} "
-        f"tags={_format_encoded_list_or_dash(record.tags)}"
+        f"tags={_format_encoded_list_or_dash(record.tags)} "
+        f"runtime_status={runtime_state.runtime_status.value} "
+        f"runtime_handle={runtime_handle}"
     )
 
 

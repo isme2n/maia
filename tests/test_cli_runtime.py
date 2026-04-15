@@ -78,6 +78,7 @@ def parse_fields(line: str) -> dict[str, str]:
         "profiles",
         "purged",
         "doctor",
+        "logs",
     }:
         tokens = tokens[1:]
     if tokens and tokens[0] == "registry":
@@ -120,21 +121,60 @@ def line_map(stdout: str) -> dict[str, str]:
 
 def _write_fake_docker(path: Path) -> None:
     path.write_text(
-        "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then\n"
-        "  echo 'Docker version 27.0.0'\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"$1\" = \"compose\" ] && [ \"$2\" = \"version\" ]; then\n"
-        "  echo 'Docker Compose version v2.29.0'\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"$1\" = \"info\" ]; then\n"
-        "  echo 'Server Version: 27.0.0'\n"
-        "  exit 0\n"
-        "fi\n"
-        "echo 'unsupported command' >&2\n"
-        "exit 1\n",
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import json, sys\n"
+        "state_path = Path(__file__).with_name('fake-docker-state.json')\n"
+        "if state_path.exists():\n"
+        "    state = json.loads(state_path.read_text(encoding='utf-8'))\n"
+        "else:\n"
+        "    state = {'containers': {}, 'counter': 0}\n"
+        "args = sys.argv[1:]\n"
+        "def save():\n"
+        "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"
+        "if args == ['--version']:\n"
+        "    print('Docker version 27.0.0')\n"
+        "    raise SystemExit(0)\n"
+        "if args == ['compose', 'version']:\n"
+        "    print('Docker Compose version v2.29.0')\n"
+        "    raise SystemExit(0)\n"
+        "if args == ['info']:\n"
+        "    print('Server Version: 27.0.0')\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['run', '-d']:\n"
+        "    state['counter'] += 1\n"
+        "    handle = f\"runtime-{state['counter']:03d}\"\n"
+        "    state['containers'][handle] = {'status': 'running', 'logs': ['line 1', 'line 2']}\n"
+        "    save()\n"
+        "    print(handle)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:1] == ['stop']:\n"
+        "    handle = args[1]\n"
+        "    if handle not in state['containers']:\n"
+        "        print('missing container', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    state['containers'][handle]['status'] = 'exited'\n"
+        "    save()\n"
+        "    print(handle)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['inspect', '--format']:\n"
+        "    handle = args[3]\n"
+        "    if handle not in state['containers']:\n"
+        "        print('missing container', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    print(state['containers'][handle]['status'])\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['logs', '--tail']:\n"
+        "    handle = args[3]\n"
+        "    if handle not in state['containers']:\n"
+        "        print('missing container', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    tail = int(args[2])\n"
+        "    for line in state['containers'][handle]['logs'][-tail:]:\n"
+        "        print(line)\n"
+        "    raise SystemExit(0)\n"
+        "print('unsupported command', file=sys.stderr)\n"
+        "raise SystemExit(1)\n",
         encoding='utf-8',
     )
     path.chmod(0o755)
@@ -166,7 +206,7 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
     fake_bin.mkdir()
     fake_docker = fake_bin / 'docker'
     _write_fake_docker(fake_docker)
-    monkeypatch.setenv('PATH', str(fake_bin))
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     result = run_module(tmp_path, 'doctor')
 
@@ -213,6 +253,8 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
         "role": "∅",
         "model": "∅",
         "tags": "-",
+        "runtime_status": "stopped",
+        "runtime_handle": "-",
     }
 
     tuned = run_module(
@@ -250,6 +292,8 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
         "role": "researcher",
         "model": "gpt-5",
         "tags": "runtime,focus",
+        "runtime_status": "stopped",
+        "runtime_handle": "-",
     }
 
     assert load_registry(tmp_path) == {
@@ -347,6 +391,8 @@ def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: 
         "role": "∅",
         "model": "∅",
         "tags": "-",
+        "runtime_status": "stopped",
+        "runtime_handle": "-",
     }
 
 
@@ -496,12 +542,91 @@ def test_agent_tune_runtime_spec_validation_errors(tmp_path: Path) -> None:
 
 
 
-def test_agent_lifecycle_and_purge(tmp_path: Path) -> None:
+def test_agent_runtime_start_status_logs_stop_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+    assert parse_fields(started.stdout.strip()) == {
+        "agent_id": agent_id,
+        "status": "running",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+    }
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "running",
+        "persona": "∅",
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+    }
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "1")
+    assert logs.returncode == 0
+    log_lines = logs.stdout.strip().splitlines()
+    assert parse_fields(log_lines[0]) == {
+        "agent_id": agent_id,
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+        "lines": "1",
+    }
+    assert parse_fields(log_lines[1]) == {"line": "line␠2"}
+
+    stopped = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped.returncode == 0
+    assert parse_fields(stopped.stdout.strip()) == {
+        "agent_id": agent_id,
+        "status": "stopped",
+        "runtime_status": "stopped",
+        "runtime_handle": "runtime-001",
+    }
+
+
+
+def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
 
+    start_without_runtime = run_module(tmp_path, "agent", "start", agent_id)
+    assert start_without_runtime.returncode == 1
+    assert start_without_runtime.stderr.strip() == (
+        "error: Invalid runtime start request agent runtime_spec: expected RuntimeSpec"
+    )
+
     for command, expected_status in [
-        ("start", "running"),
-        ("stop", "stopped"),
         ("archive", "archived"),
         ("restore", "stopped"),
         ("archive", "archived"),
@@ -1026,6 +1151,8 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
         "role": "reviewer",
         "model": "gpt-5",
         "tags": "qa,ops",
+        "runtime_status": "stopped",
+        "runtime_handle": "-",
     }
     assert load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)})).default_agent_id == agent_id
 
