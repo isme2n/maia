@@ -77,6 +77,7 @@ def parse_fields(line: str) -> dict[str, str]:
         "agents",
         "profiles",
         "purged",
+        "doctor",
     }:
         tokens = tokens[1:]
     if tokens and tokens[0] == "registry":
@@ -115,6 +116,82 @@ def read_bundle_archive(path: Path) -> dict[str, object]:
 def line_map(stdout: str) -> dict[str, str]:
     lines = [line for line in stdout.strip().splitlines() if line]
     return {line.split()[0]: line for line in lines}
+
+
+def _write_fake_docker(path: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then\n"
+        "  echo 'Docker version 27.0.0'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = \"compose\" ] && [ \"$2\" = \"version\" ]; then\n"
+        "  echo 'Docker Compose version v2.29.0'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = \"info\" ]; then\n"
+        "  echo 'Server Version: 27.0.0'\n"
+        "  exit 0\n"
+        "fi\n"
+        "echo 'unsupported command' >&2\n"
+        "exit 1\n",
+        encoding='utf-8',
+    )
+    path.chmod(0o755)
+
+
+def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    empty_bin = tmp_path / 'empty-bin'
+    empty_bin.mkdir()
+    monkeypatch.setenv('PATH', str(empty_bin))
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[0]) == {
+        'check': 'docker_cli',
+        'status': 'missing',
+        'detail': 'docker␠binary␠not␠found␠in␠PATH',
+    }
+    assert parse_fields(lines[-1]) == {
+        'kind': 'summary',
+        'status': 'fail',
+        'failed': 'docker_cli,docker_compose,docker_daemon',
+    }
+
+
+def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', str(fake_bin))
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 0
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[0]) == {
+        'check': 'docker_cli',
+        'status': 'ok',
+        'detail': str(fake_docker),
+    }
+    assert parse_fields(lines[1]) == {
+        'check': 'docker_compose',
+        'status': 'ok',
+        'detail': 'docker␠compose␠available',
+    }
+    assert parse_fields(lines[2]) == {
+        'check': 'docker_daemon',
+        'status': 'ok',
+        'detail': 'docker␠daemon␠reachable',
+    }
+    assert parse_fields(lines[3]) == {
+        'kind': 'summary',
+        'status': 'ok',
+        'failed': '-',
+    }
 
 
 def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None:

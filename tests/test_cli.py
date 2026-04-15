@@ -25,6 +25,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage: maia" in captured.out
     assert "agent" in captured.out
     assert "team" in captured.out
+    assert "doctor" in captured.out
     assert "send" in captured.out
     assert "inbox" in captured.out
     assert "thread" in captured.out
@@ -95,6 +96,17 @@ def test_build_parser_team_update_shape() -> None:
     assert args.name == "research-lab"
     assert args.tags == "research,ops"
     assert args.default_agent is None
+
+
+def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["doctor", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Check local Phase 4 runtime prerequisites" in captured.out
+    assert "Examples:" in captured.out
+    assert "maia doctor" in captured.out
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:

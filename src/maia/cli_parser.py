@@ -7,6 +7,7 @@ import argparse
 from maia.agent_model import AgentStatus
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
+TOP_LEVEL_INFO_COMMANDS = ("doctor",)
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 AGENT_COMMANDS = (
     "new",
@@ -105,6 +106,23 @@ def build_parser() -> argparse.ArgumentParser:
                 "--yes",
                 action="store_true",
                 help="Skip overwrite confirmation for destructive imports",
+            )
+
+    for command_name in TOP_LEVEL_INFO_COMMANDS:
+        help_text = {
+            "doctor": "Check local Phase 4 runtime prerequisites",
+        }[command_name]
+        command_parser = top_level.add_parser(
+            command_name,
+            help=help_text,
+            description=help_text,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        command_parser.set_defaults(parser=command_parser)
+        if command_name == "doctor":
+            command_parser.epilog = (
+                "Examples:\n"
+                "  maia doctor"
             )
 
     for command_name in TOP_LEVEL_COLLAB_COMMANDS:

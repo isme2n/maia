@@ -7,6 +7,8 @@ from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import uuid
 
@@ -26,6 +28,7 @@ from maia.bundle_archive import (
 from maia.cli_parser import (
     LIFECYCLE_STATUS_BY_COMMAND,
     TOP_LEVEL_COLLAB_COMMANDS,
+    TOP_LEVEL_INFO_COMMANDS,
     build_parser,
 )
 from maia.collaboration_storage import CollaborationStorage
@@ -52,6 +55,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
 
     try:
         command_name = _get_runtime_command_name(args)
+        if command_name == "doctor":
+            return _handle_doctor()
         if command_name == "import":
             return _handle_transfer_import(args, storage, registry_path)
         if command_name == "export":
@@ -94,6 +99,81 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         return 1
 
     raise ValueError(f"Unsupported command: {command_name}")
+
+
+def _handle_doctor() -> int:
+    checks = _collect_doctor_checks()
+    failed_checks = [check["name"] for check in checks if check["status"] != "ok"]
+    for check in checks:
+        print(
+            f"doctor check={check['name']} status={check['status']} "
+            f"detail={_format_preview_value(check['detail'])}"
+        )
+    print(
+        f"doctor kind=summary status={'ok' if not failed_checks else 'fail'} "
+        f"failed={','.join(failed_checks) if failed_checks else '-'}"
+    )
+    return 0 if not failed_checks else 1
+
+
+def _collect_doctor_checks() -> list[dict[str, str]]:
+    docker_bin = shutil.which("docker")
+    if docker_bin is None:
+        return [
+            {
+                "name": "docker_cli",
+                "status": "missing",
+                "detail": "docker binary not found in PATH",
+            },
+            {
+                "name": "docker_compose",
+                "status": "missing",
+                "detail": "docker compose unavailable because docker CLI is missing",
+            },
+            {
+                "name": "docker_daemon",
+                "status": "missing",
+                "detail": "docker daemon unreachable because docker CLI is missing",
+            },
+        ]
+
+    checks = [
+        _run_doctor_probe(
+            "docker_cli",
+            [docker_bin, "--version"],
+            success_detail=docker_bin,
+        ),
+        _run_doctor_probe(
+            "docker_compose",
+            [docker_bin, "compose", "version"],
+            success_detail="docker compose available",
+        ),
+        _run_doctor_probe(
+            "docker_daemon",
+            [docker_bin, "info"],
+            success_detail="docker daemon reachable",
+        ),
+    ]
+    return checks
+
+
+def _run_doctor_probe(name: str, command: list[str], *, success_detail: str) -> dict[str, str]:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        return {"name": name, "status": "missing", "detail": detail}
+
+    if result.returncode == 0:
+        return {"name": name, "status": "ok", "detail": success_detail}
+
+    detail = (result.stderr or result.stdout or "probe failed").strip()
+    return {"name": name, "status": "fail", "detail": detail}
 
 
 def _handle_agent_new(
