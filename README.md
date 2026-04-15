@@ -5,7 +5,7 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
 ## Development notes
 - Codex CLI is used as the primary coding agent.
 - This repository is initialized for iterative development.
-- Docker is currently not installed on this server; install it before implementing/running container orchestration.
+- Docker is required for runtime control, and `maia doctor` now checks both Docker readiness and optional broker readiness via `MAIA_BROKER_URL`.
 - Harness watch policy v2 uses role-specific watch patterns via `scripts/codex-watch-patterns.sh`.
 - Reviewer approval is read from a structured marker block and parsed with `python3 scripts/codex-parse-review.py <review-output-file>`.
 
@@ -56,6 +56,13 @@ Control plane for managing a team of Hermes agents with Docker, Compose, DB, and
   - `default_agent_id`
 
 ## Operator examples
+- Check local Docker/runtime and broker readiness:
+  - `python -m maia doctor`
+- Broker-backed smoke path:
+  - `export MAIA_BROKER_URL=amqp://user:<password>@host:5672/%2F`
+  - `python -m maia send <from_agent_id> <to_agent_id> --body 'hello' --topic 'smoke'`
+  - `python -m maia inbox <to_agent_id>`
+  - verify `source=broker` and ack policy in the output
 - Default export bundle:
   - `python -m maia export`
 - Inspect a bundle before import:

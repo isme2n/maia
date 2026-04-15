@@ -14,6 +14,7 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
+from maia import cli as cli_module
 from maia.app_state import (
     get_collaboration_path,
     get_default_export_path,
@@ -189,6 +190,7 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     empty_bin = tmp_path / 'empty-bin'
     empty_bin.mkdir()
     monkeypatch.setenv('PATH', str(empty_bin))
+    monkeypatch.delenv('MAIA_BROKER_URL', raising=False)
 
     result = run_module(tmp_path, 'doctor')
 
@@ -200,6 +202,12 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
         'detail': 'docker␠binary␠not␠found␠in␠PATH',
         'remediation': 'install␠docker␠cli␠or␠docker␠engine␠on␠this␠host',
     }
+    assert parse_fields(lines[3]) == {
+        'check': 'broker_url',
+        'status': 'missing',
+        'detail': 'MAIA_BROKER_URL␠is␠not␠set',
+        'remediation': 'optional:␠set␠MAIA_BROKER_URL␠to␠enable␠broker␠readiness␠checks',
+    }
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
@@ -209,13 +217,22 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
     fake_bin = tmp_path / 'bin'
     fake_bin.mkdir()
     fake_docker = fake_bin / 'docker'
     _write_fake_docker(fake_docker)
     monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    monkeypatch.setenv('MAIA_BROKER_URL', f'amqp://guest:secret@{host}:{port}/%2F')
+
     result = run_module(tmp_path, 'doctor')
+    listener.close()
 
     assert result.returncode == 0
     lines = result.stdout.strip().splitlines()
@@ -237,11 +254,71 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
         'detail': 'docker␠daemon␠reachable',
         'remediation': 'no␠action␠needed',
     }
-    assert parse_fields(lines[3]) == {
+    assert parse_fields(lines[3])['check'] == 'broker_url'
+    assert parse_fields(lines[3])['status'] == 'ok'
+    assert parse_fields(lines[3])['detail'] == f'amqp://guest:***@{host}:{port}/%2F'
+    assert parse_fields(lines[4]) == {
+        'check': 'broker_tcp',
+        'status': 'ok',
+        'detail': f'tcp␠reachability␠confirmed␠for␠{host}:{port}',
+        'remediation': 'no␠action␠needed',
+    }
+    assert parse_fields(lines[5]) == {
         'kind': 'summary',
         'status': 'ok',
         'failed': '-',
-        'next_step': 'phase4␠runtime␠prerequisites␠satisfied',
+        'next_step': 'runtime␠prerequisites␠satisfied',
+    }
+
+
+def test_doctor_accepts_broker_url_without_explicit_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1/%2F')
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[3]) == {
+        'check': 'broker_url',
+        'status': 'ok',
+        'detail': 'amqp://guest:***@127.0.0.1/%2F',
+        'remediation': 'no␠action␠needed',
+    }
+    assert parse_fields(lines[4])['check'] == 'broker_tcp'
+
+
+def test_redact_broker_url_preserves_ipv6_brackets_and_hides_password() -> None:
+    assert cli_module._redact_broker_url('amqp://guest:secret@[::1]:5672/%2F') == 'amqp://guest:***@[::1]:5672/%2F'
+
+
+def test_doctor_reports_invalid_broker_url_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1:notaport/%2F')
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[3]) == {
+        'check': 'broker_url',
+        'status': 'fail',
+        'detail': 'MAIA_BROKER_URL␠must␠include␠a␠valid␠numeric␠port',
+        'remediation': 'set␠MAIA_BROKER_URL␠to␠a␠full␠amqp␠URL␠like␠amqp://user:pass@host:5672/vhost',
+    }
+    assert parse_fields(lines[-1]) == {
+        'kind': 'summary',
+        'status': 'fail',
+        'failed': 'broker_url',
+        'next_step': 'set␠MAIA_BROKER_URL␠then␠rerun␠maia␠doctor',
     }
 
 

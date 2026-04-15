@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_INFO_COMMANDS:
         help_text = {
-            "doctor": "Check local Phase 4 runtime prerequisites",
+            "doctor": "Check local runtime and broker prerequisites",
         }[command_name]
         command_parser = top_level.add_parser(
             command_name,

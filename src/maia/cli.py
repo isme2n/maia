@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import uuid
+from urllib.parse import urlparse
 
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.runtime_spec import RuntimeSpec
@@ -144,7 +146,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
 
 def _handle_doctor() -> int:
     checks = _collect_doctor_checks()
-    failed_checks = [check["name"] for check in checks if check["status"] != "ok"]
+    failed_checks = [check["name"] for check in checks if _is_doctor_failure(check)]
     for check in checks:
         print(
             f"doctor check={check['name']} status={check['status']} "
@@ -159,66 +161,157 @@ def _handle_doctor() -> int:
     return 0 if not failed_checks else 1
 
 
+def _is_doctor_failure(check: dict[str, str]) -> bool:
+    if check["name"] == "broker_url" and check["status"] == "missing":
+        return False
+    return check["status"] != "ok"
+
+
 def _doctor_next_step(failed_checks: list[str]) -> str:
     if not failed_checks:
-        return "phase4 runtime prerequisites satisfied"
+        return "runtime prerequisites satisfied"
     if "docker_cli" in failed_checks:
         return "install docker then rerun maia doctor"
     if "docker_compose" in failed_checks:
         return "install docker compose plugin then rerun maia doctor"
     if "docker_daemon" in failed_checks:
         return "start docker daemon then rerun maia doctor"
+    if "broker_url" in failed_checks:
+        return "set MAIA_BROKER_URL then rerun maia doctor"
+    if "broker_tcp" in failed_checks:
+        return "start or expose the broker service then rerun maia doctor"
     return "fix reported doctor failures then rerun maia doctor"
 
 
 def _collect_doctor_checks() -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
     docker_bin = shutil.which("docker")
     if docker_bin is None:
+        checks.extend(
+            [
+                {
+                    "name": "docker_cli",
+                    "status": "missing",
+                    "detail": "docker binary not found in PATH",
+                    "remediation": "install docker cli or docker engine on this host",
+                },
+                {
+                    "name": "docker_compose",
+                    "status": "missing",
+                    "detail": "docker compose unavailable because docker CLI is missing",
+                    "remediation": "install docker first, then verify docker compose plugin",
+                },
+                {
+                    "name": "docker_daemon",
+                    "status": "missing",
+                    "detail": "docker daemon unreachable because docker CLI is missing",
+                    "remediation": "install docker engine and start the docker daemon",
+                },
+            ]
+        )
+    else:
+        checks.extend(
+            [
+                _run_doctor_probe(
+                    "docker_cli",
+                    [docker_bin, "--version"],
+                    success_detail=docker_bin,
+                    success_remediation="no action needed",
+                    failure_remediation="verify the docker binary is executable on PATH",
+                ),
+                _run_doctor_probe(
+                    "docker_compose",
+                    [docker_bin, "compose", "version"],
+                    success_detail="docker compose available",
+                    success_remediation="no action needed",
+                    failure_remediation="install or enable the docker compose plugin",
+                ),
+                _run_doctor_probe(
+                    "docker_daemon",
+                    [docker_bin, "info"],
+                    success_detail="docker daemon reachable",
+                    success_remediation="no action needed",
+                    failure_remediation="start the docker daemon or fix daemon access permissions",
+                ),
+            ]
+        )
+
+    checks.extend(_collect_broker_doctor_checks())
+    return checks
+
+
+def _collect_broker_doctor_checks() -> list[dict[str, str]]:
+    broker_url = os.environ.get("MAIA_BROKER_URL", "").strip()
+    if not broker_url:
         return [
             {
-                "name": "docker_cli",
+                "name": "broker_url",
                 "status": "missing",
-                "detail": "docker binary not found in PATH",
-                "remediation": "install docker cli or docker engine on this host",
+                "detail": "MAIA_BROKER_URL is not set",
+                "remediation": "optional: set MAIA_BROKER_URL to enable broker readiness checks",
+            }
+        ]
+
+    parsed = urlparse(broker_url)
+    try:
+        port = parsed.port
+    except ValueError:
+        return [
+            {
+                "name": "broker_url",
+                "status": "fail",
+                "detail": "MAIA_BROKER_URL must include a valid numeric port",
+                "remediation": "set MAIA_BROKER_URL to a full amqp URL like amqp://user:pass@host:5672/vhost",
+            }
+        ]
+    if not parsed.hostname:
+        return [
+            {
+                "name": "broker_url",
+                "status": "fail",
+                "detail": "MAIA_BROKER_URL must include a hostname",
+                "remediation": "set MAIA_BROKER_URL to a full amqp URL like amqp://user:pass@host:5672/vhost",
+            }
+        ]
+    if port is None:
+        port = 5671 if parsed.scheme == "amqps" else 5672
+
+    redacted_broker_url = _redact_broker_url(broker_url)
+
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=2):
+            pass
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        return [
+            {
+                "name": "broker_url",
+                "status": "ok",
+                "detail": redacted_broker_url,
+                "remediation": "no action needed",
             },
             {
-                "name": "docker_compose",
-                "status": "missing",
-                "detail": "docker compose unavailable because docker CLI is missing",
-                "remediation": "install docker first, then verify docker compose plugin",
-            },
-            {
-                "name": "docker_daemon",
-                "status": "missing",
-                "detail": "docker daemon unreachable because docker CLI is missing",
-                "remediation": "install docker engine and start the docker daemon",
+                "name": "broker_tcp",
+                "status": "fail",
+                "detail": detail,
+                "remediation": "start the broker service or expose the configured host:port",
             },
         ]
 
-    checks = [
-        _run_doctor_probe(
-            "docker_cli",
-            [docker_bin, "--version"],
-            success_detail=docker_bin,
-            success_remediation="no action needed",
-            failure_remediation="verify the docker binary is executable on PATH",
-        ),
-        _run_doctor_probe(
-            "docker_compose",
-            [docker_bin, "compose", "version"],
-            success_detail="docker compose available",
-            success_remediation="no action needed",
-            failure_remediation="install or enable the docker compose plugin",
-        ),
-        _run_doctor_probe(
-            "docker_daemon",
-            [docker_bin, "info"],
-            success_detail="docker daemon reachable",
-            success_remediation="no action needed",
-            failure_remediation="start the docker daemon or fix daemon access permissions",
-        ),
+    return [
+        {
+            "name": "broker_url",
+            "status": "ok",
+            "detail": redacted_broker_url,
+            "remediation": "no action needed",
+        },
+        {
+            "name": "broker_tcp",
+            "status": "ok",
+            "detail": f"tcp reachability confirmed for {parsed.hostname}:{port}",
+            "remediation": "no action needed",
+        },
     ]
-    return checks
 
 
 def _run_doctor_probe(
@@ -267,6 +360,21 @@ def _build_message_broker() -> MessageBroker | None:
     if not broker_url:
         return None
     return RabbitMQBroker(broker_url=broker_url)
+
+
+def _redact_broker_url(broker_url: str) -> str:
+    parsed = urlparse(broker_url)
+    if not parsed.scheme or not parsed.hostname:
+        return broker_url
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    if parsed.username is not None:
+        netloc = f"{parsed.username}:***@{netloc}"
+    return parsed._replace(netloc=netloc).geturl()
 
 
 def _build_runtime_adapter() -> DockerRuntimeAdapter:

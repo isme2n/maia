@@ -156,7 +156,7 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Check local Phase 4 runtime prerequisites" in captured.out
+    assert "Check local runtime and broker prerequisites" in captured.out
     assert "Examples:" in captured.out
     assert "maia doctor" in captured.out
     assert "doctor" in captured.out
