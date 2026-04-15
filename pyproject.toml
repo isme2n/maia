@@ -10,6 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+rabbitmq = [
+    "pika>=1.3,<2",
+]
+
 [project.scripts]
 maia = "maia.main:main"
 
