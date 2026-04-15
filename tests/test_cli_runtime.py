@@ -592,6 +592,10 @@ def test_agent_runtime_start_status_logs_stop_flow(
         "runtime_handle": "runtime-001",
     }
 
+    started_again = run_module(tmp_path, "agent", "start", agent_id)
+    assert started_again.returncode == 1
+    assert started_again.stderr.strip() == f"error: Agent with id '{agent_id}' is already marked running"
+
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 0
     assert parse_fields(status.stdout.strip()) == {
@@ -728,6 +732,77 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
         "runtime_status": "running",
         "runtime_handle": "runtime-001",
     }
+
+
+
+def test_runtime_commands_require_active_runtime_state(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+
+    stopped = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped.returncode == 1
+    assert stopped.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id)
+    assert logs.returncode == 1
+    assert logs.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+
+
+
+def test_stale_runtime_state_is_cleared_on_status_and_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    (tmp_path / "bin" / "fake-docker-state.json").unlink()
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 1
+    assert status.stderr.strip() == (
+        f"error: Stale runtime state detected for agent '{agent_id}'; cleared local runtime state"
+    )
+    assert load_runtime_state(tmp_path) == {"runtimes": []}
+
+    status_after = run_module(tmp_path, "agent", "status", agent_id)
+    assert status_after.returncode == 0
+    assert parse_fields(status_after.stdout.strip())["status"] == "stopped"
+
+    started_again = run_module(tmp_path, "agent", "start", agent_id)
+    assert started_again.returncode == 0
+    (tmp_path / "bin" / "fake-docker-state.json").unlink()
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id)
+    assert logs.returncode == 1
+    assert logs.stderr.strip() == (
+        f"error: Stale runtime state detected for agent '{agent_id}'; cleared local runtime state"
+    )
+    assert load_runtime_state(tmp_path) == {"runtimes": []}
 
 
 

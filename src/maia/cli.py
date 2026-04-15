@@ -93,9 +93,9 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if command_name == "list":
             return _handle_agent_list(registry)
         if command_name == "status":
-            return _handle_agent_status(args, registry, runtime_adapter)
+            return _handle_agent_status(args, storage, registry_path, registry, runtime_adapter)
         if command_name == "logs":
-            return _handle_agent_logs(args, registry, runtime_adapter)
+            return _handle_agent_logs(args, storage, registry_path, registry, runtime_adapter)
         if command_name == "start":
             return _handle_agent_start(args, storage, registry_path, registry, runtime_adapter)
         if command_name == "stop":
@@ -1130,9 +1130,23 @@ def _resolve_import_registry_path(source_path: Path) -> Path:
     return registry_path
 
 
-def _handle_agent_status(args: argparse.Namespace, registry, runtime_adapter: DockerRuntimeAdapter) -> int:
+def _handle_agent_status(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> int:
     record = registry.get(args.agent_id)
-    runtime_state = _resolve_runtime_state_for_status(record, runtime_adapter)
+    try:
+        runtime_state = _resolve_runtime_state_for_status(record, runtime_adapter)
+    except ValueError as exc:
+        if _is_stale_runtime_error(exc):
+            _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
+            raise ValueError(
+                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
+            ) from exc
+        raise
     print(_format_agent_status(record, runtime_state))
     return 0
 
@@ -1145,6 +1159,15 @@ def _handle_agent_start(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     record = registry.get(args.agent_id)
+    if record.status is AgentStatus.RUNNING:
+        raise ValueError(f"Agent with id {args.agent_id!r} is already marked running")
+    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
+    if stored_runtime_state is not None and stored_runtime_state.runtime_status in {
+        RuntimeStatus.STARTING,
+        RuntimeStatus.RUNNING,
+        RuntimeStatus.STOPPING,
+    }:
+        raise ValueError(f"Agent runtime for id {args.agent_id!r} is already active")
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
     updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
     storage.save(registry_path, registry)
@@ -1164,7 +1187,17 @@ def _handle_agent_stop(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     registry.get(args.agent_id)
-    stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
+    if args.agent_id not in RuntimeStateStorage().load(get_runtime_state_path()):
+        raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
+    try:
+        stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
+    except ValueError as exc:
+        if _is_stale_runtime_error(exc):
+            _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
+            raise ValueError(
+                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
+            ) from exc
+        raise
     updated = registry.set_status(args.agent_id, AgentStatus.STOPPED)
     storage.save(registry_path, registry)
     print(
@@ -1175,11 +1208,27 @@ def _handle_agent_stop(
     return 0
 
 
-def _handle_agent_logs(args: argparse.Namespace, registry, runtime_adapter: DockerRuntimeAdapter) -> int:
+def _handle_agent_logs(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> int:
     registry.get(args.agent_id)
-    logs_result = runtime_adapter.logs(
-        RuntimeLogsRequest(agent_id=args.agent_id, tail_lines=args.tail_lines)
-    )
+    if args.agent_id not in RuntimeStateStorage().load(get_runtime_state_path()):
+        raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
+    try:
+        logs_result = runtime_adapter.logs(
+            RuntimeLogsRequest(agent_id=args.agent_id, tail_lines=args.tail_lines)
+        )
+    except ValueError as exc:
+        if _is_stale_runtime_error(exc):
+            _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
+            raise ValueError(
+                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
+            ) from exc
+        raise
     print(
         f"logs agent_id={args.agent_id} runtime_status={logs_result.runtime.runtime_status.value} "
         f"runtime_handle={_format_preview_value(logs_result.runtime.runtime_handle)} lines={len(logs_result.lines)}"
@@ -1197,6 +1246,24 @@ def _resolve_runtime_state_for_status(
     if record.agent_id in stored_states:
         return runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
     return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
+
+
+def _is_stale_runtime_error(exc: ValueError) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in ("missing container", "no such container"))
+
+
+def _clear_stale_runtime_state(
+    agent_id: str,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> None:
+    RuntimeStateStorage().remove(get_runtime_state_path(), agent_id)
+    record = registry.get(agent_id)
+    if record.status is AgentStatus.RUNNING:
+        registry.set_status(agent_id, AgentStatus.STOPPED)
+        storage.save(registry_path, registry)
 
 
 def _handle_agent_tune(
