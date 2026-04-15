@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 import os
 from pathlib import Path
@@ -45,6 +45,14 @@ from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, Runti
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
+
+_ACTIVE_RUNTIME_STATUSES = frozenset(
+    {
+        RuntimeStatus.STARTING,
+        RuntimeStatus.RUNNING,
+        RuntimeStatus.STOPPING,
+    }
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1106,6 +1114,39 @@ def _format_workspace_context_fields(record: AgentRecord | None) -> list[str]:
     ]
 
 
+def _workspace_context_unavailable_error(agent_id: str, detail: str) -> ValueError:
+    return ValueError(
+        f"Workspace context unavailable for agent {agent_id!r}: {detail}"
+    )
+
+
+def _agent_runtime_unavailable_error(agent_id: str, detail: str) -> ValueError:
+    return ValueError(f"Agent runtime unavailable for id {agent_id!r}: {detail}")
+
+
+def _resolve_configured_runtime_spec(
+    record: AgentRecord,
+    *,
+    error_factory: Callable[[str, str], ValueError],
+) -> RuntimeSpec:
+    runtime_spec = record.runtime_spec
+    if runtime_spec is None:
+        raise error_factory(record.agent_id, "runtime spec is not configured")
+    if not runtime_spec.workspace:
+        raise error_factory(record.agent_id, "runtime workspace is not configured")
+    return runtime_spec
+
+
+def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
+    runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(record.agent_id)
+    if runtime_state is None and record.status is AgentStatus.RUNNING:
+        raise _agent_runtime_unavailable_error(
+            record.agent_id,
+            "local runtime state is missing",
+        )
+    return runtime_state
+
+
 def _handle_transfer_export(
     args: argparse.Namespace,
     storage: JsonRegistryStorage,
@@ -1558,15 +1599,10 @@ def _handle_team_update(args: argparse.Namespace, registry, team_metadata_path: 
 
 def _handle_workspace_show(args: argparse.Namespace, registry) -> int:
     record = registry.get(args.agent_id)
-    runtime_spec = record.runtime_spec
-    if runtime_spec is None:
-        raise ValueError(
-            f"Workspace context unavailable for agent {args.agent_id!r}: runtime spec is not configured"
-        )
-    if not runtime_spec.workspace:
-        raise ValueError(
-            f"Workspace context unavailable for agent {args.agent_id!r}: runtime workspace is not configured"
-        )
+    _resolve_configured_runtime_spec(
+        record,
+        error_factory=_workspace_context_unavailable_error,
+    )
     print(
         "workspace "
         f"agent_id={record.agent_id} "
@@ -1834,14 +1870,14 @@ def _handle_agent_start(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     record = registry.get(args.agent_id)
+    stored_runtime_state = _load_runtime_state_for_agent(record)
     if record.status is AgentStatus.RUNNING:
         raise ValueError(f"Agent with id {args.agent_id!r} is already marked running")
-    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
-    if stored_runtime_state is not None and stored_runtime_state.runtime_status in {
-        RuntimeStatus.STARTING,
-        RuntimeStatus.RUNNING,
-        RuntimeStatus.STOPPING,
-    }:
+    _resolve_configured_runtime_spec(
+        record,
+        error_factory=_agent_runtime_unavailable_error,
+    )
+    if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
         raise ValueError(f"Agent runtime for id {args.agent_id!r} is already active")
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
     updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
@@ -1861,13 +1897,9 @@ def _handle_agent_stop(
     registry,
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
-    registry.get(args.agent_id)
-    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
-    if stored_runtime_state is None or stored_runtime_state.runtime_status not in {
-        RuntimeStatus.STARTING,
-        RuntimeStatus.RUNNING,
-        RuntimeStatus.STOPPING,
-    }:
+    record = registry.get(args.agent_id)
+    stored_runtime_state = _load_runtime_state_for_agent(record)
+    if stored_runtime_state is None or stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
         raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
     try:
         stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
@@ -1895,13 +1927,9 @@ def _handle_agent_logs(
     registry,
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
-    registry.get(args.agent_id)
-    stored_runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(args.agent_id)
-    if stored_runtime_state is None or stored_runtime_state.runtime_status not in {
-        RuntimeStatus.STARTING,
-        RuntimeStatus.RUNNING,
-        RuntimeStatus.STOPPING,
-    }:
+    record = registry.get(args.agent_id)
+    stored_runtime_state = _load_runtime_state_for_agent(record)
+    if stored_runtime_state is None or stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
         raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
     try:
         logs_result = runtime_adapter.logs(
@@ -1927,8 +1955,8 @@ def _resolve_runtime_state_for_status(
     record: AgentRecord,
     runtime_adapter: DockerRuntimeAdapter,
 ) -> RuntimeState:
-    stored_states = RuntimeStateStorage().load(get_runtime_state_path())
-    if record.agent_id in stored_states:
+    stored_runtime_state = _load_runtime_state_for_agent(record)
+    if stored_runtime_state is not None:
         return runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
     return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
 
