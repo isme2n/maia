@@ -20,10 +20,16 @@ maia doctor
 
 ## Known limitations
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
-- Live collaboration (send|reply|inbox) requires MAIA_BROKER_URL and a reachable broker.
+- Broker-backed collaboration requires MAIA_BROKER_URL and a reachable broker; without it, Maia falls back to local JSON collaboration state.
 - No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.
 - No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.
 - No DB migration or live-state restore: import/export covers portable state only.
+
+## V1 release checklist
+- Quickstart/help/README describe only the supported v1 surfaces and known limitations.
+- Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> `maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.
+- Run `maia doctor` before runtime-control or live-collaboration smoke.
+- The v1 smoke checklist below passes end-to-end on a representative host.
 
 ## Development notes
 - Codex CLI is used as the primary coding agent.
@@ -89,9 +95,8 @@ maia doctor
 
 ## Operator examples
 - Public examples use the installed `maia` entrypoint.
-- Check local Docker/runtime and broker readiness:
+- v1 smoke checklist:
   - `maia doctor`
-- v1 golden flow smoke contract:
   - `maia agent new planner`
   - `maia agent new reviewer`
   - `maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`

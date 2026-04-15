@@ -29,6 +29,31 @@
 - operator가 실패 원인을 바로 이해할 수 있어야 한다.
 - release closeout 기준은 테스트 green + smoke green + docs alignment다.
 
+## V1 release checklist
+- Quickstart/help/README describe only the supported v1 surfaces and known limitations.
+- Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> `maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.
+- Run `maia doctor` before runtime-control or live-collaboration smoke.
+- The v1 smoke checklist below passes end-to-end on a representative host.
+- Task 081 executes the repo closeout gates: `bash scripts/verify.sh`, reviewer approve, and clean worktree.
+
+## V1 smoke checklist
+- `maia doctor`
+- `maia agent new planner`
+- `maia agent new reviewer`
+- `maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
+- `maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
+- `maia agent start <planner_id>`
+- `maia agent start <reviewer_id>`
+- `maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
+- `maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
+- `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
+- `maia thread list --status open`
+- `maia thread show <thread_id>`
+- `maia handoff show <handoff_id>`
+- `maia workspace show <planner_id>`
+- `maia agent status <planner_id>`
+- `maia agent logs <planner_id> --tail-lines 20`
+
 ## Recommended task breakdown
 1. Task 078 — failure-mode and error-message hardening
 2. Task 079 — quickstart and known-limitations closeout docs

@@ -31,6 +31,7 @@ from maia.cli_parser import (
     TEAM_SHOW_EXAMPLES,
     TEAM_UPDATE_EXAMPLES,
     THREAD_EXAMPLES,
+    V1_RELEASE_CHECKLIST,
     WORKSPACE_EXAMPLES,
     build_parser,
 )
@@ -39,6 +40,7 @@ from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 
 README_PATH = REPO_ROOT / "README.md"
+PHASE10_PLAN_PATH = REPO_ROOT / "docs/plans/phase10-release-hardening-and-v1-closeout.md"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
@@ -115,11 +117,14 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Quickstart (local state only):" in captured.out
     assert "Before runtime or live collaboration:" in captured.out
     assert "Known limitations:" in captured.out
-    assert "Golden flow smoke contract:" in captured.out
+    assert "V1 release checklist:" in captured.out
+    assert "V1 smoke checklist:" in captured.out
+    assert "Golden flow smoke contract:" not in captured.out
     assert "Phase 7" not in captured.out
     _assert_contains_lines(captured.out, QUICKSTART_EXAMPLES)
     _assert_contains_lines(captured.out, RUNTIME_PREREQ_EXAMPLES)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
+    _assert_contains_lines(captured.out, V1_RELEASE_CHECKLIST)
     _assert_contains_lines(captured.out, GOLDEN_FLOW_SMOKE_CONTRACT)
 
 
@@ -386,12 +391,16 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "Public examples use the installed `maia` entrypoint." in readme
     assert "## Quickstart" in readme
     assert "## Known limitations" in readme
-    assert "v1 golden flow smoke contract:" in readme
+    assert "## V1 release checklist" in readme
+    assert "v1 smoke checklist:" in readme
+    assert "v1 golden flow smoke contract:" not in readme
     for line in QUICKSTART_EXAMPLES:
         assert line in readme
     for line in RUNTIME_PREREQ_EXAMPLES:
         assert line in readme
     for line in KNOWN_LIMITATIONS:
+        assert line in readme
+    for line in V1_RELEASE_CHECKLIST:
         assert line in readme
     for lines in (
         DOCTOR_EXAMPLES,
@@ -408,6 +417,20 @@ def test_readme_examples_align_with_public_help() -> None:
     ):
         for line in lines:
             assert f"`{line}`" in readme
+
+
+def test_phase10_plan_locks_v1_release_and_smoke_checklists() -> None:
+    plan = PHASE10_PLAN_PATH.read_text(encoding="utf-8")
+
+    assert "## V1 release checklist" in plan
+    assert "## V1 smoke checklist" in plan
+    for line in V1_RELEASE_CHECKLIST:
+        assert line in plan
+    for line in GOLDEN_FLOW_SMOKE_CONTRACT:
+        assert f"`{line}`" in plan
+    assert "`bash scripts/verify.sh`" in plan
+    assert "reviewer approve" in plan
+    assert "clean worktree" in plan
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(

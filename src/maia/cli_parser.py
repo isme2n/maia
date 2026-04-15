@@ -40,14 +40,22 @@ QUICKSTART_EXAMPLES = (
     "maia inspect ~/.maia/exports/maia-state.maia",
 )
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
+V1_RELEASE_CHECKLIST = (
+    "Quickstart/help/README describe only the supported v1 surfaces and known limitations.",
+    "Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> "
+    "`maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.",
+    "Run `maia doctor` before runtime-control or live-collaboration smoke.",
+    "The v1 smoke checklist below passes end-to-end on a representative host.",
+)
 KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
-    "Live collaboration (send|reply|inbox) requires MAIA_BROKER_URL and a reachable broker.",
+    "Broker-backed collaboration requires MAIA_BROKER_URL and a reachable broker; without it, Maia falls back to local JSON collaboration state.",
     "No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.",
     "No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.",
     "No DB migration or live-state restore: import/export covers portable state only.",
 )
 GOLDEN_FLOW_SMOKE_CONTRACT = (
+    "maia doctor",
     "maia agent new planner",
     "maia agent new reviewer",
     "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest "
@@ -138,7 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("Quickstart (local state only):", QUICKSTART_EXAMPLES),
         ("Before runtime or live collaboration:", RUNTIME_PREREQ_EXAMPLES),
         ("Known limitations:", KNOWN_LIMITATIONS),
-        ("Golden flow smoke contract:", GOLDEN_FLOW_SMOKE_CONTRACT),
+        ("V1 release checklist:", V1_RELEASE_CHECKLIST),
+        ("V1 smoke checklist:", GOLDEN_FLOW_SMOKE_CONTRACT),
     )
 
     top_level = parser.add_subparsers(dest="resource")

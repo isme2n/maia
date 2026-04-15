@@ -196,6 +196,11 @@ def _setup_v1_golden_flow(
     fake_docker = fake_bin / "docker"
     _write_fake_docker(fake_docker)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    doctor = run_module(tmp_path, "doctor")
+    assert doctor.returncode == 0
+    assert doctor.stderr == ""
 
     planner_id = create_agent(tmp_path, "planner")
     reviewer_id = create_agent(tmp_path, "reviewer")
