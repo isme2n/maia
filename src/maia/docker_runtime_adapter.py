@@ -23,6 +23,8 @@ from maia.runtime_state_storage import RuntimeStateStorage
 
 __all__ = ["DockerRuntimeAdapter"]
 
+_AUTO_DOCKER_BIN = object()
+
 
 class DockerRuntimeAdapter(RuntimeAdapter):
     """Runtime adapter implemented via the Docker CLI."""
@@ -32,11 +34,11 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         *,
         state_storage: RuntimeStateStorage,
         state_path: Path | str,
-        docker_bin: str | None = None,
+        docker_bin: str | None | object = _AUTO_DOCKER_BIN,
     ) -> None:
         self._state_storage = state_storage
         self._state_path = Path(state_path)
-        self._docker_bin = docker_bin or shutil.which("docker")
+        self._docker_bin = shutil.which("docker") if docker_bin is _AUTO_DOCKER_BIN else docker_bin
 
     def start(self, request: RuntimeStartRequest) -> RuntimeStartResult:
         docker_bin = self._require_docker_bin()
