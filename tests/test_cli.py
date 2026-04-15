@@ -12,8 +12,50 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
+from maia.app_state import get_collaboration_path
+from maia.broker import BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
+from maia import cli as cli_module
 from maia.cli_parser import build_parser
+from maia.collaboration_storage import CollaborationStorage
+from maia.message_model import MessageKind, MessageRecord
+
+
+def _parse_fields(line: str) -> dict[str, str]:
+    tokens = line.split()
+    if tokens and tokens[0] in {"created", "sent", "replied", "inbox", "message_id"}:
+        tokens = tokens[1:]
+    return dict(token.split("=", 1) for token in tokens)
+
+
+class FakeMessageBroker:
+    def __init__(self) -> None:
+        self.published: list[MessageRecord] = []
+        self.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
+        self.publish_error: Exception | None = None
+        self.closed = False
+
+    def publish(self, message: MessageRecord) -> BrokerPublishResult:
+        if self.publish_error is not None:
+            raise self.publish_error
+        self.published.append(message)
+        return BrokerPublishResult(
+            status=BrokerDeliveryStatus.QUEUED,
+            message_id=message.message_id,
+        )
+
+    def pull(self, *, agent_id: str, limit: int = 1) -> BrokerPullResult:
+        assert isinstance(agent_id, str)
+        assert isinstance(limit, int)
+        return self.pull_result
+
+    def ack(self, envelope: BrokerMessageEnvelope):
+        raise AssertionError("ack should not be called in Task 063")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 
 
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -262,6 +304,336 @@ def test_build_parser_logs_shape() -> None:
     assert args.agent_command == "logs"
     assert args.agent_id == "demo1234"
     assert args.tail_lines == 25
+
+
+def _create_agent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], home: Path, name: str) -> str:
+    monkeypatch.setenv("HOME", str(home))
+    assert main(["agent", "new", name]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip())
+    return fields["agent_id"]
+
+
+def test_send_and_reply_publish_to_broker_and_persist_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review phase 6",
+        "--topic",
+        "phase 6 review",
+    ]) == 0
+    sent_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert len(fake_broker.published) == 1
+    assert fake_broker.published[0].from_agent == planner_id
+    assert fake_broker.published[0].to_agent == reviewer_id
+    assert fake_broker.closed is True
+
+    first_message_id = sent_fields["message_id"]
+    fake_broker.closed = False
+    assert main([
+        "reply",
+        first_message_id,
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "looks good",
+    ]) == 0
+    reply_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert len(fake_broker.published) == 2
+    assert fake_broker.published[1].from_agent == reviewer_id
+    assert fake_broker.published[1].to_agent == planner_id
+    assert reply_fields["reply_to_message_id"] == first_message_id
+    assert fake_broker.closed is True
+
+    payload = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
+    assert "phase 6 review" in payload
+    assert "please review phase 6" in payload
+    assert "looks good" in payload
+
+
+def test_inbox_uses_broker_pull_when_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    fake_broker.pull_result = BrokerPullResult(
+        status=BrokerDeliveryStatus.DELIVERED,
+        messages=[
+            BrokerMessageEnvelope(
+                message=MessageRecord(
+                    message_id="msg-001",
+                    thread_id="thread-001",
+                    from_agent="planner",
+                    to_agent=reviewer_id,
+                    kind=MessageKind.REQUEST,
+                    body="broker delivery",
+                    created_at="2026-04-15T12:00:00Z",
+                ),
+                receipt_handle="42",
+                delivery_attempt=2,
+            )
+        ],
+    )
+
+    assert main(["inbox", reviewer_id]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert _parse_fields(lines[0]) == {
+        "agent_id": reviewer_id,
+        "messages": "1",
+        "source": "broker",
+        "ack": "deferred",
+    }
+    message_fields = _parse_fields(lines[1])
+    assert message_fields["message_id"] == "msg-001"
+    assert message_fields["body"] == "broker␠delivery"
+    assert message_fields["receipt_handle"] == "42"
+    assert message_fields["delivery_attempt"] == "2"
+    payload = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
+    assert '"thread_id": "thread-001"' in payload
+    assert '"message_id": "msg-001"' in payload
+    assert fake_broker.closed is True
+
+
+def test_broker_inbox_message_can_be_replied_to_after_local_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    fake_broker.pull_result = BrokerPullResult(
+        status=BrokerDeliveryStatus.DELIVERED,
+        messages=[
+            BrokerMessageEnvelope(
+                message=MessageRecord(
+                    message_id="msg-001",
+                    thread_id="thread-001",
+                    from_agent=planner_id,
+                    to_agent=reviewer_id,
+                    kind=MessageKind.REQUEST,
+                    body="broker delivery",
+                    created_at="2026-04-15T12:00:00Z",
+                ),
+                receipt_handle="42",
+                delivery_attempt=1,
+            )
+        ],
+    )
+
+    assert main(["inbox", reviewer_id]) == 0
+    capsys.readouterr()
+    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
+    fake_broker.closed = False
+
+    assert main([
+        "reply",
+        "msg-001",
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "copied and replied",
+    ]) == 0
+    reply_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert reply_fields["reply_to_message_id"] == "msg-001"
+    assert len(fake_broker.published) == 1
+    assert fake_broker.published[0].body == "copied and replied"
+    assert fake_broker.closed is True
+
+
+def test_broker_inbox_empty_pull_falls_back_to_local_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    fake_broker.pull_result = BrokerPullResult(
+        status=BrokerDeliveryStatus.DELIVERED,
+        messages=[
+            BrokerMessageEnvelope(
+                message=MessageRecord(
+                    message_id="msg-001",
+                    thread_id="thread-001",
+                    from_agent=planner_id,
+                    to_agent=reviewer_id,
+                    kind=MessageKind.REQUEST,
+                    body="broker delivery",
+                    created_at="2026-04-15T12:00:00Z",
+                ),
+                receipt_handle="42",
+                delivery_attempt=1,
+            )
+        ],
+    )
+    assert main(["inbox", reviewer_id]) == 0
+    capsys.readouterr()
+
+    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
+    fake_broker.closed = False
+    assert main(["inbox", reviewer_id]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert _parse_fields(lines[0]) == {
+        "agent_id": reviewer_id,
+        "messages": "1",
+        "source": "local-cache",
+        "ack": "deferred",
+    }
+    assert _parse_fields(lines[1])["message_id"] == "msg-001"
+    assert fake_broker.closed is True
+
+
+def test_merge_broker_inbox_messages_preserves_thread_topic(tmp_path: Path) -> None:
+    storage = CollaborationStorage()
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    collaboration = storage.load(collaboration_path)
+    merged = cli_module._merge_broker_inbox_messages(
+        storage,
+        collaboration_path,
+        collaboration,
+        [
+            (
+                BrokerMessageEnvelope(
+                    message=MessageRecord(
+                        message_id="msg-001",
+                        thread_id="thread-001",
+                        from_agent="planner-id",
+                        to_agent="reviewer-id",
+                        kind=MessageKind.REQUEST,
+                        body="broker delivery",
+                        created_at="2026-04-15T12:00:00Z",
+                    ),
+                    receipt_handle="42",
+                    delivery_attempt=1,
+                ),
+                {"thread_topic": "phase 6 review"},
+            )
+        ],
+    )
+
+    assert merged.threads[0].topic == "phase 6 review"
+
+
+def test_send_does_not_persist_metadata_when_broker_publish_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    fake_broker.publish_error = ValueError("broker publish failed")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "should fail",
+        "--topic",
+        "phase 6 review",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "broker publish failed" in captured.err
+    assert not get_collaboration_path({"HOME": str(tmp_path)}).exists()
+    assert fake_broker.closed is True
+
+
+def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    analyst_id = _create_agent(monkeypatch, capsys, tmp_path, "analyst")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "initial",
+        "--topic",
+        "phase 6 thread",
+    ]) == 0
+    sent_fields = _parse_fields(capsys.readouterr().out.strip())
+    thread_id = sent_fields["thread_id"]
+
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+    fake_broker.pull_result = BrokerPullResult(
+        status=BrokerDeliveryStatus.DELIVERED,
+        messages=[
+            BrokerMessageEnvelope(
+                message=MessageRecord(
+                    message_id="msg-002",
+                    thread_id=thread_id,
+                    from_agent=planner_id,
+                    to_agent=analyst_id,
+                    kind=MessageKind.NOTE,
+                    body="loop analyst in",
+                    created_at="2026-04-15T12:01:00Z",
+                ),
+                receipt_handle="43",
+                delivery_attempt=1,
+            )
+        ],
+    )
+
+    assert main(["inbox", analyst_id]) == 0
+    capsys.readouterr()
+    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
+    fake_broker.closed = False
+
+    assert main([
+        "reply",
+        "msg-002",
+        "--from-agent",
+        analyst_id,
+        "--body",
+        "joined",
+    ]) == 0
+    reply_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert reply_fields["reply_to_message_id"] == "msg-002"
+    assert fake_broker.published[-1].from_agent == analyst_id
+    assert fake_broker.closed is True
 
 
 @pytest.mark.parametrize(

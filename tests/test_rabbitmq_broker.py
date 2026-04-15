@@ -41,6 +41,7 @@ class FakeBasicProperties:
     delivery_mode: int
     message_id: str
     type: str
+    headers: dict[str, str]
 
 
 class FakePika:
@@ -144,7 +145,18 @@ def test_publish_declares_agent_queue_and_returns_publish_result() -> None:
         delivery_mode=2,
         message_id="msg-001",
         type="question",
+        headers={},
     )
+
+
+def test_publish_with_thread_topic_sets_message_headers() -> None:
+    broker, channel, _connection = _build_broker()
+
+    result = broker.publish_with_metadata(_build_message(), thread_topic="phase 6 review")
+
+    assert result.status is BrokerDeliveryStatus.QUEUED
+    publish_call = channel.basic_publish_calls[0]
+    assert publish_call["properties"].headers == {"maia_thread_topic": "phase 6 review"}
 
 
 def test_pull_returns_delivered_envelope_with_delivery_attempt() -> None:
@@ -152,7 +164,7 @@ def test_pull_returns_delivered_envelope_with_delivery_attempt() -> None:
     channel.basic_get_results = [
         (
             SimpleNamespace(delivery_tag=7, redelivered=True),
-            SimpleNamespace(headers={"x-delivery-count": 3}),
+            SimpleNamespace(headers={"x-delivery-count": 3, "maia_thread_topic": "phase 6 review"}),
             (
                 b'{"message_id":"msg-001","thread_id":"thread-001","from_agent":"planner",'
                 b'"to_agent":"reviewer","kind":"question","body":"Can you review the broker adapter?",'
@@ -179,6 +191,26 @@ def test_pull_returns_delivered_envelope_with_delivery_attempt() -> None:
         {"queue": "maia.inbox.reviewer", "auto_ack": False},
         {"queue": "maia.inbox.reviewer", "auto_ack": False},
     ]
+
+
+def test_pull_with_metadata_returns_thread_topic() -> None:
+    broker, channel, _connection = _build_broker()
+    channel.basic_get_results = [
+        (
+            SimpleNamespace(delivery_tag=7, redelivered=False),
+            SimpleNamespace(headers={"maia_thread_topic": "phase 6 review"}),
+            (
+                b'{"message_id":"msg-001","thread_id":"thread-001","from_agent":"planner",'
+                b'"to_agent":"reviewer","kind":"question","body":"Can you review the broker adapter?",'
+                b'"created_at":"2026-04-15T11:00:00Z"}'
+            ),
+        ),
+        (None, None, None),
+    ]
+
+    pulled = broker.pull_with_metadata(agent_id="reviewer", limit=1)
+
+    assert pulled[0][1] == {"thread_topic": "phase 6 review"}
 
 
 def test_pull_missing_queue_surfaces_operator_facing_value_error() -> None:

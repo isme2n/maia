@@ -6,6 +6,7 @@ import argparse
 from collections import Counter
 from collections.abc import Sequence
 from datetime import UTC, datetime
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -27,6 +28,7 @@ from maia.bundle_archive import (
     is_bundle_archive_path,
     write_bundle_archive,
 )
+from maia.broker import BrokerMessageEnvelope, MessageBroker
 from maia.cli_parser import (
     LIFECYCLE_STATUS_BY_COMMAND,
     TOP_LEVEL_COLLAB_COMMANDS,
@@ -36,6 +38,7 @@ from maia.cli_parser import (
 from maia.collaboration_storage import CollaborationStorage
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+from maia.rabbitmq_broker import RabbitMQBroker
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
@@ -77,14 +80,40 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if command_name in TOP_LEVEL_COLLAB_COMMANDS:
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
-            if command_name == "send":
-                return _handle_send(args, registry, collaboration_storage, collaboration_path, collaboration)
-            if command_name == "inbox":
-                return _handle_inbox(args, registry, collaboration)
-            if command_name == "thread":
-                return _handle_thread(args, collaboration)
-            if command_name == "reply":
-                return _handle_reply(args, registry, collaboration_storage, collaboration_path, collaboration)
+            message_broker = _build_message_broker()
+            try:
+                if command_name == "send":
+                    return _handle_send(
+                        args,
+                        registry,
+                        collaboration_storage,
+                        collaboration_path,
+                        collaboration,
+                        message_broker,
+                    )
+                if command_name == "inbox":
+                    return _handle_inbox(
+                        args,
+                        registry,
+                        collaboration_storage,
+                        collaboration_path,
+                        collaboration,
+                        message_broker,
+                    )
+                if command_name == "thread":
+                    return _handle_thread(args, collaboration)
+                if command_name == "reply":
+                    return _handle_reply(
+                        args,
+                        registry,
+                        collaboration_storage,
+                        collaboration_path,
+                        collaboration,
+                        message_broker,
+                    )
+            finally:
+                if message_broker is not None:
+                    message_broker.close()
 
         registry = storage.load(registry_path)
         runtime_adapter = _build_runtime_adapter()
@@ -233,6 +262,13 @@ def _run_doctor_probe(
     }
 
 
+def _build_message_broker() -> MessageBroker | None:
+    broker_url = os.environ.get("MAIA_BROKER_URL", "").strip()
+    if not broker_url:
+        return None
+    return RabbitMQBroker(broker_url=broker_url)
+
+
 def _build_runtime_adapter() -> DockerRuntimeAdapter:
     return DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
@@ -270,7 +306,14 @@ def _handle_agent_list(registry) -> int:
     return 0
 
 
-def _handle_send(args, registry, collaboration_storage, collaboration_path: Path, collaboration) -> int:
+def _handle_send(
+    args,
+    registry,
+    collaboration_storage,
+    collaboration_path: Path,
+    collaboration,
+    message_broker: MessageBroker | None,
+) -> int:
     registry.get(args.from_agent)
     registry.get(args.to_agent)
     kind = MessageKind(args.kind)
@@ -317,6 +360,11 @@ def _handle_send(args, registry, collaboration_storage, collaboration_path: Path
         created_at=now,
     )
     messages.append(message)
+    if message_broker is not None:
+        if isinstance(message_broker, RabbitMQBroker):
+            message_broker.publish_with_metadata(message, thread_topic=thread.topic)
+        else:
+            message_broker.publish(message)
     collaboration_storage.save(
         collaboration_path,
         threads=threads,
@@ -329,9 +377,71 @@ def _handle_send(args, registry, collaboration_storage, collaboration_path: Path
     return 0
 
 
-def _handle_inbox(args, registry, collaboration) -> int:
+def _handle_inbox(
+    args,
+    registry,
+    collaboration_storage,
+    collaboration_path: Path,
+    collaboration,
+    message_broker: MessageBroker | None,
+) -> int:
     registry.get(args.agent_id)
     limit = _validate_positive_limit(args.limit, field_name="Inbox limit")
+    if message_broker is not None:
+        if isinstance(message_broker, RabbitMQBroker):
+            pulled_messages = message_broker.pull_with_metadata(agent_id=args.agent_id, limit=limit)
+            collaboration = _merge_broker_inbox_messages(
+                collaboration_storage,
+                collaboration_path,
+                collaboration,
+                pulled_messages,
+            )
+            if pulled_messages:
+                print(
+                    f"inbox agent_id={args.agent_id} messages={len(pulled_messages)} "
+                    "source=broker ack=deferred"
+                )
+                for envelope, _metadata in pulled_messages:
+                    print(_format_envelope_line(envelope))
+                return 0
+            inbox_messages = [
+                message for message in collaboration.messages if message.to_agent == args.agent_id
+            ]
+            inbox_messages = list(reversed(inbox_messages))[:limit]
+            print(
+                f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
+                "source=local-cache ack=deferred"
+            )
+            for message in inbox_messages:
+                print(_format_message_line(message))
+            return 0
+        pull_result = message_broker.pull(agent_id=args.agent_id, limit=limit)
+        collaboration = _merge_broker_inbox_messages(
+            collaboration_storage,
+            collaboration_path,
+            collaboration,
+            [(envelope, {}) for envelope in pull_result.messages],
+        )
+        inbox_messages = [envelope.message for envelope in pull_result.messages]
+        if inbox_messages:
+            print(
+                f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
+                "source=broker ack=deferred"
+            )
+            for envelope in pull_result.messages:
+                print(_format_envelope_line(envelope))
+            return 0
+        inbox_messages = [
+            message for message in collaboration.messages if message.to_agent == args.agent_id
+        ]
+        inbox_messages = list(reversed(inbox_messages))[:limit]
+        print(
+            f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
+            "source=local-cache ack=deferred"
+        )
+        for message in inbox_messages:
+            print(_format_message_line(message))
+        return 0
     inbox_messages = [
         message for message in collaboration.messages if message.to_agent == args.agent_id
     ]
@@ -358,7 +468,14 @@ def _handle_thread(args, collaboration) -> int:
     return 0
 
 
-def _handle_reply(args, registry, collaboration_storage, collaboration_path: Path, collaboration) -> int:
+def _handle_reply(
+    args,
+    registry,
+    collaboration_storage,
+    collaboration_path: Path,
+    collaboration,
+    message_broker: MessageBroker | None,
+) -> int:
     registry.get(args.from_agent)
     source_message = _require_message(collaboration, args.message_id)
     registry.get(source_message.from_agent)
@@ -394,6 +511,11 @@ def _handle_reply(args, registry, collaboration_storage, collaboration_path: Pat
         reply_to_message_id=source_message.message_id,
     )
     messages.append(message)
+    if message_broker is not None:
+        if isinstance(message_broker, RabbitMQBroker):
+            message_broker.publish_with_metadata(message, thread_topic=thread.topic)
+        else:
+            message_broker.publish(message)
     collaboration_storage.save(
         collaboration_path,
         threads=threads,
@@ -441,6 +563,85 @@ def _replace_thread(threads: list[ThreadRecord], updated: ThreadRecord) -> None:
             threads[index] = updated
             return
     raise LookupError(f"Thread with id {updated.thread_id!r} not found")
+
+
+def _merge_broker_inbox_messages(
+    collaboration_storage,
+    collaboration_path: Path,
+    collaboration,
+    envelopes: list[tuple[BrokerMessageEnvelope, dict[str, str]]],
+):
+    if not envelopes:
+        return collaboration
+    threads = list(collaboration.threads)
+    messages = list(collaboration.messages)
+    known_message_ids = {message.message_id for message in messages}
+    changed = False
+    for envelope, metadata in envelopes:
+        message = envelope.message
+        thread_topic = metadata.get("thread_topic", "")
+        existing_thread = next(
+            (thread for thread in threads if thread.thread_id == message.thread_id),
+            None,
+        )
+        if existing_thread is None:
+            threads.append(
+                ThreadRecord(
+                    thread_id=message.thread_id,
+                    topic=thread_topic,
+                    participants=[message.from_agent, message.to_agent],
+                    created_by=message.from_agent,
+                    status="open",
+                    created_at=message.created_at,
+                    updated_at=message.created_at,
+                )
+            )
+            changed = True
+        else:
+            participants = list(existing_thread.participants)
+            if message.from_agent not in participants:
+                participants.append(message.from_agent)
+            if message.to_agent not in participants:
+                participants.append(message.to_agent)
+            next_topic = existing_thread.topic or thread_topic
+            if (
+                participants != existing_thread.participants
+                or message.created_at > existing_thread.updated_at
+                or next_topic != existing_thread.topic
+            ):
+                _replace_thread(
+                    threads,
+                    ThreadRecord(
+                        thread_id=existing_thread.thread_id,
+                        topic=next_topic,
+                        participants=participants,
+                        created_by=existing_thread.created_by,
+                        status=existing_thread.status,
+                        created_at=existing_thread.created_at,
+                        updated_at=max(existing_thread.updated_at, message.created_at),
+                    ),
+                )
+                changed = True
+        if message.message_id not in known_message_ids:
+            messages.append(message)
+            known_message_ids.add(message.message_id)
+            changed = True
+    if changed:
+        collaboration_storage.save(
+            collaboration_path,
+            threads=threads,
+            messages=messages,
+        )
+        return collaboration_storage.load(collaboration_path)
+    return collaboration
+
+
+def _format_envelope_line(envelope: BrokerMessageEnvelope) -> str:
+    return (
+        _format_message_line(envelope.message)
+        + f" receipt_handle={envelope.receipt_handle}"
+        + f" delivery_attempt={envelope.delivery_attempt}"
+    )
 
 
 def _format_message_line(message: MessageRecord) -> str:

@@ -49,13 +49,21 @@ class RabbitMQBroker(MessageBroker):
         self._channel: Any | None = None
 
     def publish(self, message: MessageRecord) -> BrokerPublishResult:
+        return self.publish_with_metadata(message, thread_topic=None)
+
+    def publish_with_metadata(
+        self,
+        message: MessageRecord,
+        *,
+        thread_topic: str | None,
+    ) -> BrokerPublishResult:
         if not isinstance(message, MessageRecord):
             raise ValueError("RabbitMQ publish requires MessageRecord")
 
         queue_name = self.queue_name_for_agent(message.to_agent)
         channel = self._get_channel()
         body = self._dump_message(message)
-        properties = self._build_message_properties(message)
+        properties = self._build_message_properties(message, thread_topic=thread_topic)
 
         try:
             channel.queue_declare(queue=queue_name, durable=True)
@@ -74,6 +82,21 @@ class RabbitMQBroker(MessageBroker):
         )
 
     def pull(self, *, agent_id: str, limit: int = 1) -> BrokerPullResult:
+        envelopes_with_metadata = self.pull_with_metadata(agent_id=agent_id, limit=limit)
+        messages = [item[0] for item in envelopes_with_metadata]
+        if not messages:
+            return BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
+        return BrokerPullResult(
+            status=BrokerDeliveryStatus.DELIVERED,
+            messages=messages,
+        )
+
+    def pull_with_metadata(
+        self,
+        *,
+        agent_id: str,
+        limit: int = 1,
+    ) -> list[tuple[BrokerMessageEnvelope, dict[str, str]]]:
         if not isinstance(agent_id, str) or not agent_id:
             raise ValueError("RabbitMQ pull requires non-empty agent_id")
         if not isinstance(limit, int) or limit < 1:
@@ -81,7 +104,7 @@ class RabbitMQBroker(MessageBroker):
 
         queue_name = self.queue_name_for_agent(agent_id)
         channel = self._get_channel()
-        messages: list[BrokerMessageEnvelope] = []
+        messages: list[tuple[BrokerMessageEnvelope, dict[str, str]]] = []
 
         try:
             channel.queue_declare(queue=queue_name, passive=True)
@@ -104,7 +127,7 @@ class RabbitMQBroker(MessageBroker):
                 if method_frame is None:
                     break
                 messages.append(
-                    self._build_envelope(
+                    self._build_envelope_and_metadata(
                         method_frame=method_frame,
                         header_frame=header_frame,
                         body=body,
@@ -117,13 +140,7 @@ class RabbitMQBroker(MessageBroker):
                 f"pull failed for queue {queue_name!r}", exc
             ) from exc
 
-        if not messages:
-            return BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
-
-        return BrokerPullResult(
-            status=BrokerDeliveryStatus.DELIVERED,
-            messages=messages,
-        )
+        return messages
 
     def ack(self, envelope: BrokerMessageEnvelope) -> BrokerAckResult:
         if not isinstance(envelope, BrokerMessageEnvelope):
@@ -173,13 +190,13 @@ class RabbitMQBroker(MessageBroker):
             raise ValueError("RabbitMQ broker agent_id must be a non-empty string")
         return f"{self._queue_prefix}.{agent_id}"
 
-    def _build_envelope(
+    def _build_envelope_and_metadata(
         self,
         *,
         method_frame: Any,
         header_frame: Any,
         body: object,
-    ) -> BrokerMessageEnvelope:
+    ) -> tuple[BrokerMessageEnvelope, dict[str, str]]:
         delivery_tag = getattr(method_frame, "delivery_tag", None)
         if not isinstance(delivery_tag, int) or delivery_tag < 1:
             raise ValueError("RabbitMQ delivery is missing a valid delivery_tag")
@@ -194,11 +211,28 @@ class RabbitMQBroker(MessageBroker):
             method_frame=method_frame,
             header_frame=header_frame,
         )
-        return BrokerMessageEnvelope(
-            message=message,
-            receipt_handle=str(delivery_tag),
-            delivery_attempt=delivery_attempt,
+        metadata = self._metadata_from_header_frame(header_frame)
+        return (
+            BrokerMessageEnvelope(
+                message=message,
+                receipt_handle=str(delivery_tag),
+                delivery_attempt=delivery_attempt,
+            ),
+            metadata,
         )
+
+    def _build_envelope(
+        self,
+        *,
+        method_frame: Any,
+        header_frame: Any,
+        body: object,
+    ) -> BrokerMessageEnvelope:
+        return self._build_envelope_and_metadata(
+            method_frame=method_frame,
+            header_frame=header_frame,
+            body=body,
+        )[0]
 
     def _delivery_attempt_for(self, *, method_frame: Any, header_frame: Any) -> int:
         headers = getattr(header_frame, "headers", None)
@@ -239,17 +273,36 @@ class RabbitMQBroker(MessageBroker):
             )
         return payload
 
-    def _build_message_properties(self, message: MessageRecord) -> object | None:
+    def _build_message_properties(
+        self,
+        message: MessageRecord,
+        *,
+        thread_topic: str | None,
+    ) -> object | None:
         pika_module = self._get_pika_module()
         properties_type = getattr(pika_module, "BasicProperties", None)
         if properties_type is None:
             return None
+        headers: dict[str, str] = {}
+        if thread_topic is not None:
+            headers["maia_thread_topic"] = thread_topic
         return properties_type(
             content_type="application/json",
             delivery_mode=2,
             message_id=message.message_id,
             type=message.kind.value,
+            headers=headers,
         )
+
+    def _metadata_from_header_frame(self, header_frame: Any) -> dict[str, str]:
+        headers = getattr(header_frame, "headers", None)
+        if not isinstance(headers, dict):
+            return {}
+        metadata: dict[str, str] = {}
+        thread_topic = headers.get("maia_thread_topic")
+        if isinstance(thread_topic, str):
+            metadata["thread_topic"] = thread_topic
+        return metadata
 
     def _get_channel(self) -> Any:
         if self._channel is not None and getattr(self._channel, "is_open", True):
