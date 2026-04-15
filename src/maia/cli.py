@@ -34,11 +34,11 @@ from maia.broker import BrokerMessageEnvelope, MessageBroker
 from maia.cli_parser import (
     LIFECYCLE_STATUS_BY_COMMAND,
     TOP_LEVEL_COLLAB_COMMANDS,
-    TOP_LEVEL_INFO_COMMANDS,
     build_parser,
 )
 from maia.collaboration_storage import CollaborationStorage
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
+from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 from maia.rabbitmq_broker import RabbitMQBroker
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
@@ -62,24 +62,40 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
     registry_path = get_registry_path()
     collaboration_path = get_collaboration_path()
     team_metadata_path = get_team_metadata_path()
+    resource = getattr(args, "resource", None)
 
     try:
         command_name = _get_runtime_command_name(args)
-        if command_name == "doctor":
+        if resource == "doctor":
             return _handle_doctor()
-        if command_name == "import":
+        if resource == "import":
             return _handle_transfer_import(args, storage, registry_path)
-        if command_name == "export":
+        if resource == "export":
             registry = storage.load(registry_path)
             return _handle_transfer_export(args, storage, registry)
-        if command_name == "inspect":
+        if resource == "inspect":
             return _handle_transfer_inspect(args, storage)
-        if command_name == "show":
+        if resource == "team" and command_name == "show":
             return _handle_team_show(team_metadata_path)
-        if command_name == "update":
+        if resource == "team" and command_name == "update":
             registry = storage.load(registry_path)
             return _handle_team_update(args, registry, team_metadata_path)
-        if command_name in TOP_LEVEL_COLLAB_COMMANDS:
+        if resource == "artifact":
+            registry = storage.load(registry_path)
+            collaboration = collaboration_storage.load(collaboration_path)
+            if command_name == "add":
+                return _handle_artifact_add(
+                    args,
+                    registry,
+                    collaboration_storage,
+                    collaboration_path,
+                    collaboration,
+                )
+            if command_name == "list":
+                return _handle_artifact_list(args, collaboration)
+            if command_name == "show":
+                return _handle_artifact_show(args, collaboration)
+        if resource in TOP_LEVEL_COLLAB_COMMANDS:
             registry = storage.load(registry_path)
             collaboration = collaboration_storage.load(collaboration_path)
             message_broker = _build_message_broker()
@@ -574,6 +590,66 @@ def _handle_thread(args, collaboration) -> int:
     return 0
 
 
+def _handle_artifact_add(
+    args,
+    registry,
+    collaboration_storage,
+    collaboration_path: Path,
+    collaboration,
+) -> int:
+    thread = _require_thread(collaboration, args.thread_id)
+    registry.get(args.from_agent)
+    registry.get(args.to_agent)
+    _require_thread_participant(
+        thread,
+        args.from_agent,
+        error="Artifact sender must be a participant in the thread",
+    )
+    _require_thread_participant(
+        thread,
+        args.to_agent,
+        error="Artifact recipient must be a participant in the thread",
+    )
+
+    artifact = HandoffRecord(
+        handoff_id=_new_id(),
+        thread_id=thread.thread_id,
+        from_agent=args.from_agent,
+        to_agent=args.to_agent,
+        kind=HandoffKind(args.type),
+        location=args.location,
+        summary=args.summary,
+        created_at=_timestamp_now(),
+    )
+    collaboration_storage.save(
+        collaboration_path,
+        threads=list(collaboration.threads),
+        messages=list(collaboration.messages),
+        handoffs=[*collaboration.handoffs, artifact],
+    )
+    print(f"added {_format_handoff_line(artifact)}")
+    return 0
+
+
+def _handle_artifact_list(args, collaboration) -> int:
+    if args.thread_id is not None:
+        _require_thread(collaboration, args.thread_id)
+        handoffs = [
+            handoff for handoff in collaboration.handoffs if handoff.thread_id == args.thread_id
+        ]
+    else:
+        handoffs = list(collaboration.handoffs)
+
+    for handoff in handoffs:
+        print(_format_handoff_line(handoff))
+    return 0
+
+
+def _handle_artifact_show(args, collaboration) -> int:
+    print(_format_handoff_line(_require_handoff(collaboration, args.artifact_id)))
+    return 0
+
+
 def _handle_reply(
     args,
     registry,
@@ -656,11 +732,23 @@ def _require_thread(collaboration, thread_id: str) -> ThreadRecord:
     raise LookupError(f"Thread with id {thread_id!r} not found")
 
 
+def _require_thread_participant(thread: ThreadRecord, agent_id: str, *, error: str) -> None:
+    if agent_id not in thread.participants:
+        raise ValueError(error)
+
+
 def _require_message(collaboration, message_id: str) -> MessageRecord:
     for message in collaboration.messages:
         if message.message_id == message_id:
             return message
     raise LookupError(f"Message with id {message_id!r} not found")
+
+
+def _require_handoff(collaboration, handoff_id: str) -> HandoffRecord:
+    for handoff in collaboration.handoffs:
+        if handoff.handoff_id == handoff_id:
+            return handoff
+    raise LookupError(f"Artifact with id {handoff_id!r} not found")
 
 
 def _replace_thread(threads: list[ThreadRecord], updated: ThreadRecord) -> None:
@@ -778,6 +866,15 @@ def _format_message_line(message: MessageRecord) -> str:
         f"from_agent={message.from_agent} to_agent={message.to_agent} "
         f"kind={message.kind.value} body={_format_preview_value(message.body)} "
         f"created_at={message.created_at} reply_to_message_id={reply_to}"
+    )
+
+
+def _format_handoff_line(handoff: HandoffRecord) -> str:
+    return (
+        f"artifact_id={handoff.handoff_id} thread_id={handoff.thread_id} "
+        f"from_agent={handoff.from_agent} to_agent={handoff.to_agent} "
+        f"type={handoff.kind.value} location={_format_preview_value(handoff.location)} "
+        f"summary={_format_preview_value(handoff.summary)} created_at={handoff.created_at}"
     )
 
 
@@ -1428,11 +1525,14 @@ def _sanitize_team_metadata_for_registry(metadata: TeamMetadata, registry) -> Te
 
 
 def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
-    return (
-        getattr(args, "agent_command", None)
-        or getattr(args, "team_command", None)
-        or getattr(args, "resource", None)
-    )
+    resource = getattr(args, "resource", None)
+    if resource == "agent":
+        return getattr(args, "agent_command", None)
+    if resource == "artifact":
+        return getattr(args, "artifact_command", None)
+    if resource == "team":
+        return getattr(args, "team_command", None)
+    return resource
 
 
 def _resolve_import_registry_path(source_path: Path) -> Path:

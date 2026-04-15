@@ -23,7 +23,7 @@ from maia.message_model import MessageKind, MessageRecord
 
 def _parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"created", "sent", "replied", "inbox", "message_id"}:
+    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -81,6 +81,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "inbox" in captured.out
     assert "thread" in captured.out
     assert "reply" in captured.out
+    assert "artifact" in captured.out
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
@@ -136,6 +137,36 @@ def test_build_parser_reply_shape() -> None:
     assert args.from_agent == "reviewer"
     assert args.body == "done"
     assert args.kind == "answer"
+
+
+def test_build_parser_artifact_add_shape() -> None:
+    args = build_parser().parse_args(
+        [
+            "artifact",
+            "add",
+            "--thread-id",
+            "thread1234",
+            "--from-agent",
+            "planner",
+            "--to-agent",
+            "reviewer",
+            "--type",
+            "report",
+            "--location",
+            "reports/phase7.md",
+            "--summary",
+            "phase 7 handoff",
+        ]
+    )
+
+    assert args.resource == "artifact"
+    assert args.artifact_command == "add"
+    assert args.thread_id == "thread1234"
+    assert args.from_agent == "planner"
+    assert args.to_agent == "reviewer"
+    assert args.type == "report"
+    assert args.location == "reports/phase7.md"
+    assert args.summary == "phase 7 handoff"
 
 
 def test_build_parser_team_update_shape() -> None:
@@ -208,6 +239,22 @@ def test_team_update_help_includes_examples(capsys: pytest.CaptureFixture[str]) 
     assert "Clear the stored default agent id" in captured.out
     assert "Examples:" in captured.out
     assert "maia team update --name research-lab --tags research,ops" in captured.out
+
+
+def test_artifact_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["artifact", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage: maia artifact" in captured.out
+    assert "add" in captured.out
+    assert "list" in captured.out
+    assert "show" in captured.out
+    assert "Examples:" in captured.out
+    assert "maia artifact add --thread-id 7f2c1a9b" in captured.out
+    assert "maia artifact list --thread-id 7f2c1a9b" in captured.out
+    assert "maia artifact show 9c4d0e12" in captured.out
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(
@@ -681,6 +728,137 @@ def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
     assert reply_fields["reply_to_message_id"] == "msg-002"
     assert fake_broker.published[-1].from_agent == analyst_id
     assert fake_broker.closed is True
+
+
+def test_artifact_add_list_and_show_round_trip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "phase 7 package ready",
+        "--topic",
+        "phase 7 review",
+    ]) == 0
+    thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
+
+    assert main([
+        "artifact",
+        "add",
+        "--thread-id",
+        thread_id,
+        "--from-agent",
+        planner_id,
+        "--to-agent",
+        reviewer_id,
+        "--type",
+        "report",
+        "--location",
+        "reports/phase7.md",
+        "--summary",
+        "phase 7 review bundle",
+    ]) == 0
+    add_fields = _parse_fields(capsys.readouterr().out.strip())
+    artifact_id = add_fields["artifact_id"]
+    assert add_fields["thread_id"] == thread_id
+    assert add_fields["from_agent"] == planner_id
+    assert add_fields["to_agent"] == reviewer_id
+    assert add_fields["type"] == "report"
+    assert add_fields["location"] == "reports/phase7.md"
+    assert add_fields["summary"] == "phase␠7␠review␠bundle"
+
+    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
+    assert len(collaboration.handoffs) == 1
+    assert collaboration.handoffs[0].handoff_id == artifact_id
+    assert collaboration.handoffs[0].thread_id == thread_id
+
+    assert main(["artifact", "list"]) == 0
+    list_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(list_lines) == 1
+    list_fields = _parse_fields(list_lines[0])
+    assert list_fields["artifact_id"] == artifact_id
+    assert list_fields["thread_id"] == thread_id
+
+    assert main(["artifact", "list", "--thread-id", thread_id]) == 0
+    filtered_lines = capsys.readouterr().out.strip().splitlines()
+    assert len(filtered_lines) == 1
+    filtered_fields = _parse_fields(filtered_lines[0])
+    assert filtered_fields["artifact_id"] == artifact_id
+
+    assert main(["artifact", "show", artifact_id]) == 0
+    show_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert show_fields["artifact_id"] == artifact_id
+    assert show_fields["location"] == "reports/phase7.md"
+    assert show_fields["summary"] == "phase␠7␠review␠bundle"
+
+
+def test_artifact_add_rejects_non_participant_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    analyst_id = _create_agent(monkeypatch, capsys, tmp_path, "analyst")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "phase 7 package ready",
+        "--topic",
+        "phase 7 review",
+    ]) == 0
+    thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
+
+    assert main([
+        "artifact",
+        "add",
+        "--thread-id",
+        thread_id,
+        "--from-agent",
+        planner_id,
+        "--to-agent",
+        analyst_id,
+        "--type",
+        "report",
+        "--location",
+        "reports/phase7.md",
+        "--summary",
+        "phase 7 review bundle",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "Artifact recipient must be a participant in the thread" in captured.err
+
+    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
+    assert collaboration.handoffs == []
+    assert collaboration.threads[0].participants == [planner_id, reviewer_id]
+
+
+def test_artifact_list_rejects_unknown_thread_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert main(["artifact", "list", "--thread-id", "missing-thread"]) == 1
+    captured = capsys.readouterr()
+    assert "Thread with id 'missing-thread' not found" in captured.err
 
 
 @pytest.mark.parametrize(

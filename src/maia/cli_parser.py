@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 
 from maia.agent_model import AgentStatus
+from maia.handoff_model import HandoffKind
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor",)
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
+ARTIFACT_COMMANDS = ("add", "list", "show")
 AGENT_COMMANDS = (
     "new",
     "start",
@@ -300,5 +302,55 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Clear the stored default agent id",
             )
+
+    artifact_parser = top_level.add_parser(
+        "artifact",
+        help="Manage thread-linked artifact metadata",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    artifact_parser.set_defaults(parser=artifact_parser)
+    artifact_parser.epilog = (
+        "Examples:\n"
+        "  maia artifact add --thread-id 7f2c1a9b --from-agent planner1234 --to-agent reviewer5678 "
+        "--type report --location reports/phase7.md --summary 'Phase 7 review bundle'\n"
+        "  maia artifact list\n"
+        "  maia artifact list --thread-id 7f2c1a9b\n"
+        "  maia artifact show 9c4d0e12"
+    )
+
+    artifact_commands = artifact_parser.add_subparsers(
+        dest="artifact_command",
+        metavar="{" + ",".join(ARTIFACT_COMMANDS) + "}",
+    )
+    for command_name in ARTIFACT_COMMANDS:
+        command_parser = artifact_commands.add_parser(command_name, help=f"{command_name} artifact")
+        command_parser.set_defaults(parser=command_parser)
+        if command_name == "add":
+            command_parser.add_argument("--thread-id", required=True, help="Existing thread id")
+            command_parser.add_argument("--from-agent", required=True, help="Sender agent id")
+            command_parser.add_argument("--to-agent", required=True, help="Recipient agent id")
+            command_parser.add_argument(
+                "--type",
+                required=True,
+                choices=tuple(kind.value for kind in HandoffKind),
+                help="Artifact pointer type",
+            )
+            command_parser.add_argument(
+                "--location",
+                required=True,
+                help="Artifact pointer location (path, url, or repo ref)",
+            )
+            command_parser.add_argument(
+                "--summary",
+                required=True,
+                help="Short artifact summary",
+            )
+        if command_name == "list":
+            command_parser.add_argument(
+                "--thread-id",
+                help="Only show artifacts for the given thread id",
+            )
+        if command_name == "show":
+            command_parser.add_argument("artifact_id", help="Artifact id")
 
     return parser
