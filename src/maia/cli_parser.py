@@ -33,6 +33,20 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "restore": AgentStatus.STOPPED,
 }
 AGENT_ID_COMMANDS = frozenset({"status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+QUICKSTART_EXAMPLES = (
+    "maia agent new planner",
+    "maia agent list",
+    "maia export",
+    "maia inspect ~/.maia/exports/maia-state.maia",
+)
+RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
+KNOWN_LIMITATIONS = (
+    "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
+    "Live collaboration (send|reply|inbox) requires MAIA_BROKER_URL and a reachable broker.",
+    "No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.",
+    "No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.",
+    "No DB migration or live-state restore: import/export covers portable state only.",
+)
 GOLDEN_FLOW_SMOKE_CONTRACT = (
     "maia agent new planner",
     "maia agent new reviewer",
@@ -109,6 +123,10 @@ def _format_epilog(heading: str, lines: tuple[str, ...]) -> str:
     return "\n".join((heading, *(f"  {line}" for line in lines)))
 
 
+def _format_epilog_sections(*sections: tuple[str, tuple[str, ...]]) -> str:
+    return "\n\n".join(_format_epilog(heading, lines) for heading, lines in sections)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maia",
@@ -116,7 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.set_defaults(parser=parser)
-    parser.epilog = _format_epilog("Golden flow smoke contract:", GOLDEN_FLOW_SMOKE_CONTRACT)
+    parser.epilog = _format_epilog_sections(
+        ("Quickstart (local state only):", QUICKSTART_EXAMPLES),
+        ("Before runtime or live collaboration:", RUNTIME_PREREQ_EXAMPLES),
+        ("Known limitations:", KNOWN_LIMITATIONS),
+        ("Golden flow smoke contract:", GOLDEN_FLOW_SMOKE_CONTRACT),
+    )
 
     top_level = parser.add_subparsers(dest="resource")
 

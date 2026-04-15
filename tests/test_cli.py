@@ -25,6 +25,9 @@ from maia.cli_parser import (
     HANDOFF_EXAMPLES,
     IMPORT_EXAMPLES,
     INSPECT_EXAMPLES,
+    KNOWN_LIMITATIONS,
+    QUICKSTART_EXAMPLES,
+    RUNTIME_PREREQ_EXAMPLES,
     TEAM_SHOW_EXAMPLES,
     TEAM_UPDATE_EXAMPLES,
     THREAD_EXAMPLES,
@@ -109,8 +112,14 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
+    assert "Quickstart (local state only):" in captured.out
+    assert "Before runtime or live collaboration:" in captured.out
+    assert "Known limitations:" in captured.out
     assert "Golden flow smoke contract:" in captured.out
     assert "Phase 7" not in captured.out
+    _assert_contains_lines(captured.out, QUICKSTART_EXAMPLES)
+    _assert_contains_lines(captured.out, RUNTIME_PREREQ_EXAMPLES)
+    _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
     _assert_contains_lines(captured.out, GOLDEN_FLOW_SMOKE_CONTRACT)
 
 
@@ -375,7 +384,15 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "Hermes agents" not in readme
     assert "python -m maia" not in readme
     assert "Public examples use the installed `maia` entrypoint." in readme
+    assert "## Quickstart" in readme
+    assert "## Known limitations" in readme
     assert "v1 golden flow smoke contract:" in readme
+    for line in QUICKSTART_EXAMPLES:
+        assert line in readme
+    for line in RUNTIME_PREREQ_EXAMPLES:
+        assert line in readme
+    for line in KNOWN_LIMITATIONS:
+        assert line in readme
     for lines in (
         DOCTOR_EXAMPLES,
         GOLDEN_FLOW_SMOKE_CONTRACT,

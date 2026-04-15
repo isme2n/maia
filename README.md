@@ -2,6 +2,29 @@
 
 Control plane for operating a Maia team with portable state, runtime control, collaboration threads, and handoffs.
 
+## Quickstart
+Maia v1의 최소 지원 경로는 로컬 portable-state control plane이다. 아래 흐름은 Docker나 broker 없이 바로 재현 가능한 현재 지원 범위만 보여준다.
+
+```bash
+maia agent new planner
+maia agent list
+maia export
+maia inspect ~/.maia/exports/maia-state.maia
+```
+
+Runtime control이나 live collaboration을 쓰기 전에는 host readiness를 먼저 확인한다.
+
+```bash
+maia doctor
+```
+
+## Known limitations
+- Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
+- Live collaboration (send|reply|inbox) requires MAIA_BROKER_URL and a reachable broker.
+- No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.
+- No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.
+- No DB migration or live-state restore: import/export covers portable state only.
+
 ## Development notes
 - Codex CLI is used as the primary coding agent.
 - This repository is initialized for iterative development.
