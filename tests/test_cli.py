@@ -1285,6 +1285,52 @@ def test_thread_visibility_falls_back_when_runtime_state_json_is_invalid(
     assert fields["pending_on"] == "-"
 
 
+def test_thread_show_preserves_message_order_when_timestamps_tie(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    timestamps = iter(["2026-04-15T12:00:00Z", "2026-04-15T12:00:00Z"])
+    monkeypatch.setattr(cli_module, "_timestamp_now", lambda: next(timestamps))
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review the latest patch",
+        "--topic",
+        "review handoff",
+    ]) == 0
+    sent_fields = _parse_fields(capsys.readouterr().out.strip())
+
+    assert main([
+        "reply",
+        sent_fields["message_id"],
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "review complete",
+    ]) == 0
+    reply_fields = _parse_fields(capsys.readouterr().out.strip())
+
+    assert main(["thread", "show", sent_fields["thread_id"]]) == 0
+    thread_lines = capsys.readouterr().out.strip().splitlines()
+    thread_fields = _parse_fields(thread_lines[0])
+    first_message_fields = _parse_fields(thread_lines[1])
+    second_message_fields = _parse_fields(thread_lines[2])
+
+    assert thread_fields["pending_on"] == planner_id
+    assert first_message_fields["message_id"] == sent_fields["message_id"]
+    assert second_message_fields["message_id"] == reply_fields["message_id"]
+    assert second_message_fields["reply_to_message_id"] == sent_fields["message_id"]
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [

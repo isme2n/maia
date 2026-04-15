@@ -790,8 +790,8 @@ def _validate_positive_limit(value: int, *, field_name: str) -> int:
     return value
 
 
-def _message_sort_key(message: MessageRecord) -> tuple[str, str]:
-    return (message.created_at, message.message_id)
+def _message_sort_key(message: MessageRecord) -> str:
+    return message.created_at
 
 
 def _sorted_thread_messages(messages: Sequence[MessageRecord]) -> list[MessageRecord]:
@@ -823,9 +823,10 @@ def _select_recent_handoff(thread_handoffs: Sequence[HandoffRecord]) -> HandoffR
 
 
 def _derive_thread_pending_on(thread_messages: Sequence[MessageRecord]) -> str:
-    if not thread_messages:
+    sorted_messages = _sorted_thread_messages(thread_messages)
+    if not sorted_messages:
         return "-"
-    return max(thread_messages, key=_message_sort_key).to_agent
+    return sorted_messages[-1].to_agent
 
 
 def _resolve_thread_participant_runtime_status(

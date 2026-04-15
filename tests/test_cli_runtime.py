@@ -187,6 +187,175 @@ def _write_fake_docker(path: Path) -> None:
     path.chmod(0o755)
 
 
+def _setup_v1_golden_flow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    planner_id = create_agent(tmp_path, "planner")
+    reviewer_id = create_agent(tmp_path, "reviewer")
+
+    planner_tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        planner_id,
+        "--role",
+        "planner",
+        "--runtime-image",
+        "ghcr.io/example/planner:latest",
+        "--runtime-workspace",
+        "/workspace/planner",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "planner",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=planner",
+    )
+    assert planner_tuned.returncode == 0
+    assert parse_fields(planner_tuned.stdout.strip()) == {
+        "agent_id": planner_id,
+        "role": "planner",
+        "runtime_image": "ghcr.io/example/planner:latest",
+        "runtime_workspace": "/workspace/planner",
+        "runtime_command": "python,-m,planner",
+        "runtime_env": "MAIA_ENV,MAIA_ROLE",
+    }
+
+    reviewer_tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        reviewer_id,
+        "--role",
+        "reviewer",
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=reviewer",
+    )
+    assert reviewer_tuned.returncode == 0
+    assert parse_fields(reviewer_tuned.stdout.strip()) == {
+        "agent_id": reviewer_id,
+        "role": "reviewer",
+        "runtime_image": "ghcr.io/example/reviewer:latest",
+        "runtime_workspace": "/workspace/reviewer",
+        "runtime_command": "python,-m,reviewer",
+        "runtime_env": "MAIA_ENV,MAIA_ROLE",
+    }
+
+    planner_started = run_module(tmp_path, "agent", "start", planner_id)
+    assert planner_started.returncode == 0
+    assert parse_fields(planner_started.stdout.strip()) == {
+        "agent_id": planner_id,
+        "status": "running",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+    }
+
+    reviewer_started = run_module(tmp_path, "agent", "start", reviewer_id)
+    assert reviewer_started.returncode == 0
+    assert parse_fields(reviewer_started.stdout.strip()) == {
+        "agent_id": reviewer_id,
+        "status": "running",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-002",
+    }
+
+    sent = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review the latest patch",
+        "--topic",
+        "review handoff",
+    )
+    assert sent.returncode == 0
+    sent_fields = parse_fields(sent.stdout.strip())
+    assert sent_fields["from_agent"] == planner_id
+    assert sent_fields["to_agent"] == reviewer_id
+    assert sent_fields["kind"] == "request"
+    thread_id = sent_fields["thread_id"]
+    first_message_id = sent_fields["message_id"]
+
+    replied = run_module(
+        tmp_path,
+        "reply",
+        first_message_id,
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "review complete",
+    )
+    assert replied.returncode == 0
+    reply_fields = parse_fields(replied.stdout.strip())
+    assert reply_fields["thread_id"] == thread_id
+    assert reply_fields["reply_to_message_id"] == first_message_id
+    assert reply_fields["from_agent"] == reviewer_id
+    assert reply_fields["to_agent"] == planner_id
+    assert reply_fields["kind"] == "answer"
+
+    added = run_module(
+        tmp_path,
+        "handoff",
+        "add",
+        "--thread-id",
+        thread_id,
+        "--from-agent",
+        reviewer_id,
+        "--to-agent",
+        planner_id,
+        "--type",
+        "report",
+        "--location",
+        "reports/review.md",
+        "--summary",
+        "Review notes ready",
+    )
+    assert added.returncode == 0
+    add_fields = parse_fields(added.stdout.strip())
+    assert add_fields["thread_id"] == thread_id
+    assert add_fields["from_agent"] == reviewer_id
+    assert add_fields["to_agent"] == planner_id
+    assert add_fields["type"] == "report"
+    assert add_fields["location"] == "reports/review.md"
+    assert add_fields["summary"] == "Review␠notes␠ready"
+
+    collaboration = load_collaboration(tmp_path)
+    return {
+        "planner_id": planner_id,
+        "reviewer_id": reviewer_id,
+        "thread_id": thread_id,
+        "first_message_id": first_message_id,
+        "reply_message_id": reply_fields["message_id"],
+        "handoff_id": add_fields["handoff_id"],
+        "thread_created_at": collaboration["threads"][0]["created_at"],
+        "thread_updated_at": collaboration["threads"][0]["updated_at"],
+        "handoff_created_at": collaboration["handoffs"][0]["created_at"],
+        "fake_docker_state_path": str(fake_bin / "fake-docker-state.json"),
+    }
+
+
 def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     empty_bin = tmp_path / 'empty-bin'
     empty_bin.mkdir()
@@ -1162,160 +1331,11 @@ def test_v1_golden_flow_smoke_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_docker = fake_bin / "docker"
-    _write_fake_docker(fake_docker)
-    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-
-    planner_id = create_agent(tmp_path, "planner")
-    reviewer_id = create_agent(tmp_path, "reviewer")
-
-    planner_tuned = run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        planner_id,
-        "--role",
-        "planner",
-        "--runtime-image",
-        "ghcr.io/example/planner:latest",
-        "--runtime-workspace",
-        "/workspace/planner",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "planner",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=planner",
-    )
-    assert planner_tuned.returncode == 0
-    assert parse_fields(planner_tuned.stdout.strip()) == {
-        "agent_id": planner_id,
-        "role": "planner",
-        "runtime_image": "ghcr.io/example/planner:latest",
-        "runtime_workspace": "/workspace/planner",
-        "runtime_command": "python,-m,planner",
-        "runtime_env": "MAIA_ENV,MAIA_ROLE",
-    }
-
-    reviewer_tuned = run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        reviewer_id,
-        "--role",
-        "reviewer",
-        "--runtime-image",
-        "ghcr.io/example/reviewer:latest",
-        "--runtime-workspace",
-        "/workspace/reviewer",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "reviewer",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=reviewer",
-    )
-    assert reviewer_tuned.returncode == 0
-    assert parse_fields(reviewer_tuned.stdout.strip()) == {
-        "agent_id": reviewer_id,
-        "role": "reviewer",
-        "runtime_image": "ghcr.io/example/reviewer:latest",
-        "runtime_workspace": "/workspace/reviewer",
-        "runtime_command": "python,-m,reviewer",
-        "runtime_env": "MAIA_ENV,MAIA_ROLE",
-    }
-
-    planner_started = run_module(tmp_path, "agent", "start", planner_id)
-    assert planner_started.returncode == 0
-    assert parse_fields(planner_started.stdout.strip()) == {
-        "agent_id": planner_id,
-        "status": "running",
-        "runtime_status": "running",
-        "runtime_handle": "runtime-001",
-    }
-
-    reviewer_started = run_module(tmp_path, "agent", "start", reviewer_id)
-    assert reviewer_started.returncode == 0
-    assert parse_fields(reviewer_started.stdout.strip()) == {
-        "agent_id": reviewer_id,
-        "status": "running",
-        "runtime_status": "running",
-        "runtime_handle": "runtime-002",
-    }
-
-    sent = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
-    )
-    assert sent.returncode == 0
-    sent_fields = parse_fields(sent.stdout.strip())
-    assert sent_fields["from_agent"] == planner_id
-    assert sent_fields["to_agent"] == reviewer_id
-    assert sent_fields["kind"] == "request"
-    thread_id = sent_fields["thread_id"]
-    first_message_id = sent_fields["message_id"]
-
-    replied = run_module(
-        tmp_path,
-        "reply",
-        first_message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "review complete",
-    )
-    assert replied.returncode == 0
-    reply_fields = parse_fields(replied.stdout.strip())
-    assert reply_fields["thread_id"] == thread_id
-    assert reply_fields["reply_to_message_id"] == first_message_id
-    assert reply_fields["from_agent"] == reviewer_id
-    assert reply_fields["to_agent"] == planner_id
-    assert reply_fields["kind"] == "answer"
-
-    added = run_module(
-        tmp_path,
-        "handoff",
-        "add",
-        "--thread-id",
-        thread_id,
-        "--from-agent",
-        reviewer_id,
-        "--to-agent",
-        planner_id,
-        "--type",
-        "report",
-        "--location",
-        "reports/review.md",
-        "--summary",
-        "Review notes ready",
-    )
-    assert added.returncode == 0
-    add_fields = parse_fields(added.stdout.strip())
-    assert add_fields["thread_id"] == thread_id
-    assert add_fields["from_agent"] == reviewer_id
-    assert add_fields["to_agent"] == planner_id
-    assert add_fields["type"] == "report"
-    assert add_fields["location"] == "reports/review.md"
-    assert add_fields["summary"] == "Review␠notes␠ready"
-
-    collaboration = load_collaboration(tmp_path)
-    thread_created_at = collaboration["threads"][0]["created_at"]
-    thread_updated_at = collaboration["threads"][0]["updated_at"]
-    handoff_created_at = collaboration["handoffs"][0]["created_at"]
+    flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
+    planner_id = flow["planner_id"]
+    reviewer_id = flow["reviewer_id"]
+    thread_id = flow["thread_id"]
+    first_message_id = flow["first_message_id"]
 
     thread_list = run_module(tmp_path, "thread", "list", "--status", "open")
     assert thread_list.returncode == 0
@@ -1325,7 +1345,7 @@ def test_v1_golden_flow_smoke_contract(
         "participants": f"{planner_id},{reviewer_id}",
         "participant_runtime": f"{planner_id}:running,{reviewer_id}:running",
         "status": "open",
-        "updated_at": thread_updated_at,
+        "updated_at": flow["thread_updated_at"],
         "pending_on": planner_id,
         "handoffs": "1",
         "messages": "2",
@@ -1340,19 +1360,19 @@ def test_v1_golden_flow_smoke_contract(
         "participants": f"{planner_id},{reviewer_id}",
         "participant_runtime": f"{planner_id}:running,{reviewer_id}:running",
         "status": "open",
-        "updated_at": thread_updated_at,
+        "updated_at": flow["thread_updated_at"],
         "pending_on": planner_id,
         "handoffs": "1",
         "messages": "2",
         "created_by": planner_id,
-        "created_at": thread_created_at,
-        "recent_handoff_id": add_fields["handoff_id"],
+        "created_at": flow["thread_created_at"],
+        "recent_handoff_id": flow["handoff_id"],
         "recent_handoff_from": reviewer_id,
         "recent_handoff_to": planner_id,
         "recent_handoff_type": "report",
         "recent_handoff_location": "reports/review.md",
         "recent_handoff_summary": "Review␠notes␠ready",
-        "recent_handoff_created_at": handoff_created_at,
+        "recent_handoff_created_at": flow["handoff_created_at"],
     }
     assert parse_fields(thread_lines[1]) == {
         "message_id": first_message_id,
@@ -1361,17 +1381,17 @@ def test_v1_golden_flow_smoke_contract(
         "to_agent": reviewer_id,
         "kind": "request",
         "body": "please␠review␠the␠latest␠patch",
-        "created_at": thread_created_at,
+        "created_at": flow["thread_created_at"],
         "reply_to_message_id": "-",
     }
     assert parse_fields(thread_lines[2]) == {
-        "message_id": reply_fields["message_id"],
+        "message_id": flow["reply_message_id"],
         "thread_id": thread_id,
         "from_agent": reviewer_id,
         "to_agent": planner_id,
         "kind": "answer",
         "body": "review␠complete",
-        "created_at": thread_updated_at,
+        "created_at": flow["thread_updated_at"],
         "reply_to_message_id": first_message_id,
     }
 
@@ -1411,6 +1431,80 @@ def test_v1_golden_flow_smoke_contract(
     }
     assert parse_fields(log_lines[1]) == {"line": "line␠1"}
     assert parse_fields(log_lines[2]) == {"line": "line␠2"}
+
+
+def test_v1_golden_flow_reports_malformed_runtime_state_at_status_and_logs_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
+    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
+    runtime_state_path.write_text("{bad json\n", encoding="utf-8")
+    expected_error = (
+        f"error: Invalid runtime state JSON in {runtime_state_path}: "
+        "Expecting property name enclosed in double quotes"
+    )
+
+    workspace = run_module(tmp_path, "workspace", "show", flow["reviewer_id"])
+    assert workspace.returncode == 0
+
+    status = run_module(tmp_path, "agent", "status", flow["planner_id"])
+    assert status.returncode == 1
+    assert status.stderr.strip() == expected_error
+
+    logs = run_module(tmp_path, "agent", "logs", flow["reviewer_id"])
+    assert logs.returncode == 1
+    assert logs.stderr.strip() == expected_error
+
+
+def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
+    Path(flow["fake_docker_state_path"]).unlink()
+
+    status = run_module(tmp_path, "agent", "status", flow["planner_id"])
+    assert status.returncode == 1
+    assert status.stderr.strip() == (
+        f"error: Stale runtime state detected for agent '{flow['planner_id']}'; "
+        "cleared local runtime state"
+    )
+    remaining_after_status = load_runtime_state(tmp_path)
+    assert {
+        runtime["agent_id"] for runtime in remaining_after_status["runtimes"]
+    } == {flow["reviewer_id"]}
+
+    logs = run_module(tmp_path, "agent", "logs", flow["reviewer_id"])
+    assert logs.returncode == 1
+    assert logs.stderr.strip() == (
+        f"error: Stale runtime state detected for agent '{flow['reviewer_id']}'; "
+        "cleared local runtime state"
+    )
+    assert load_runtime_state(tmp_path) == {"runtimes": []}
+
+
+def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    collaboration_path.write_text("{bad json\n", encoding="utf-8")
+    expected_error = (
+        f"error: Invalid collaboration JSON in {collaboration_path}: "
+        "Expecting property name enclosed in double quotes"
+    )
+
+    thread_list = run_module(tmp_path, "thread", "list", "--status", "open")
+    assert thread_list.returncode == 1
+    assert thread_list.stderr.strip() == expected_error
+
+    workspace = run_module(tmp_path, "workspace", "show", flow["reviewer_id"])
+    assert workspace.returncode == 0
+
+    status = run_module(tmp_path, "agent", "status", flow["planner_id"])
+    assert status.returncode == 0
 
 
 def test_send_to_existing_thread_and_validation(tmp_path: Path) -> None:
