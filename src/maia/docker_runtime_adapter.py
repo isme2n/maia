@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from maia.app_state import get_agent_hermes_home
+from maia.infra_runtime import MAIA_NETWORK_NAME, runtime_broker_url
 from maia.runtime_adapter import (
     RuntimeAdapter,
     RuntimeLogsRequest,
@@ -58,6 +59,8 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "-d",
             "--label",
             f"maia.agent_id={request.agent.agent_id}",
+            "--network",
+            MAIA_NETWORK_NAME,
             "-w",
             spec.workspace,
             "-v",
@@ -65,7 +68,8 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "-e",
             "HERMES_HOME=/maia/hermes",
         ]
-        for key, value in sorted(spec.env.items()):
+        runtime_env = {"MAIA_BROKER_URL": runtime_broker_url(), **spec.env}
+        for key, value in sorted(runtime_env.items()):
             command.extend(["-e", f"{key}={value}"])
         command.append(spec.image)
         command.extend(spec.command)

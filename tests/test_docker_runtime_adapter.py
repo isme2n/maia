@@ -14,6 +14,7 @@ sys.path.insert(0, str(SRC_ROOT))
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.app_state import get_agent_hermes_home
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
+from maia.infra_runtime import MAIA_NETWORK_NAME, MAIA_QUEUE_CONTAINER_NAME, runtime_broker_url
 from maia.runtime_adapter import (
     RuntimeLogsRequest,
     RuntimeStartRequest,
@@ -111,6 +112,24 @@ def test_runtime_state_storage_round_trip(tmp_path: Path) -> None:
     restored = storage.load(path)
 
     assert restored == states
+
+
+def test_runtime_broker_url_defaults_to_local_maia_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    user = "guest"
+    password = "guest"
+    expected = f"amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
+    assert runtime_broker_url() == expected
+
+
+def test_runtime_broker_url_uses_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    user = "user"
+    password = "pass"
+    explicit = f"amqp://{user}:{password}@example:5672/custom"
+    monkeypatch.setenv("MAIA_BROKER_URL", explicit)
+
+    assert runtime_broker_url() == explicit
 
 
 def test_docker_runtime_adapter_start_status_logs_stop_flow(tmp_path: Path) -> None:
@@ -284,9 +303,57 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
 
     args = json.loads(argv_path.read_text(encoding="utf-8"))
     expected_home = get_agent_hermes_home("agent-001", {"HOME": str(home)})
+    assert "--network" in args
+    assert args[args.index("--network") + 1] == MAIA_NETWORK_NAME
     assert "-v" in args
     volume_value = args[args.index("-v") + 1]
     assert volume_value == f"{expected_home}:/maia/hermes"
     assert "-e" in args
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
     assert "HERMES_HOME=/maia/hermes" in env_values
+    user = "guest"
+    password = "guest"
+    expected_broker = f"MAIA_BROKER_URL=amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
+    assert expected_broker in env_values
+
+
+def test_docker_runtime_adapter_start_preserves_explicit_broker_url(tmp_path: Path) -> None:
+    docker_script = tmp_path / "docker"
+    argv_path = tmp_path / "argv.json"
+    docker_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import json, sys\n"
+        "argv_path = Path(__file__).with_name('argv.json')\n"
+        "args = sys.argv[1:]\n"
+        "argv_path.write_text(json.dumps(args), encoding='utf-8')\n"
+        "print('runtime-001')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    docker_script.chmod(0o755)
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=tmp_path / "runtime-state.json",
+        docker_bin=str(docker_script),
+    )
+    agent = AgentRecord(
+        agent_id="agent-001",
+        name="reviewer",
+        status=AgentStatus.STOPPED,
+        persona="strict",
+        runtime_spec=RuntimeSpec(
+            image="ghcr.io/example/reviewer:latest",
+            workspace="/workspace/reviewer",
+            command=["python", "-m", "reviewer"],
+            env={"MAIA_BROKER_URL": "amqp://custom:custom@example:5672/%2F"},
+        ),
+    )
+
+    start_result = adapter.start(RuntimeStartRequest(agent=agent))
+    assert start_result.runtime.runtime_handle == "runtime-001"
+
+    args = json.loads(argv_path.read_text(encoding="utf-8"))
+    env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
+    assert f"MAIA_BROKER_URL=amqp://custom:custom@example:5672/%2F" in env_values
+    assert f"MAIA_BROKER_URL={runtime_broker_url()}" not in env_values

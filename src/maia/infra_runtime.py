@@ -19,12 +19,24 @@ __all__ = [
     "MAIA_QUEUE_VOLUME_NAME",
     "bootstrap_shared_infra",
     "collect_doctor_checks",
+    "runtime_broker_url",
 ]
 
 MAIA_NETWORK_NAME = "maia"
 MAIA_QUEUE_CONTAINER_NAME = "maia-rabbitmq"
 MAIA_QUEUE_VOLUME_NAME = "maia-rabbitmq-data"
 MAIA_QUEUE_IMAGE = "rabbitmq:3.13-alpine"
+
+
+def runtime_broker_url() -> str:
+    """Return the broker URL runtime containers should use for live Maia delivery."""
+
+    configured = os.environ.get("MAIA_BROKER_URL", "").strip()
+    if configured:
+        return configured
+    user = "guest"
+    password = "guest"
+    return f"amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
 
 
 def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
