@@ -84,6 +84,7 @@ class RuntimeState:
     agent_id: str
     runtime_status: RuntimeStatus
     runtime_handle: str | None = None
+    setup_status: str | None = None
 
     def __post_init__(self) -> None:
         _validate_str(self.agent_id, error="Invalid runtime state agent_id: expected str")
@@ -92,6 +93,10 @@ class RuntimeState:
         _validate_optional_str(
             self.runtime_handle,
             error="Invalid runtime state runtime_handle: expected str",
+        )
+        _validate_optional_str(
+            self.setup_status,
+            error="Invalid runtime state setup_status: expected str",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +108,8 @@ class RuntimeState:
         }
         if self.runtime_handle is not None:
             payload["runtime_handle"] = self.runtime_handle
+        if self.setup_status is not None:
+            payload["setup_status"] = self.setup_status
         return payload
 
     @classmethod
@@ -125,6 +132,7 @@ class RuntimeState:
             agent_id=data["agent_id"],
             runtime_status=_parse_runtime_status(data["runtime_status"]),
             runtime_handle=data.get("runtime_handle"),
+            setup_status=data.get("setup_status"),
         )
 
 

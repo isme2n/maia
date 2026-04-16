@@ -1,4 +1,4 @@
-"""JSON-backed persistence for the agent registry."""
+"""Persistence helpers for the Maia agent registry."""
 
 from __future__ import annotations
 
@@ -6,20 +6,28 @@ import json
 from pathlib import Path
 
 from maia.agent_model import AgentRecord
+from maia.app_state import get_registry_path
 from maia.registry import AgentRegistry
+from maia.sqlite_state import SQLiteState
 
 __all__ = ["JsonRegistryStorage"]
 
 
 class JsonRegistryStorage:
-    """Persist registry contents to and from a JSON file."""
+    """Persist registry contents to JSON for export and SQLite for local state."""
 
     _REQUIRED_RECORD_FIELDS = ("agent_id", "name", "status", "persona")
 
     def save(self, path: Path | str, registry: AgentRegistry, *, portable: bool = False) -> None:
-        """Write the registry as a single JSON object."""
+        """Write the registry to local SQLite state or to a portable JSON snapshot."""
 
         target = Path(path)
+        if self._is_sqlite_path(target) and not portable:
+            records = [self._serialize_record(record, portable=False) for record in registry.list()]
+            SQLiteState(target).save_agents(records)
+            cache_path = self._json_cache_path(target)
+            self._write_json_payload(cache_path, {"agents": records})
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "agents": [
@@ -44,10 +52,19 @@ class JsonRegistryStorage:
         }
 
     def load(self, path: Path | str) -> AgentRegistry:
-        """Load registry contents from a JSON file, or return an empty registry."""
+        """Load registry contents from local SQLite state or portable JSON."""
 
         target = Path(path)
         registry = AgentRegistry()
+
+        if self._is_sqlite_path(target):
+            try:
+                records_data = SQLiteState(target).load_agents()
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid registry SQLite in {target}: {exc.msg}"
+                ) from exc
+            return self._load_records(registry, records_data, target, source_kind="SQLite")
 
         if not target.exists():
             return registry
@@ -68,10 +85,20 @@ class JsonRegistryStorage:
                 f"Invalid registry JSON in {target}: expected 'agents' list"
             )
 
+        return self._load_records(registry, records_data, target, source_kind="JSON")
+
+    def _load_records(
+        self,
+        registry: AgentRegistry,
+        records_data: list[object],
+        target: Path,
+        *,
+        source_kind: str,
+    ) -> AgentRegistry:
         for index, item in enumerate(records_data):
             if not isinstance(item, dict):
                 raise ValueError(
-                    f"Invalid registry JSON in {target}: agent records must be objects"
+                    f"Invalid registry {source_kind} in {target}: agent records must be objects"
                 )
             missing_fields = [
                 field for field in self._REQUIRED_RECORD_FIELDS if field not in item
@@ -79,7 +106,7 @@ class JsonRegistryStorage:
             if missing_fields:
                 missing_fields_text = ", ".join(repr(field) for field in missing_fields)
                 raise ValueError(
-                    f"Invalid registry JSON in {target}: "
+                    f"Invalid registry {source_kind} in {target}: "
                     f"agent record at index {index} is missing required fields: "
                     f"{missing_fields_text}"
                 )
@@ -88,8 +115,23 @@ class JsonRegistryStorage:
                 registry.add(AgentRecord.from_dict(item))
             except (TypeError, ValueError) as exc:
                 raise ValueError(
-                    f"Invalid registry JSON in {target}: "
+                    f"Invalid registry {source_kind} in {target}: "
                     f"agent record at index {index} is invalid: {exc}"
                 ) from exc
 
         return registry
+
+    def _is_sqlite_path(self, path: Path) -> bool:
+        return path.suffix == ".db"
+
+    def _json_cache_path(self, state_db_path: Path) -> Path:
+        return get_registry_path({"HOME": str(state_db_path.parent.parent)})
+
+    def _write_json_payload(self, path: Path, payload: dict[str, object]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        labeled_payload = {
+            "_maia_local_state": True,
+            "_maia_storage_kind": "transitional-json-cache",
+            **payload,
+        }
+        path.write_text(json.dumps(labeled_payload, indent=2) + "\n", encoding="utf-8")

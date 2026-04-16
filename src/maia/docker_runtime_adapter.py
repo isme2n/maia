@@ -45,6 +45,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         spec = request.agent.runtime_spec
         if spec is None:
             raise ValueError("Runtime start requires agent.runtime_spec")
+        existing_state = self._load_states().get(request.agent.agent_id)
         command = [docker_bin, "run", "-d", "--label", f"maia.agent_id={request.agent.agent_id}", "-w", spec.workspace]
         for key, value in sorted(spec.env.items()):
             command.extend(["-e", f"{key}={value}"])
@@ -58,6 +59,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             agent_id=request.agent.agent_id,
             runtime_status=RuntimeStatus.RUNNING,
             runtime_handle=runtime_handle,
+            setup_status=None if existing_state is None else existing_state.setup_status,
         )
         self._write_state(state)
         return RuntimeStartResult(runtime=state)
@@ -73,6 +75,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             agent_id=request.agent_id,
             runtime_status=RuntimeStatus.STOPPED,
             runtime_handle=runtime_handle,
+            setup_status=current.setup_status,
         )
         self._write_state(state)
         return RuntimeStopResult(runtime=state)
@@ -91,6 +94,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             agent_id=request.agent_id,
             runtime_status=_parse_docker_status(result.stdout.strip()),
             runtime_handle=runtime_handle,
+            setup_status=current.setup_status,
         )
         self._write_state(state)
         return RuntimeStatusResult(runtime=state)
@@ -150,7 +154,7 @@ def _parse_docker_status(value: str) -> RuntimeStatus:
         return RuntimeStatus.STARTING
     if normalized == "running":
         return RuntimeStatus.RUNNING
-    if normalized in {"removing", "stopping"}:
+    if normalized in {"removing", "stopping", "paused"}:
         return RuntimeStatus.STOPPING
     if normalized in {"exited", "dead"}:
         return RuntimeStatus.STOPPED

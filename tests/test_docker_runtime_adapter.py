@@ -167,6 +167,12 @@ def test_docker_runtime_adapter_missing_runtime_state_error(tmp_path: Path) -> N
         adapter.status(RuntimeStatusRequest(agent_id="agent-001"))
 
 
+def test_docker_runtime_adapter_maps_paused_to_stopping() -> None:
+    from maia.docker_runtime_adapter import _parse_docker_status
+
+    assert _parse_docker_status("paused") is RuntimeStatus.STOPPING
+
+
 def test_docker_runtime_adapter_surfaces_command_failures(tmp_path: Path) -> None:
     failing_docker = tmp_path / "docker"
     failing_docker.write_text(

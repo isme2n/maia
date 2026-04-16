@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -14,14 +15,19 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
+from maia.agent_model import AgentRecord
 from maia import cli as cli_module
 from maia.app_state import (
     get_collaboration_path,
     get_default_export_path,
     get_registry_path,
     get_runtime_state_path,
+    get_state_db_path,
     get_team_metadata_path,
 )
+from maia.collaboration_storage import CollaborationStorage
+from maia.runtime_state_storage import RuntimeStateStorage
+from maia.storage import JsonRegistryStorage
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
 
@@ -97,20 +103,51 @@ def create_agent(home: Path, name: str = "demo") -> str:
 
 
 def load_registry(home: Path) -> dict[str, object]:
-    return json.loads(get_registry_path({"HOME": str(home)}).read_text(encoding="utf-8"))
+    registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(home)}))
+    return {"agents": [record.to_dict() for record in registry.list()]}
 
 
 def load_runtime_state(home: Path) -> dict[str, object]:
-    return json.loads(get_runtime_state_path({"HOME": str(home)}).read_text(encoding="utf-8"))
+    states = RuntimeStateStorage().load(get_state_db_path({"HOME": str(home)}))
+    return {"runtimes": [states[agent_id].to_dict() for agent_id in sorted(states)]}
 
 
 def load_collaboration(home: Path) -> dict[str, object]:
-    return json.loads(get_collaboration_path({"HOME": str(home)}).read_text(encoding="utf-8"))
+    state = CollaborationStorage().load(get_state_db_path({"HOME": str(home)}))
+    return {
+        "threads": [thread.to_dict() for thread in state.threads],
+        "messages": [message.to_dict() for message in state.messages],
+        "handoffs": [handoff.to_dict() for handoff in state.handoffs],
+    }
+
+
+def write_runtime_state(home: Path, payload: dict[str, object]) -> None:
+    states = {
+        item["agent_id"]: cli_module.RuntimeState.from_dict(item)
+        for item in payload.get("runtimes", [])
+        if isinstance(item, dict)
+    }
+    RuntimeStateStorage().save(get_state_db_path({"HOME": str(home)}), states)
+
+
+def corrupt_sqlite_payload(db_path: Path, table: str, key_field: str, key_value: str, payload: str) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            f"UPDATE {table} SET payload = ? WHERE {key_field} = ?",
+            (payload, key_value),
+        )
 
 
 def write_registry(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    storage = JsonRegistryStorage()
+    registry_model = storage.load(path)
+    for record in list(registry_model.list()):
+        registry_model.remove(record.agent_id)
+    for item in payload.get("agents", []):
+        if not isinstance(item, dict):
+            raise AssertionError("test payload agents must be dict objects")
+        registry_model.add(AgentRecord.from_dict(item))
+    storage.save(path, registry_model)
 
 
 def read_bundle_archive(path: Path) -> dict[str, object]:
@@ -812,7 +849,7 @@ def test_workspace_show_rejects_agent_with_missing_runtime_workspace(tmp_path: P
         "command": ["python", "-m", "reviewer"],
         "env": {"MAIA_ENV": "test"},
     }
-    write_registry(get_registry_path({"HOME": str(tmp_path)}), registry)
+    write_registry(get_state_db_path({"HOME": str(tmp_path)}), registry)
 
     shown = run_module(tmp_path, "workspace", "show", agent_id)
 
@@ -842,7 +879,7 @@ def test_agent_start_rejects_agent_with_missing_runtime_workspace(tmp_path: Path
         "command": ["python", "-m", "reviewer"],
         "env": {"MAIA_ENV": "test"},
     }
-    write_registry(get_registry_path({"HOME": str(tmp_path)}), registry)
+    write_registry(get_state_db_path({"HOME": str(tmp_path)}), registry)
 
     started = run_module(tmp_path, "agent", "start", agent_id)
 
@@ -1390,14 +1427,13 @@ def test_agent_start_recovers_when_registry_says_running_but_runtime_is_stopped(
     started = run_module(tmp_path, "agent", "start", agent_id)
     assert started.returncode == 0
 
-    runtime_path = get_runtime_state_path({"HOME": str(tmp_path)})
-    runtime_state = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime_state = load_runtime_state(tmp_path)
     runtime_state["runtimes"][0]["runtime_status"] = "stopped"
-    runtime_path.write_text(json.dumps(runtime_state, indent=2) + "\n", encoding="utf-8")
+    write_runtime_state(tmp_path, runtime_state)
 
     registry = load_registry(tmp_path)
     registry["agents"][0]["status"] = "running"
-    write_registry(get_registry_path({"HOME": str(tmp_path)}), registry)
+    write_registry(get_state_db_path({"HOME": str(tmp_path)}), registry)
 
     restarted = run_module(tmp_path, "agent", "start", agent_id)
 
@@ -1512,7 +1548,7 @@ def test_runtime_commands_reject_running_agent_with_missing_runtime_state(
     assert tuned.returncode == 0
     started = run_module(tmp_path, "agent", "start", agent_id)
     assert started.returncode == 0
-    get_runtime_state_path({"HOME": str(tmp_path)}).unlink()
+    write_runtime_state(tmp_path, {"runtimes": []})
 
     expected_error = (
         f"error: Maia can't find its saved runtime record for agent {agent_id!r}. Check Docker manually, then start the agent again if needed"
@@ -1643,6 +1679,66 @@ def test_import_prunes_dangling_runtime_state(
         ]
     }
     assert load_runtime_state(dest_home) == {"runtimes": []}
+
+
+
+def test_import_clears_runtime_state_even_for_surviving_agent_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    home = tmp_path / "same-id"
+    agent_id = create_agent(home, "planner")
+
+    tuned = run_module(
+        home,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(home, "agent", "start", agent_id)
+    assert started.returncode == 0
+    assert load_runtime_state(home)["runtimes"]
+
+    incoming_registry_path = home / "incoming.json"
+    incoming_registry_path.write_text(
+        json.dumps(
+            {
+                "agents": [
+                    {
+                        "agent_id": agent_id,
+                        "name": "planner",
+                        "status": "stopped",
+                        "persona": "",
+                    }
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    imported = run_module(home, "import", str(incoming_registry_path), "--yes")
+    assert imported.returncode == 0
+    assert load_runtime_state(home) == {"runtimes": []}
 
 
 
@@ -1892,10 +1988,16 @@ def test_v1_golden_flow_reports_malformed_runtime_state_at_status_and_logs_steps
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
-    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
-    runtime_state_path.write_text("{bad json\n", encoding="utf-8")
+    runtime_state_path = get_state_db_path({"HOME": str(tmp_path)})
+    corrupt_sqlite_payload(
+        runtime_state_path,
+        "runtime_states",
+        "agent_id",
+        flow["planner_id"],
+        "{bad json\n",
+    )
     expected_error = (
-        f"error: Invalid runtime state JSON in {runtime_state_path}: "
+        f"error: Invalid runtime state SQLite in {runtime_state_path}: "
         "Expecting property name enclosed in double quotes"
     )
 
@@ -1943,10 +2045,16 @@ def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
-    collaboration_path.write_text("{bad json\n", encoding="utf-8")
+    collaboration_path = get_state_db_path({"HOME": str(tmp_path)})
+    corrupt_sqlite_payload(
+        collaboration_path,
+        "collaboration_threads",
+        "thread_id",
+        flow["thread_id"],
+        "{bad json\n",
+    )
     expected_error = (
-        f"error: Invalid collaboration JSON in {collaboration_path}: "
+        f"error: Invalid collaboration SQLite in {collaboration_path}: "
         "Expecting property name enclosed in double quotes"
     )
 
@@ -2301,7 +2409,7 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
     assert exported.returncode == 0
 
     write_registry(
-        get_registry_path({"HOME": str(dest_home)}),
+        get_state_db_path({"HOME": str(dest_home)}),
         {
             "agents": [
                 {
@@ -2403,7 +2511,7 @@ def test_import_preview_reports_team_metadata_diffs(tmp_path: Path) -> None:
     assert exported.returncode == 0
 
     write_registry(
-        get_registry_path({"HOME": str(dest_home)}),
+        get_state_db_path({"HOME": str(dest_home)}),
         {
             "agents": [
                 {

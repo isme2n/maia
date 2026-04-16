@@ -14,6 +14,7 @@ __all__ = [
     "get_registry_path",
     "get_runtime_dir",
     "get_runtime_state_path",
+    "get_state_db_path",
     "get_team_metadata_path",
 ]
 
@@ -24,6 +25,7 @@ _EXPORTS_DIRNAME = "exports"
 _REGISTRY_FILENAME = "registry.json"
 _RUNTIME_DIRNAME = "runtime"
 _RUNTIME_STATE_FILENAME = "runtime-state.json"
+_STATE_DB_FILENAME = "state.db"
 _TEAM_METADATA_FILENAME = "team.json"
 
 
@@ -38,13 +40,13 @@ def get_maia_home(env: Mapping[str, str] | None = None) -> Path:
 
 
 def get_registry_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the default registry file path."""
+    """Return the transitional local registry cache path."""
 
     return get_maia_home(env) / _REGISTRY_FILENAME
 
 
 def get_collaboration_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the default collaboration state file path."""
+    """Return the transitional local collaboration cache path."""
 
     return get_maia_home(env) / _COLLABORATION_FILENAME
 
@@ -68,9 +70,15 @@ def get_runtime_dir(env: Mapping[str, str] | None = None) -> Path:
 
 
 def get_runtime_state_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the default runtime state JSON path."""
+    """Return the transitional local runtime state cache path."""
 
     return get_runtime_dir(env) / _RUNTIME_STATE_FILENAME
+
+
+def get_state_db_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the local SQLite control-plane state path."""
+
+    return get_maia_home(env) / _STATE_DB_FILENAME
 
 
 def get_team_metadata_path(env: Mapping[str, str] | None = None) -> Path:

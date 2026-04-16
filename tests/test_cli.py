@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,11 @@ SRC_ROOT = REPO_ROOT / "src"
 
 sys.path.insert(0, str(SRC_ROOT))
 
-from maia.app_state import get_collaboration_path, get_runtime_state_path
+from maia.app_state import (
+    get_collaboration_path,
+    get_runtime_state_path,
+    get_state_db_path,
+)
 from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
 from maia import cli as cli_module
@@ -45,6 +50,7 @@ from maia.cli_parser import (
 from maia.collaboration_storage import CollaborationStorage
 from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+from maia.runtime_state_storage import RuntimeStateStorage
 
 README_PATH = REPO_ROOT / "README.md"
 PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
@@ -133,6 +139,10 @@ def test_phase15_task102_matches_part1_contract() -> None:
     assert "Only infra readiness; no Hermes login/API key/provider checks." in text
     assert "No team defaults, no model policy wizard." in text
     assert "agent setup" in text
+def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
+    assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
+
+
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
@@ -1295,10 +1305,9 @@ def test_thread_list_and_show_surface_control_plane_summary(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
-    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
+    state_db_path = get_state_db_path({"HOME": str(tmp_path)})
     CollaborationStorage().save(
-        collaboration_path,
+        state_db_path,
         threads=[
             ThreadRecord(
                 thread_id="thread-001",
@@ -1371,27 +1380,20 @@ def test_thread_list_and_show_surface_control_plane_summary(
             )
         ],
     )
-    runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
-    runtime_state_path.write_text(
-        json.dumps(
-            {
-                "runtimes": [
-                    {
-                        "agent_id": "planner",
-                        "runtime_status": "running",
-                        "runtime_handle": "runtime-001",
-                    },
-                    {
-                        "agent_id": "analyst",
-                        "runtime_status": "failed",
-                        "runtime_handle": "runtime-009",
-                    },
-                ]
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+    RuntimeStateStorage().save(
+        state_db_path,
+        {
+            "planner": cli_module.RuntimeState(
+                agent_id="planner",
+                runtime_status=cli_module.RuntimeStatus.RUNNING,
+                runtime_handle="runtime-001",
+            ),
+            "analyst": cli_module.RuntimeState(
+                agent_id="analyst",
+                runtime_status=cli_module.RuntimeStatus.FAILED,
+                runtime_handle="runtime-009",
+            ),
+        },
     )
 
     assert main(["thread", "list"]) == 0
@@ -1454,7 +1456,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert _parse_fields(legacy_lines[0])["thread_id"] == "thread-001"
 
 
-def test_thread_visibility_falls_back_when_runtime_state_json_is_invalid(
+def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_invalid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1462,10 +1464,10 @@ def test_thread_visibility_falls_back_when_runtime_state_json_is_invalid(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    state_db_path = get_state_db_path({"HOME": str(tmp_path)})
     runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
     CollaborationStorage().save(
-        collaboration_path,
+        state_db_path,
         threads=[
             ThreadRecord(
                 thread_id="thread-invalid-runtime",

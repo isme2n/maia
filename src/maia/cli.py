@@ -18,10 +18,8 @@ from urllib.parse import quote, urlparse
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
-    get_collaboration_path,
     get_default_export_path,
-    get_registry_path,
-    get_runtime_state_path,
+    get_state_db_path,
     get_team_metadata_path,
 )
 from maia.backup_manifest import BackupManifest, load_backup_manifest, write_backup_manifest
@@ -79,8 +77,7 @@ def _normalize_legacy_cli_argv(argv: list[str]) -> list[str]:
 def _handle_runtime_command(args: argparse.Namespace) -> int:
     storage = JsonRegistryStorage()
     collaboration_storage = CollaborationStorage()
-    registry_path = get_registry_path()
-    collaboration_path = get_collaboration_path()
+    state_path = get_state_db_path()
     team_metadata_path = get_team_metadata_path()
     resource = getattr(args, "resource", None)
 
@@ -91,29 +88,29 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if resource == "setup":
             return _handle_setup_placeholder()
         if resource == "import":
-            return _handle_transfer_import(args, storage, registry_path)
+            return _handle_transfer_import(args, storage, state_path)
         if resource == "export":
-            registry = storage.load(registry_path)
+            registry = storage.load(state_path)
             return _handle_transfer_export(args, storage, registry)
         if resource == "inspect":
             return _handle_transfer_inspect(args, storage)
         if resource == "team" and command_name == "show":
             return _handle_team_show(team_metadata_path)
         if resource == "team" and command_name == "update":
-            registry = storage.load(registry_path)
+            registry = storage.load(state_path)
             return _handle_team_update(args, registry, team_metadata_path)
         if resource == "workspace" and command_name == "show":
-            registry = storage.load(registry_path)
+            registry = storage.load(state_path)
             return _handle_workspace_show(args, registry)
         if resource == "handoff":
-            registry = storage.load(registry_path)
-            collaboration = collaboration_storage.load(collaboration_path)
+            registry = storage.load(state_path)
+            collaboration = collaboration_storage.load(state_path)
             if command_name == "add":
                 return _handle_handoff_add(
                     args,
                     registry,
                     collaboration_storage,
-                    collaboration_path,
+                    state_path,
                     collaboration,
                 )
             if command_name == "list":
@@ -121,8 +118,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             if command_name == "show":
                 return _handle_handoff_show(args, collaboration, registry)
         if resource in TOP_LEVEL_COLLAB_COMMANDS:
-            registry = storage.load(registry_path)
-            collaboration = collaboration_storage.load(collaboration_path)
+            registry = storage.load(state_path)
+            collaboration = collaboration_storage.load(state_path)
             message_broker = _build_message_broker()
             try:
                 if command_name == "send":
@@ -130,7 +127,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                         args,
                         registry,
                         collaboration_storage,
-                        collaboration_path,
+                        state_path,
                         collaboration,
                         message_broker,
                     )
@@ -139,7 +136,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                         args,
                         registry,
                         collaboration_storage,
-                        collaboration_path,
+                        state_path,
                         collaboration,
                         message_broker,
                     )
@@ -150,7 +147,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                         args,
                         registry,
                         collaboration_storage,
-                        collaboration_path,
+                        state_path,
                         collaboration,
                         message_broker,
                     )
@@ -158,31 +155,31 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                 if message_broker is not None:
                     message_broker.close()
 
-        registry = storage.load(registry_path)
+        registry = storage.load(state_path)
         if resource == "agent" and command_name in AGENT_ID_COMMANDS:
             args.agent_lookup = args.agent_id
             args.agent_id = _resolve_agent_reference(registry, args.agent_id)
         runtime_adapter = _build_runtime_adapter()
         if command_name == "new":
-            return _handle_agent_new(args, storage, registry_path, registry)
+            return _handle_agent_new(args, storage, state_path, registry)
         if command_name == "setup":
             return _handle_agent_setup_placeholder(args, registry)
         if command_name == "list":
             return _handle_agent_list(registry)
         if command_name == "status":
-            return _handle_agent_status(args, storage, registry_path, registry, runtime_adapter)
+            return _handle_agent_status(args, storage, state_path, registry, runtime_adapter)
         if command_name == "logs":
-            return _handle_agent_logs(args, storage, registry_path, registry, runtime_adapter)
+            return _handle_agent_logs(args, storage, state_path, registry, runtime_adapter)
         if command_name == "start":
-            return _handle_agent_start(args, storage, registry_path, registry, runtime_adapter)
+            return _handle_agent_start(args, storage, state_path, registry, runtime_adapter)
         if command_name == "stop":
-            return _handle_agent_stop(args, storage, registry_path, registry, runtime_adapter)
+            return _handle_agent_stop(args, storage, state_path, registry, runtime_adapter)
         if command_name == "tune":
-            return _handle_agent_tune(args, storage, registry_path, registry)
+            return _handle_agent_tune(args, storage, state_path, registry)
         if command_name == "purge":
-            return _handle_agent_purge(args, storage, registry_path, registry)
+            return _handle_agent_purge(args, storage, state_path, registry)
         if command_name in {"archive", "restore"}:
-            return _handle_agent_lifecycle(args, storage, registry_path, registry)
+            return _handle_agent_lifecycle(args, storage, state_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -446,7 +443,7 @@ def _redact_broker_url(broker_url: str) -> str:
 def _build_runtime_adapter() -> DockerRuntimeAdapter:
     return DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=get_runtime_state_path(),
+        state_path=get_state_db_path(),
     )
 
 
@@ -877,7 +874,7 @@ def _resolve_thread_participant_runtime_status(
 
 def _load_thread_runtime_states() -> dict[str, RuntimeState]:
     try:
-        return RuntimeStateStorage().load(get_runtime_state_path())
+        return RuntimeStateStorage().load(get_state_db_path())
     except ValueError:
         return {}
 
@@ -1207,7 +1204,7 @@ def _resolve_configured_runtime_spec(
 
 
 def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
-    runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(record.agent_id)
+    runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(record.agent_id)
     if runtime_state is None and record.status is AgentStatus.RUNNING:
         raise _agent_runtime_unavailable_error(record.agent_id, "local runtime state is missing")
     return runtime_state
@@ -1256,7 +1253,7 @@ def _handle_transfer_export(
             registry,
             label=label,
             description=description,
-            source_registry_path=get_registry_path(),
+            source_registry_path=get_state_db_path(),
             team_metadata=team_metadata,
         )
         print(
@@ -1274,7 +1271,7 @@ def _handle_transfer_export(
         agent_count=len(registry.list()),
         label=label or export_path.stem,
         description=description,
-        source_registry_path=get_registry_path(),
+        source_registry_path=get_state_db_path(),
         team_metadata=team_metadata,
     )
     print(
@@ -1319,10 +1316,7 @@ def _handle_transfer_import(
                 print("cancelled import")
                 return 1
     storage.save(registry_path, incoming_registry)
-    RuntimeStateStorage().prune(
-        get_runtime_state_path(),
-        {record.agent_id for record in incoming_registry.list()},
-    )
+    RuntimeStateStorage().save(get_state_db_path(), {})
     if effective_incoming_team_metadata != current_team_metadata:
         save_team_metadata(get_team_metadata_path(), effective_incoming_team_metadata)
     print(
@@ -2067,7 +2061,7 @@ def _clear_stale_runtime_state(
     registry_path: str,
     registry,
 ) -> None:
-    RuntimeStateStorage().remove(get_runtime_state_path(), agent_id)
+    RuntimeStateStorage().remove(get_state_db_path(), agent_id)
     record = registry.get(agent_id)
     if record.status is AgentStatus.RUNNING:
         registry.set_status(agent_id, AgentStatus.STOPPED)
@@ -2127,7 +2121,7 @@ def _handle_agent_purge(
 
     registry.remove(args.agent_id)
     storage.save(registry_path, registry)
-    RuntimeStateStorage().remove(get_runtime_state_path(), args.agent_id)
+    RuntimeStateStorage().remove(get_state_db_path(), args.agent_id)
     team_metadata_path = get_team_metadata_path()
     team_metadata = load_team_metadata(team_metadata_path)
     if team_metadata.default_agent_id == args.agent_id:
