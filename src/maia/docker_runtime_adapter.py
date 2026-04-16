@@ -68,7 +68,12 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "-e",
             "HERMES_HOME=/maia/hermes",
         ]
-        runtime_env = {"MAIA_BROKER_URL": runtime_broker_url(), **spec.env}
+        runtime_env = {
+            **spec.env,
+            "MAIA_AGENT_ID": request.agent.agent_id,
+            "MAIA_AGENT_NAME": request.agent.name,
+            "MAIA_BROKER_URL": spec.env.get("MAIA_BROKER_URL", runtime_broker_url()),
+        }
         for key, value in sorted(runtime_env.items()):
             command.extend(["-e", f"{key}={value}"])
         command.append(spec.image)

@@ -311,10 +311,60 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     assert "-e" in args
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
     assert "HERMES_HOME=/maia/hermes" in env_values
-    user = "guest"
-    password = "guest"
-    expected_broker = f"MAIA_BROKER_URL=amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
-    assert expected_broker in env_values
+    assert "MAIA_AGENT_ID=agent-001" in env_values
+    assert "MAIA_AGENT_NAME=reviewer" in env_values
+    assert any(
+        value.startswith("MAIA_BROKER_URL=amqp://guest:") and value.endswith("@maia-rabbitmq:5672/%2F")
+        for value in env_values
+    )
+
+
+def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tmp_path: Path) -> None:
+    docker_script = tmp_path / "docker"
+    argv_path = tmp_path / "argv.json"
+    docker_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import json, sys\n"
+        "argv_path = Path(__file__).with_name('argv.json')\n"
+        "args = sys.argv[1:]\n"
+        "argv_path.write_text(json.dumps(args), encoding='utf-8')\n"
+        "print('runtime-001')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    docker_script.chmod(0o755)
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=tmp_path / "runtime-state.json",
+        docker_bin=str(docker_script),
+    )
+    agent = AgentRecord(
+        agent_id="agent-001",
+        name="reviewer",
+        status=AgentStatus.STOPPED,
+        persona="strict",
+        runtime_spec=RuntimeSpec(
+            image="ghcr.io/example/reviewer:latest",
+            workspace="/workspace/reviewer",
+            command=["python", "-m", "reviewer"],
+            env={
+                "MAIA_AGENT_ID": "wrong-id",
+                "MAIA_AGENT_NAME": "wrong-name",
+                "MAIA_ENV": "test",
+            },
+        ),
+    )
+
+    start_result = adapter.start(RuntimeStartRequest(agent=agent))
+    assert start_result.runtime.runtime_handle == "runtime-001"
+
+    args = json.loads(argv_path.read_text(encoding="utf-8"))
+    env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
+    assert "MAIA_AGENT_ID=agent-001" in env_values
+    assert "MAIA_AGENT_NAME=reviewer" in env_values
+    assert "MAIA_AGENT_ID=wrong-id" not in env_values
+    assert "MAIA_AGENT_NAME=wrong-name" not in env_values
 
 
 def test_docker_runtime_adapter_start_preserves_explicit_broker_url(tmp_path: Path) -> None:
