@@ -65,9 +65,16 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - `agent setup` wording은 `hermes setup` passthrough만 설명한다.
 - public examples는 `doctor → setup → agent new → agent setup → agent start`를 먼저 보여준다.
 
+## Part 2 direction
+- Part 2의 제품 목표는 running agents가 broker 위에서 multi-turn으로 대화하는 것이다.
+- Maia는 control plane과 visibility surface를 제공하고, live delivery는 broker/message plane이 담당한다.
+- `send` / `reply` / `inbox`는 Part 2에서 debug/diagnostic/operator check surface로 남을 수 있지만 제품 정체성이 되면 안 된다.
+- `thread` / `handoff` / `workspace`는 open collaboration visibility surface로 남는다.
+
 ## Success criteria for this contract lock
 - README/help/tests/plan이 같은 public flow를 말한다.
 - `doctor` 설명에 Hermes auth/provider/login checks가 없다.
 - `setup` 설명에 team/model defaults wizard 서사가 없다.
 - messaging commands are removed from public golden flow examples.
 - `agent setup` is described as an interactive CLI-only passthrough to `hermes setup`.
+- Part 2 is described as real broker-backed agent conversation, not a CLI messenger product.

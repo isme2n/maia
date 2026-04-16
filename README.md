@@ -48,6 +48,14 @@ maia agent stop planner
 - Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows.
 - Collaboration commands (`send`, `reply`, `inbox`, `thread`, `handoff`, `workspace`) remain available, but they are not the public Part 1 bootstrap story.
 
+## Part 2 real agent conversation
+Part 2 is where running agents talk to each other over the broker/message plane.
+
+- The product story is not “the operator manually relays every message in a CLI messenger.”
+- `send`, `reply`, and `inbox` remain useful for diagnostics and controlled operator checks.
+- The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` so operators can see open collaboration state, recent handoffs, and participant runtime context.
+- The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange between running agents.
+
 ## Runtime support boundary
 - Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
 - Run `maia doctor` before using `agent start|stop|status|logs` for real.

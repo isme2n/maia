@@ -36,6 +36,7 @@ from maia.cli_parser import (
     INSPECT_EXAMPLES,
     KNOWN_LIMITATIONS,
     PART1_OPERATOR_FLOW,
+    PART2_CONVERSATION_CONTRACT,
     QUICKSTART_EXAMPLES,
     RUNTIME_PREREQ_EXAMPLES,
     RUNTIME_RECOVERY_CHECKLIST,
@@ -55,9 +56,11 @@ from maia.runtime_state_storage import RuntimeStateStorage
 
 README_PATH = REPO_ROOT / "README.md"
 PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
+ROADMAP_PATH = REPO_ROOT / "docs/plans/maia-product-roadmap-5-parts.md"
 PHASE10_PLAN_PATH = REPO_ROOT / "docs/plans/phase10-release-hardening-and-v1-closeout.md"
 PHASE12_PLAN_PATH = REPO_ROOT / "docs/plans/phase12-live-runtime-readiness-and-host-validation.md"
 PHASE15_PLAN_PATH = REPO_ROOT / "docs/plans/phase15-minimal-agent-bootstrap-and-runtime-setup.md"
+PHASE16_PLAN_PATH = REPO_ROOT / "docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
@@ -128,11 +131,14 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "interactive `hermes setup` session only in the CLI" in text
     assert "interactive CLI-only passthrough to `hermes setup`" in text
     assert "operator-facing state stays `not-configured` until runtime config exists" in text
+    assert "Part 2 real agent conversation" in text
+    assert "running agents talk to each other over the broker/message plane" in text
+    assert "operator manually relays every message in a CLI messenger" in text
+    assert "thread`, `handoff`, and `workspace`" in text
     assert "still lands in the next task" not in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
-    assert "CLI messenger" not in text
     assert "Secondary surfaces" in text
 
 
@@ -143,7 +149,9 @@ def test_prd_locks_part1_operator_story() -> None:
     assert "identity" in text.lower()
     assert "hermes setup" in text
     assert "interactive CLI-only" in text
-    assert "send/reply" not in text
+    assert "Part 2 direction" in text
+    assert "running agents가 broker 위에서 multi-turn으로 대화" in text
+    assert "public golden flow" in text
 
 
 def test_phase15_task102_matches_part1_contract() -> None:
@@ -162,6 +170,24 @@ def test_phase15_task108_closeout_is_recorded() -> None:
     assert "README first-run section must read like" in text
     assert "Ensure examples do not imply Maia is a CLI messenger." in text
     assert "Status:" in text
+
+
+def test_phase16_plan_locks_part2_contract() -> None:
+    text = PHASE16_PLAN_PATH.read_text(encoding="utf-8")
+
+    assert "# Phase 16 Real Agent Conversation and Broker Message Plane Plan" in text
+    assert "running agents talk to each other over the broker/message plane" in text
+    assert "The product story is not“" not in text
+    assert "사람이 CLI로 직접 모든 메시지를 relay하는 제품" in text
+    assert "Task 109 — Part 2 contract and public surface lock" in text
+    assert "Task 114 — Part 2 docs/help/tests closeout" in text
+
+
+def test_roadmap_points_part2_to_phase16_plan() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "## Part 2 — Real Agent Conversation" in text
+    assert "docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md" in text
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
     assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
     assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
@@ -194,6 +220,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Bootstrap shared Maia infra" in captured.out
     assert "Part 1 operator flow:" in captured.out
     assert "Known limitations:" in captured.out
+    assert "Part 2 conversation contract:" in captured.out
     assert "Quickstart (local state only):" not in captured.out
     assert "V1 smoke checklist:" not in captured.out
     assert "send <" not in captured.out
@@ -201,6 +228,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "thread show" not in captured.out
     _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
+    _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
 
 
 def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixture[str]) -> None:
@@ -347,6 +375,25 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "participant runtime summaries" in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, THREAD_EXAMPLES)
+
+
+def test_collaboration_help_is_positioned_as_visibility_or_diagnostic_surface(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        main(["send", "--help"])
+    send_out = capsys.readouterr().out
+    assert "diagnostic/operator check" in send_out
+    assert "primary Maia product story" in send_out
+
+    with pytest.raises(SystemExit):
+        main(["inbox", "--help"])
+    inbox_out = capsys.readouterr().out
+    assert "live agent inbox" in inbox_out
+    assert "diagnostics and controlled operator checks" in inbox_out
+
+    with pytest.raises(SystemExit):
+        main(["reply", "--help"])
+    reply_out = capsys.readouterr().out
+    assert "running-agent conversation" in reply_out
 
 
 def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:

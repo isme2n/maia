@@ -13,6 +13,11 @@ TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 THREAD_COMMANDS = ("list", "show")
 HANDOFF_COMMANDS = ("add", "list", "show")
 WORKSPACE_COMMANDS = ("show",)
+PART2_CONVERSATION_CONTRACT = (
+    "Running agents talk to each other over the broker/message plane.",
+    "`send`, `reply`, and `inbox` are useful for diagnostics and controlled operator checks, not the primary product identity.",
+    "`thread`, `handoff`, and `workspace` are the public visibility surfaces for open collaboration state.",
+)
 AGENT_COMMANDS = (
     "new",
     "setup",
@@ -148,6 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.epilog = _format_epilog_sections(
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
+        ("Part 2 conversation contract:", PART2_CONVERSATION_CONTRACT),
     )
 
     top_level = parser.add_subparsers(dest="resource")
@@ -228,16 +234,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_COLLAB_COMMANDS:
         help_text = {
-            "send": "Send a collaboration message",
-            "inbox": "Show an agent inbox",
-            "thread": "Inspect collaboration threads",
-            "reply": "Reply to an existing message",
+            "send": "Send a collaboration message (diagnostic/operator check)",
+            "inbox": "Inspect a live agent inbox (diagnostic/operator check)",
+            "thread": "Inspect open collaboration state",
+            "reply": "Reply to an existing collaboration message",
         }[command_name]
         parser_kwargs: dict[str, object] = {"help": help_text}
+        if command_name == "send":
+            parser_kwargs["description"] = (
+                "Send a collaboration message as a diagnostic/operator check path, "
+                "not as the primary Maia product story."
+            )
+            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
+        if command_name == "inbox":
+            parser_kwargs["description"] = (
+                "Inspect a live agent inbox for diagnostics and controlled operator checks."
+            )
+            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
         if command_name == "thread":
             parser_kwargs["description"] = (
                 "Inspect collaboration threads with recent handoff pointers "
                 "and participant runtime summaries."
+            )
+            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
+        if command_name == "reply":
+            parser_kwargs["description"] = (
+                "Reply to an existing collaboration message while keeping the public product story centered on running-agent conversation."
             )
             parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
         command_parser = top_level.add_parser(command_name, **parser_kwargs)

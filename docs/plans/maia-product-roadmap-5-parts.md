@@ -51,6 +51,9 @@
 - thread/message visibility
 - toolcall/message plane story alignment
 
+**Current working plan:**
+- `docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md`
+
 ---
 
 ## Part 3 — Export / Import
