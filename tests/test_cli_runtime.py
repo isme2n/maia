@@ -374,20 +374,20 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     assert parse_fields(lines[0]) == {
         'check': 'docker_cli',
         'status': 'missing',
-        'detail': 'docker␠binary␠not␠found␠in␠PATH',
-        'remediation': 'install␠docker␠cli␠or␠docker␠engine␠on␠this␠host',
+        'detail': 'Docker␠is␠not␠installed␠or␠not␠on␠PATH',
+        'remediation': 'Install␠Docker␠on␠this␠host␠to␠use␠runtime␠commands',
     }
     assert parse_fields(lines[3]) == {
         'check': 'broker_url',
         'status': 'missing',
-        'detail': 'MAIA_BROKER_URL␠is␠not␠set',
-        'remediation': 'optional:␠set␠MAIA_BROKER_URL␠to␠enable␠broker␠readiness␠checks',
+        'detail': 'Broker␠mode␠is␠off␠because␠MAIA_BROKER_URL␠is␠not␠set',
+        'remediation': 'Optional:␠set␠MAIA_BROKER_URL␠if␠you␠want␠broker-backed␠collaboration',
     }
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
         'failed': 'docker_cli,docker_compose,docker_daemon',
-        'next_step': 'install␠docker␠then␠rerun␠maia␠doctor',
+        'next_step': 'install␠Docker⸴␠then␠run␠maia␠doctor␠again',
     }
 
 
@@ -415,19 +415,19 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
         'check': 'docker_cli',
         'status': 'ok',
         'detail': str(fake_docker),
-        'remediation': 'no␠action␠needed',
+        'remediation': 'No␠action␠needed',
     }
     assert parse_fields(lines[1]) == {
         'check': 'docker_compose',
         'status': 'ok',
-        'detail': 'docker␠compose␠available',
-        'remediation': 'no␠action␠needed',
+        'detail': 'Docker␠Compose␠is␠available',
+        'remediation': 'No␠action␠needed',
     }
     assert parse_fields(lines[2]) == {
         'check': 'docker_daemon',
         'status': 'ok',
-        'detail': 'docker␠daemon␠reachable',
-        'remediation': 'no␠action␠needed',
+        'detail': 'Docker␠is␠ready',
+        'remediation': 'No␠action␠needed',
     }
     assert parse_fields(lines[3])['check'] == 'broker_url'
     assert parse_fields(lines[3])['status'] == 'ok'
@@ -435,14 +435,14 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
     assert parse_fields(lines[4]) == {
         'check': 'broker_tcp',
         'status': 'ok',
-        'detail': f'tcp␠reachability␠confirmed␠for␠{host}:{port}',
-        'remediation': 'no␠action␠needed',
+        'detail': f'Broker␠is␠reachable␠at␠{host}:{port}',
+        'remediation': 'No␠action␠needed',
     }
     assert parse_fields(lines[5]) == {
         'kind': 'summary',
         'status': 'ok',
         'failed': '-',
-        'next_step': 'runtime␠prerequisites␠satisfied',
+        'next_step': 'runtime␠commands␠are␠ready␠to␠use',
     }
 
 
@@ -462,7 +462,7 @@ def test_doctor_accepts_broker_url_without_explicit_port(tmp_path: Path, monkeyp
         'check': 'broker_url',
         'status': 'ok',
         'detail': 'amqp://guest:***@127.0.0.1/%2F',
-        'remediation': 'no␠action␠needed',
+        'remediation': 'No␠action␠needed',
     }
     assert parse_fields(lines[4])['check'] == 'broker_tcp'
 
@@ -486,14 +486,14 @@ def test_doctor_reports_invalid_broker_url_port(tmp_path: Path, monkeypatch: pyt
     assert parse_fields(lines[3]) == {
         'check': 'broker_url',
         'status': 'fail',
-        'detail': 'MAIA_BROKER_URL␠must␠include␠a␠valid␠numeric␠port',
-        'remediation': 'set␠MAIA_BROKER_URL␠to␠a␠full␠amqp␠URL␠like␠amqp://user:pass@host:5672/vhost',
+        'detail': 'MAIA_BROKER_URL␠needs␠a␠numeric␠port',
+        'remediation': 'Use␠a␠full␠AMQP␠URL␠like␠amqp://user:***@host:5672/vhost',
     }
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
         'failed': 'broker_url',
-        'next_step': 'set␠MAIA_BROKER_URL␠then␠rerun␠maia␠doctor',
+        'next_step': 'set␠MAIA_BROKER_URL␠if␠you␠want␠broker-backed␠collaboration',
     }
 
 
@@ -755,7 +755,7 @@ def test_workspace_show_rejects_agent_without_runtime_spec(tmp_path: Path) -> No
 
     assert shown.returncode == 1
     assert shown.stderr.strip() == (
-        f"error: Workspace context unavailable for agent {agent_id!r}: runtime spec is not configured"
+        f"error: Can't show the workspace for agent {agent_id!r} yet because runtime setup is missing"
     )
 
 
@@ -774,7 +774,7 @@ def test_workspace_show_rejects_agent_with_missing_runtime_workspace(tmp_path: P
 
     assert shown.returncode == 1
     assert shown.stderr.strip() == (
-        f"error: Workspace context unavailable for agent {agent_id!r}: runtime workspace is not configured"
+        f"error: Can't show the workspace for agent {agent_id!r} yet because the workspace path is missing"
     )
 
 
@@ -785,7 +785,7 @@ def test_agent_start_rejects_agent_without_runtime_spec(tmp_path: Path) -> None:
 
     assert started.returncode == 1
     assert started.stderr.strip() == (
-        f"error: Agent runtime unavailable for id {agent_id!r}: runtime spec is not configured"
+        f"error: Can't run agent {agent_id!r} yet because runtime setup is missing"
     )
 
 
@@ -804,7 +804,7 @@ def test_agent_start_rejects_agent_with_missing_runtime_workspace(tmp_path: Path
 
     assert started.returncode == 1
     assert started.stderr.strip() == (
-        f"error: Agent runtime unavailable for id {agent_id!r}: runtime workspace is not configured"
+        f"error: Can't run agent {agent_id!r} yet because the workspace path is missing"
     )
 
 
@@ -945,7 +945,9 @@ def test_agent_runtime_start_status_logs_stop_flow(
 
     started_again = run_module(tmp_path, "agent", "start", agent_id)
     assert started_again.returncode == 1
-    assert started_again.stderr.strip() == f"error: Agent with id '{agent_id}' is already marked running"
+    assert started_again.stderr.strip() == (
+        f"error: Agent '{agent_id}' is already running. Check its status or stop it first"
+    )
 
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 0
@@ -983,12 +985,69 @@ def test_agent_runtime_start_status_logs_stop_flow(
 
     stopped_again = run_module(tmp_path, "agent", "stop", agent_id)
     assert stopped_again.returncode == 1
-    assert stopped_again.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+    assert stopped_again.stderr.strip() == f"error: Agent '{agent_id}' is not running right now"
 
     logs_after_stop = run_module(tmp_path, "agent", "logs", agent_id)
     assert logs_after_stop.returncode == 1
-    assert logs_after_stop.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+    assert logs_after_stop.stderr.strip() == f"error: Agent '{agent_id}' is not running right now"
 
+
+def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    doctor = run_module(tmp_path, "doctor")
+    assert doctor.returncode == 0
+
+    agent_id = create_agent(tmp_path, "planner")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--role",
+        "planner",
+        "--runtime-image",
+        "ghcr.io/example/planner:latest",
+        "--runtime-workspace",
+        "/workspace/planner",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "planner",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=planner",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+    status_running = run_module(tmp_path, "agent", "status", agent_id)
+    assert status_running.returncode == 0
+    assert parse_fields(status_running.stdout.strip())["status"] == "running"
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "2")
+    assert logs.returncode == 0
+    log_lines = logs.stdout.strip().splitlines()
+    assert parse_fields(log_lines[0])["lines"] == "2"
+
+    stopped = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped.returncode == 0
+    status_stopped = run_module(tmp_path, "agent", "status", agent_id)
+    assert status_stopped.returncode == 0
+    stopped_fields = parse_fields(status_stopped.stdout.strip())
+    assert stopped_fields["status"] == "stopped"
+    assert stopped_fields["runtime_status"] == "stopped"
 
 
 def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
@@ -997,7 +1056,7 @@ def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     start_without_runtime = run_module(tmp_path, "agent", "start", agent_id)
     assert start_without_runtime.returncode == 1
     assert start_without_runtime.stderr.strip() == (
-        f"error: Agent runtime unavailable for id {agent_id!r}: runtime spec is not configured"
+        f"error: Can't run agent {agent_id!r} yet because runtime setup is missing"
     )
 
     for command, expected_status in [
@@ -1093,17 +1152,174 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
     }
 
 
+def test_agent_status_syncs_registry_to_stopped_when_container_has_exited(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    fake_state_path = tmp_path / "bin" / "fake-docker-state.json"
+    fake_state = json.loads(fake_state_path.read_text(encoding="utf-8"))
+    fake_state["containers"]["runtime-001"]["status"] = "exited"
+    fake_state_path.write_text(json.dumps(fake_state), encoding="utf-8")
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "status": "stopped",
+        "persona": "∅",
+        "role": "∅",
+        "model": "∅",
+        "tags": "-",
+        "runtime_status": "stopped",
+        "runtime_handle": "runtime-001",
+    }
+    assert load_registry(tmp_path)["agents"][0]["status"] == "stopped"
+
+
+def test_agent_logs_syncs_registry_to_stopped_when_container_has_exited(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    fake_state_path = tmp_path / "bin" / "fake-docker-state.json"
+    fake_state = json.loads(fake_state_path.read_text(encoding="utf-8"))
+    fake_state["containers"]["runtime-001"]["status"] = "exited"
+    fake_state_path.write_text(json.dumps(fake_state), encoding="utf-8")
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "1")
+
+    assert logs.returncode == 0
+    log_lines = logs.stdout.strip().splitlines()
+    assert parse_fields(log_lines[0]) == {
+        "agent_id": agent_id,
+        "runtime_status": "stopped",
+        "runtime_handle": "runtime-001",
+        "lines": "1",
+    }
+    assert parse_fields(log_lines[1]) == {"line": "line␠2"}
+    assert load_registry(tmp_path)["agents"][0]["status"] == "stopped"
+
+
+def test_agent_start_recovers_when_registry_says_running_but_runtime_is_stopped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    runtime_path = get_runtime_state_path({"HOME": str(tmp_path)})
+    runtime_state = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime_state["runtimes"][0]["runtime_status"] = "stopped"
+    runtime_path.write_text(json.dumps(runtime_state, indent=2) + "\n", encoding="utf-8")
+
+    registry = load_registry(tmp_path)
+    registry["agents"][0]["status"] = "running"
+    write_registry(get_registry_path({"HOME": str(tmp_path)}), registry)
+
+    restarted = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert restarted.returncode == 0
+    assert parse_fields(restarted.stdout.strip()) == {
+        "agent_id": agent_id,
+        "status": "running",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-002",
+    }
+    assert load_registry(tmp_path)["agents"][0]["status"] == "running"
+
 
 def test_runtime_commands_require_active_runtime_state(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
 
     stopped = run_module(tmp_path, "agent", "stop", agent_id)
     assert stopped.returncode == 1
-    assert stopped.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+    assert stopped.stderr.strip() == f"error: Agent '{agent_id}' is not running right now"
 
     logs = run_module(tmp_path, "agent", "logs", agent_id)
     assert logs.returncode == 1
-    assert logs.stderr.strip() == f"error: Agent runtime for id '{agent_id}' is not running"
+    assert logs.stderr.strip() == f"error: Agent '{agent_id}' is not running right now"
 
 
 
@@ -1144,7 +1360,7 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 1
     assert status.stderr.strip() == (
-        f"error: Stale runtime state detected for agent '{agent_id}'; cleared local runtime state"
+        f"error: Maia found an old saved runtime record for agent '{agent_id}', but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
     assert load_runtime_state(tmp_path) == {"runtimes": []}
 
@@ -1159,7 +1375,7 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
     logs = run_module(tmp_path, "agent", "logs", agent_id)
     assert logs.returncode == 1
     assert logs.stderr.strip() == (
-        f"error: Stale runtime state detected for agent '{agent_id}'; cleared local runtime state"
+        f"error: Maia found an old saved runtime record for agent '{agent_id}', but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
     assert load_runtime_state(tmp_path) == {"runtimes": []}
 
@@ -1198,7 +1414,7 @@ def test_runtime_commands_reject_running_agent_with_missing_runtime_state(
     get_runtime_state_path({"HOME": str(tmp_path)}).unlink()
 
     expected_error = (
-        f"error: Agent runtime unavailable for id {agent_id!r}: local runtime state is missing"
+        f"error: Maia can't find its saved runtime record for agent {agent_id!r}. Check Docker manually, then start the agent again if needed"
     )
 
     status = run_module(tmp_path, "agent", "status", agent_id)
@@ -1591,8 +1807,8 @@ def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
     status = run_module(tmp_path, "agent", "status", flow["planner_id"])
     assert status.returncode == 1
     assert status.stderr.strip() == (
-        f"error: Stale runtime state detected for agent '{flow['planner_id']}'; "
-        "cleared local runtime state"
+        f"error: Maia found an old saved runtime record for agent '{flow['planner_id']}', "
+        "but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
     remaining_after_status = load_runtime_state(tmp_path)
     assert {
@@ -1602,8 +1818,8 @@ def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
     logs = run_module(tmp_path, "agent", "logs", flow["reviewer_id"])
     assert logs.returncode == 1
     assert logs.stderr.strip() == (
-        f"error: Stale runtime state detected for agent '{flow['reviewer_id']}'; "
-        "cleared local runtime state"
+        f"error: Maia found an old saved runtime record for agent '{flow['reviewer_id']}', "
+        "but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
     assert load_runtime_state(tmp_path) == {"runtimes": []}
 

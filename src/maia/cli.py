@@ -207,18 +207,18 @@ def _is_doctor_failure(check: dict[str, str]) -> bool:
 
 def _doctor_next_step(failed_checks: list[str]) -> str:
     if not failed_checks:
-        return "runtime prerequisites satisfied"
+        return "runtime commands are ready to use"
     if "docker_cli" in failed_checks:
-        return "install docker then rerun maia doctor"
+        return "install Docker, then run maia doctor again"
     if "docker_compose" in failed_checks:
-        return "install docker compose plugin then rerun maia doctor"
+        return "install the Docker Compose plugin, then run maia doctor again"
     if "docker_daemon" in failed_checks:
-        return "start docker daemon then rerun maia doctor"
+        return "start Docker, then run maia doctor again"
     if "broker_url" in failed_checks:
-        return "set MAIA_BROKER_URL then rerun maia doctor"
+        return "set MAIA_BROKER_URL if you want broker-backed collaboration"
     if "broker_tcp" in failed_checks:
-        return "start or expose the broker service then rerun maia doctor"
-    return "fix reported doctor failures then rerun maia doctor"
+        return "start the broker or fix network access, then run maia doctor again"
+    return "fix the failed checks above, then run maia doctor again"
 
 
 def _collect_doctor_checks() -> list[dict[str, str]]:
@@ -230,20 +230,20 @@ def _collect_doctor_checks() -> list[dict[str, str]]:
                 {
                     "name": "docker_cli",
                     "status": "missing",
-                    "detail": "docker binary not found in PATH",
-                    "remediation": "install docker cli or docker engine on this host",
+                    "detail": "Docker is not installed or not on PATH",
+                    "remediation": "Install Docker on this host to use runtime commands",
                 },
                 {
                     "name": "docker_compose",
                     "status": "missing",
-                    "detail": "docker compose unavailable because docker CLI is missing",
-                    "remediation": "install docker first, then verify docker compose plugin",
+                    "detail": "Docker Compose is unavailable because Docker is missing",
+                    "remediation": "Install Docker first, then make sure the Docker Compose plugin is available",
                 },
                 {
                     "name": "docker_daemon",
                     "status": "missing",
-                    "detail": "docker daemon unreachable because docker CLI is missing",
-                    "remediation": "install docker engine and start the docker daemon",
+                    "detail": "Docker can't run because Docker is missing",
+                    "remediation": "Install Docker, then start the Docker service",
                 },
             ]
         )
@@ -254,22 +254,22 @@ def _collect_doctor_checks() -> list[dict[str, str]]:
                     "docker_cli",
                     [docker_bin, "--version"],
                     success_detail=docker_bin,
-                    success_remediation="no action needed",
-                    failure_remediation="verify the docker binary is executable on PATH",
+                    success_remediation="No action needed",
+                    failure_remediation="Make sure the Docker binary is installed and available on PATH",
                 ),
                 _run_doctor_probe(
                     "docker_compose",
                     [docker_bin, "compose", "version"],
-                    success_detail="docker compose available",
-                    success_remediation="no action needed",
-                    failure_remediation="install or enable the docker compose plugin",
+                    success_detail="Docker Compose is available",
+                    success_remediation="No action needed",
+                    failure_remediation="Install or enable the Docker Compose plugin",
                 ),
                 _run_doctor_probe(
                     "docker_daemon",
                     [docker_bin, "info"],
-                    success_detail="docker daemon reachable",
-                    success_remediation="no action needed",
-                    failure_remediation="start the docker daemon or fix daemon access permissions",
+                    success_detail="Docker is ready",
+                    success_remediation="No action needed",
+                    failure_remediation="Start Docker or fix Docker access permissions",
                 ),
             ]
         )
@@ -285,8 +285,8 @@ def _collect_broker_doctor_checks() -> list[dict[str, str]]:
             {
                 "name": "broker_url",
                 "status": "missing",
-                "detail": "MAIA_BROKER_URL is not set",
-                "remediation": "optional: set MAIA_BROKER_URL to enable broker readiness checks",
+                "detail": "Broker mode is off because MAIA_BROKER_URL is not set",
+                "remediation": "Optional: set MAIA_BROKER_URL if you want broker-backed collaboration",
             }
         ]
 
@@ -298,8 +298,8 @@ def _collect_broker_doctor_checks() -> list[dict[str, str]]:
             {
                 "name": "broker_url",
                 "status": "fail",
-                "detail": "MAIA_BROKER_URL must include a valid numeric port",
-                "remediation": "set MAIA_BROKER_URL to a full amqp URL like amqp://user:pass@host:5672/vhost",
+                "detail": "MAIA_BROKER_URL needs a numeric port",
+                "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
             }
         ]
     if not parsed.hostname:
@@ -307,8 +307,8 @@ def _collect_broker_doctor_checks() -> list[dict[str, str]]:
             {
                 "name": "broker_url",
                 "status": "fail",
-                "detail": "MAIA_BROKER_URL must include a hostname",
-                "remediation": "set MAIA_BROKER_URL to a full amqp URL like amqp://user:pass@host:5672/vhost",
+                "detail": "MAIA_BROKER_URL needs a hostname",
+                "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
             }
         ]
     if port is None:
@@ -326,13 +326,13 @@ def _collect_broker_doctor_checks() -> list[dict[str, str]]:
                 "name": "broker_url",
                 "status": "ok",
                 "detail": redacted_broker_url,
-                "remediation": "no action needed",
+                "remediation": "No action needed",
             },
             {
                 "name": "broker_tcp",
                 "status": "fail",
                 "detail": detail,
-                "remediation": "start the broker service or expose the configured host:port",
+                "remediation": "Start the broker service or fix access to the configured host and port",
             },
         ]
 
@@ -341,13 +341,13 @@ def _collect_broker_doctor_checks() -> list[dict[str, str]]:
             "name": "broker_url",
             "status": "ok",
             "detail": redacted_broker_url,
-            "remediation": "no action needed",
+            "remediation": "No action needed",
         },
         {
             "name": "broker_tcp",
             "status": "ok",
-            "detail": f"tcp reachability confirmed for {parsed.hostname}:{port}",
-            "remediation": "no action needed",
+            "detail": f"Broker is reachable at {parsed.hostname}:{port}",
+            "remediation": "No action needed",
         },
     ]
 
@@ -1115,13 +1115,54 @@ def _format_workspace_context_fields(record: AgentRecord | None) -> list[str]:
 
 
 def _workspace_context_unavailable_error(agent_id: str, detail: str) -> ValueError:
-    return ValueError(
-        f"Workspace context unavailable for agent {agent_id!r}: {detail}"
-    )
+    message = {
+        "runtime spec is not configured": (
+            f"Can't show the workspace for agent {agent_id!r} yet because runtime setup is missing"
+        ),
+        "runtime workspace is not configured": (
+            f"Can't show the workspace for agent {agent_id!r} yet because the workspace path is missing"
+        ),
+    }.get(detail, f"Can't show the workspace for agent {agent_id!r}: {detail}")
+    return ValueError(message)
 
 
 def _agent_runtime_unavailable_error(agent_id: str, detail: str) -> ValueError:
-    return ValueError(f"Agent runtime unavailable for id {agent_id!r}: {detail}")
+    message = {
+        "runtime spec is not configured": (
+            f"Can't run agent {agent_id!r} yet because runtime setup is missing"
+        ),
+        "runtime workspace is not configured": (
+            f"Can't run agent {agent_id!r} yet because the workspace path is missing"
+        ),
+        "local runtime state is missing": (
+            f"Maia can't find its saved runtime record for agent {agent_id!r}. "
+            "Check Docker manually, then start the agent again if needed"
+        ),
+    }.get(detail, f"Can't use runtime commands for agent {agent_id!r}: {detail}")
+    return ValueError(message)
+
+
+def _agent_already_running_error(agent_id: str) -> ValueError:
+    return ValueError(
+        f"Agent {agent_id!r} is already running. Check its status or stop it first"
+    )
+
+
+def _agent_runtime_already_active_error(agent_id: str) -> ValueError:
+    return ValueError(
+        f"Agent {agent_id!r} already has a running container. Stop it first if you want to start again"
+    )
+
+
+def _agent_runtime_not_running_error(agent_id: str) -> ValueError:
+    return ValueError(f"Agent {agent_id!r} is not running right now")
+
+
+def _stale_runtime_state_cleared_error(agent_id: str) -> ValueError:
+    return ValueError(
+        f"Maia found an old saved runtime record for agent {agent_id!r}, but the container is gone. "
+        "The saved record was cleared. Start the agent again if you still need it"
+    )
 
 
 def _resolve_configured_runtime_spec(
@@ -1140,11 +1181,27 @@ def _resolve_configured_runtime_spec(
 def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
     runtime_state = RuntimeStateStorage().load(get_runtime_state_path()).get(record.agent_id)
     if runtime_state is None and record.status is AgentStatus.RUNNING:
-        raise _agent_runtime_unavailable_error(
-            record.agent_id,
-            "local runtime state is missing",
-        )
+        raise _agent_runtime_unavailable_error(record.agent_id, "local runtime state is missing")
     return runtime_state
+
+
+def _sync_registry_status_from_runtime_state(
+    record: AgentRecord,
+    runtime_state: RuntimeState,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> AgentRecord:
+    expected_status = (
+        AgentStatus.RUNNING
+        if runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES
+        else AgentStatus.STOPPED
+    )
+    if record.status is expected_status:
+        return record
+    updated = registry.set_status(record.agent_id, expected_status)
+    storage.save(registry_path, registry)
+    return updated
 
 
 def _handle_transfer_export(
@@ -1854,10 +1911,9 @@ def _handle_agent_status(
     except ValueError as exc:
         if _is_stale_runtime_error(exc):
             _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
-            raise ValueError(
-                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
-            ) from exc
+            raise _stale_runtime_state_cleared_error(args.agent_id) from exc
         raise
+    record = _sync_registry_status_from_runtime_state(record, runtime_state, storage, registry_path, registry)
     print(_format_agent_status(record, runtime_state))
     return 0
 
@@ -1871,14 +1927,22 @@ def _handle_agent_start(
 ) -> int:
     record = registry.get(args.agent_id)
     stored_runtime_state = _load_runtime_state_for_agent(record)
+    if stored_runtime_state is not None and stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
+        record = _sync_registry_status_from_runtime_state(
+            record,
+            stored_runtime_state,
+            storage,
+            registry_path,
+            registry,
+        )
     if record.status is AgentStatus.RUNNING:
-        raise ValueError(f"Agent with id {args.agent_id!r} is already marked running")
+        raise _agent_already_running_error(args.agent_id)
     _resolve_configured_runtime_spec(
         record,
         error_factory=_agent_runtime_unavailable_error,
     )
     if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
-        raise ValueError(f"Agent runtime for id {args.agent_id!r} is already active")
+        raise _agent_runtime_already_active_error(args.agent_id)
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
     updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
     storage.save(registry_path, registry)
@@ -1900,15 +1964,13 @@ def _handle_agent_stop(
     record = registry.get(args.agent_id)
     stored_runtime_state = _load_runtime_state_for_agent(record)
     if stored_runtime_state is None or stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
-        raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
+        raise _agent_runtime_not_running_error(args.agent_id)
     try:
         stop_result = runtime_adapter.stop(RuntimeStopRequest(agent_id=args.agent_id))
     except ValueError as exc:
         if _is_stale_runtime_error(exc):
             _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
-            raise ValueError(
-                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
-            ) from exc
+            raise _stale_runtime_state_cleared_error(args.agent_id) from exc
         raise
     updated = registry.set_status(args.agent_id, AgentStatus.STOPPED)
     storage.save(registry_path, registry)
@@ -1930,7 +1992,7 @@ def _handle_agent_logs(
     record = registry.get(args.agent_id)
     stored_runtime_state = _load_runtime_state_for_agent(record)
     if stored_runtime_state is None or stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
-        raise ValueError(f"Agent runtime for id {args.agent_id!r} is not running")
+        raise _agent_runtime_not_running_error(args.agent_id)
     try:
         logs_result = runtime_adapter.logs(
             RuntimeLogsRequest(agent_id=args.agent_id, tail_lines=args.tail_lines)
@@ -1938,10 +2000,15 @@ def _handle_agent_logs(
     except ValueError as exc:
         if _is_stale_runtime_error(exc):
             _clear_stale_runtime_state(args.agent_id, storage, registry_path, registry)
-            raise ValueError(
-                f"Stale runtime state detected for agent {args.agent_id!r}; cleared local runtime state"
-            ) from exc
+            raise _stale_runtime_state_cleared_error(args.agent_id) from exc
         raise
+    record = _sync_registry_status_from_runtime_state(
+        record,
+        logs_result.runtime,
+        storage,
+        registry_path,
+        registry,
+    )
     print(
         f"logs agent_id={args.agent_id} runtime_status={logs_result.runtime.runtime_status.value} "
         f"runtime_handle={_format_preview_value(logs_result.runtime.runtime_handle)} lines={len(logs_result.lines)}"

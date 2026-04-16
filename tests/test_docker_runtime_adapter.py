@@ -223,3 +223,27 @@ def test_docker_runtime_adapter_collects_successful_stderr_logs(tmp_path: Path) 
     result = adapter.logs(RuntimeLogsRequest(agent_id="agent-001", tail_lines=10))
 
     assert result.lines == ["stderr line"]
+
+
+def test_docker_runtime_adapter_syncs_exited_container_to_stopped(tmp_path: Path) -> None:
+    fake_docker = tmp_path / "docker"
+    _write_fake_docker(fake_docker)
+    state_path = tmp_path / "runtime-state.json"
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=state_path,
+        docker_bin=str(fake_docker),
+    )
+
+    start_result = adapter.start(RuntimeStartRequest(agent=_build_agent()))
+    assert start_result.runtime.runtime_handle == "runtime-001"
+
+    fake_state_path = tmp_path / "fake-docker-state.json"
+    fake_state = json.loads(fake_state_path.read_text(encoding="utf-8"))
+    fake_state["containers"]["runtime-001"]["status"] = "exited"
+    fake_state_path.write_text(json.dumps(fake_state), encoding="utf-8")
+
+    status_result = adapter.status(RuntimeStatusRequest(agent_id="agent-001"))
+
+    assert status_result.runtime.runtime_status is RuntimeStatus.STOPPED
+    assert RuntimeStateStorage().load(state_path)["agent-001"].runtime_status is RuntimeStatus.STOPPED
