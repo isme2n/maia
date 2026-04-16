@@ -33,7 +33,7 @@
 - 문서/도움말/검증 흐름이 같은 지원 범위를 말해야 한다.
 
 ## Runtime support boundary
-- Fake-docker tests prove the runtime control-plane contract, not your machine's Docker setup.
+- Fake-docker tests verify Maia's runtime command flow, not whether Docker works on this host.
 - Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.
 - If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.
 - Broker-backed collaboration and runtime validation are separate checks.

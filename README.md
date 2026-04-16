@@ -26,10 +26,16 @@ maia doctor
 - No DB migration or live-state restore: import/export covers portable state only.
 
 ## Runtime support boundary
-- Fake-docker tests prove the runtime control-plane contract, not your machine's Docker setup.
+- Fake-docker tests verify Maia's runtime command flow, not whether Docker works on this host.
 - Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.
 - If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.
 - Broker-backed collaboration and runtime validation are separate checks.
+
+## Live host runtime recovery
+- If doctor fails, fix Docker first.
+- If start fails, rerun doctor and re-check the runtime image, workspace, command, and env values.
+- If Maia says the saved runtime record is old, check Docker and start the agent again if needed.
+- If status or logs show stopped, confirm whether the container already exited before restarting it.
 
 ## V1 release checklist
 - Quickstart/help/README describe only the supported v1 surfaces and known limitations.
@@ -126,6 +132,12 @@ maia doctor
   - `maia agent status <id>`
   - `maia agent logs <id>`
   - `maia agent stop <id>`
+  - `maia agent status <id>`
+- Live host report format:
+  - `doctor=ok|fail`
+  - `live_runtime_smoke=ok|fail`
+  - `failed_step=-|doctor|start|status|logs|stop`
+  - `next_action=<one short sentence>`
 - Export portable state:
   - `maia export`
   - `maia export backups/team.maia`

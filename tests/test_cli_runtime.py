@@ -1094,6 +1094,63 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
     assert stopped_fields["runtime_status"] == "stopped"
 
 
+def test_live_host_runtime_checklist_flow_is_locked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    doctor = run_module(tmp_path, "doctor")
+    assert doctor.returncode == 0
+
+    agent_id = create_agent(tmp_path, "smoke")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/smoke:latest",
+        "--runtime-workspace",
+        "/workspace/smoke",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "smoke",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+    assert parse_fields(started.stdout.strip())["status"] == "running"
+
+    status_running = run_module(tmp_path, "agent", "status", agent_id)
+    assert status_running.returncode == 0
+    assert parse_fields(status_running.stdout.strip())["status"] == "running"
+
+    logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "1")
+    assert logs.returncode == 0
+    assert parse_fields(logs.stdout.strip().splitlines()[0])["runtime_status"] == "running"
+
+    stopped = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped.returncode == 0
+    assert parse_fields(stopped.stdout.strip())["status"] == "stopped"
+
+    status_after_stop = run_module(tmp_path, "agent", "status", agent_id)
+    assert status_after_stop.returncode == 0
+    after_stop_fields = parse_fields(status_after_stop.stdout.strip())
+    assert after_stop_fields["status"] == "stopped"
+    assert after_stop_fields["runtime_status"] == "stopped"
+
+
 def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
 
@@ -1476,6 +1533,19 @@ def test_runtime_commands_reject_running_agent_with_missing_runtime_state(
     started_again = run_module(tmp_path, "agent", "start", agent_id)
     assert started_again.returncode == 1
     assert started_again.stderr.strip() == expected_error
+
+
+def test_recovery_message_points_operator_back_to_doctor_when_start_cannot_run(
+    tmp_path: Path,
+) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert started.returncode == 1
+    assert started.stderr.strip() == (
+        f"error: Can't run agent {agent_id!r} yet because runtime setup is missing"
+    )
 
 
 def test_agent_purge_removes_runtime_state(

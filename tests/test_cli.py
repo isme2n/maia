@@ -24,11 +24,13 @@ from maia.cli_parser import (
     GOLDEN_FLOW_SMOKE_CONTRACT,
     HANDOFF_EXAMPLES,
     HOST_VALIDATION_CHECKLIST,
+    HOST_VALIDATION_REPORT_TEMPLATE,
     IMPORT_EXAMPLES,
     INSPECT_EXAMPLES,
     KNOWN_LIMITATIONS,
     QUICKSTART_EXAMPLES,
     RUNTIME_PREREQ_EXAMPLES,
+    RUNTIME_RECOVERY_CHECKLIST,
     RUNTIME_SUPPORT_BOUNDARY,
     TEAM_SHOW_EXAMPLES,
     TEAM_UPDATE_EXAMPLES,
@@ -124,6 +126,8 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "V1 release checklist:" in captured.out
     assert "V1 smoke checklist:" in captured.out
     assert "Live host runtime checklist:" in captured.out
+    assert "Runtime recovery checklist:" in captured.out
+    assert "Live host report format:" in captured.out
     assert "Golden flow smoke contract:" not in captured.out
     assert "Phase 7" not in captured.out
     _assert_contains_lines(captured.out, QUICKSTART_EXAMPLES)
@@ -133,6 +137,8 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     _assert_contains_lines(captured.out, V1_RELEASE_CHECKLIST)
     _assert_contains_lines(captured.out, GOLDEN_FLOW_SMOKE_CONTRACT)
     _assert_contains_lines(captured.out, HOST_VALIDATION_CHECKLIST)
+    _assert_contains_lines(captured.out, RUNTIME_RECOVERY_CHECKLIST)
+    _assert_contains_lines(captured.out, HOST_VALIDATION_REPORT_TEMPLATE)
 
 
 def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -399,9 +405,11 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "## Quickstart" in readme
     assert "## Known limitations" in readme
     assert "## Runtime support boundary" in readme
+    assert "## Live host runtime recovery" in readme
     assert "## V1 release checklist" in readme
     assert "v1 smoke checklist:" in readme
     assert "Live host runtime checklist:" in readme
+    assert "Live host report format:" in readme
     assert "v1 golden flow smoke contract:" not in readme
     for line in QUICKSTART_EXAMPLES:
         assert line in readme
@@ -411,12 +419,15 @@ def test_readme_examples_align_with_public_help() -> None:
         assert line in readme
     for line in RUNTIME_SUPPORT_BOUNDARY:
         assert line in readme
+    for line in RUNTIME_RECOVERY_CHECKLIST:
+        assert line in readme
     for line in V1_RELEASE_CHECKLIST:
         assert line in readme
     for lines in (
         DOCTOR_EXAMPLES,
         GOLDEN_FLOW_SMOKE_CONTRACT,
         HOST_VALIDATION_CHECKLIST,
+        HOST_VALIDATION_REPORT_TEMPLATE,
         AGENT_TUNE_EXAMPLES,
         EXPORT_EXAMPLES,
         IMPORT_EXAMPLES,
@@ -457,6 +468,20 @@ def test_phase12_plan_locks_runtime_boundary_and_host_checklist() -> None:
     assert "`maia doctor`" in plan
     assert "`maia agent start <id>`" in plan
     assert "`maia agent stop <id>`" in plan
+
+
+def test_phase13_plan_locks_recovery_and_report_contract() -> None:
+    plan = (REPO_ROOT / "docs/plans/phase13-live-runtime-smoke-and-operator-recovery.md").read_text(encoding="utf-8")
+
+    assert "## Runtime support boundary" in plan
+    assert "## Live host runtime recovery" in plan
+    assert "## Live host validation report template" in plan
+    for line in RUNTIME_SUPPORT_BOUNDARY:
+        assert line in plan
+    for line in RUNTIME_RECOVERY_CHECKLIST:
+        assert line in plan
+    for line in HOST_VALIDATION_REPORT_TEMPLATE:
+        assert f"`{line}`" in plan
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(

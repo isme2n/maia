@@ -41,7 +41,7 @@ QUICKSTART_EXAMPLES = (
 )
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 RUNTIME_SUPPORT_BOUNDARY = (
-    "Fake-docker tests prove the runtime control-plane contract, not your machine's Docker setup.",
+    "Fake-docker tests verify Maia's runtime command flow, not whether Docker works on this host.",
     "Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.",
     "If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.",
     "Broker-backed collaboration and runtime validation are separate checks.",
@@ -91,6 +91,19 @@ HOST_VALIDATION_CHECKLIST = (
     "maia agent status <id>",
     "maia agent logs <id>",
     "maia agent stop <id>",
+    "maia agent status <id>",
+)
+RUNTIME_RECOVERY_CHECKLIST = (
+    "If doctor fails, fix Docker first.",
+    "If start fails, rerun doctor and re-check the runtime image, workspace, command, and env values.",
+    "If Maia says the saved runtime record is old, check Docker and start the agent again if needed.",
+    "If status or logs show stopped, confirm whether the container already exited before restarting it.",
+)
+HOST_VALIDATION_REPORT_TEMPLATE = (
+    "doctor=ok|fail",
+    "live_runtime_smoke=ok|fail",
+    "failed_step=-|doctor|start|status|logs|stop",
+    "next_action=<one short sentence>",
 )
 EXPORT_EXAMPLES = (
     "maia export",
@@ -165,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("V1 release checklist:", V1_RELEASE_CHECKLIST),
         ("V1 smoke checklist:", GOLDEN_FLOW_SMOKE_CONTRACT),
         ("Live host runtime checklist:", HOST_VALIDATION_CHECKLIST),
+        ("Runtime recovery checklist:", RUNTIME_RECOVERY_CHECKLIST),
+        ("Live host report format:", HOST_VALIDATION_REPORT_TEMPLATE),
     )
 
     top_level = parser.add_subparsers(dest="resource")
