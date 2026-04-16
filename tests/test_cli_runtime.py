@@ -2608,6 +2608,10 @@ def test_v1_golden_flow_smoke_contract(
         "pending_on": planner_id,
         "handoffs": "1",
         "messages": "2",
+        "recent_handoff_id": flow["handoff_id"],
+        "recent_handoff_to": planner_id,
+        "recent_handoff_type": "report",
+        "recent_handoff_summary": "Review␠notes␠ready",
     }
 
     thread_show = run_module(tmp_path, "thread", "show", thread_id)

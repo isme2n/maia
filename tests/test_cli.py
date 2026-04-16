@@ -1791,13 +1791,22 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert open_fields["pending_on"] == "planner"
     assert open_fields["handoffs"] == "1"
     assert open_fields["messages"] == "2"
+    assert open_fields["recent_handoff_id"] == "artifact-001"
+    assert open_fields["recent_handoff_to"] == "reviewer"
+    assert open_fields["recent_handoff_type"] == "report"
+    assert open_fields["recent_handoff_summary"] == "Review␠notes␠ready"
     closed_fields = _parse_fields(list_lines[1])
     assert closed_fields["thread_id"] == "thread-002"
     assert closed_fields["participant_runtime"] == "planner:running,analyst:failed"
+    assert closed_fields["recent_handoff_id"] == "-"
+    assert closed_fields["recent_handoff_to"] == "-"
+    assert closed_fields["recent_handoff_type"] == "-"
+    assert closed_fields["recent_handoff_summary"] == "-"
     colon_fields = _parse_fields(list_lines[2])
     assert colon_fields["thread_id"] == "thread-003"
     assert colon_fields["participant_runtime"] == "agent%3A1:stopped"
     assert colon_fields["pending_on"] == "-"
+    assert colon_fields["recent_handoff_id"] == "-"
 
     assert main(["thread", "list", "--agent", "reviewer"]) == 0
     reviewer_lines = capsys.readouterr().out.strip().splitlines()

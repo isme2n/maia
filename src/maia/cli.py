@@ -771,6 +771,7 @@ def _format_thread_overview_fields(
     thread_handoffs: Sequence[HandoffRecord],
     runtime_states: dict[str, RuntimeState],
 ) -> str:
+    recent_handoff = _select_recent_handoff(thread_handoffs)
     return (
         f"thread_id={thread.thread_id} "
         f"topic={_format_preview_value(thread.topic)} "
@@ -778,7 +779,11 @@ def _format_thread_overview_fields(
         f"participant_runtime={_format_thread_participant_runtime(thread.participants, runtime_states)} "
         f"status={thread.status} updated_at={thread.updated_at} "
         f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
-        f"handoffs={len(thread_handoffs)} messages={len(thread_messages)}"
+        f"handoffs={len(thread_handoffs)} messages={len(thread_messages)} "
+        f"recent_handoff_id={recent_handoff.handoff_id if recent_handoff is not None else '-'} "
+        f"recent_handoff_to={recent_handoff.to_agent if recent_handoff is not None else '-'} "
+        f"recent_handoff_type={recent_handoff.kind.value if recent_handoff is not None else '-'} "
+        f"recent_handoff_summary={_format_preview_value(recent_handoff.summary) if recent_handoff is not None else '-'}"
     )
 
 
