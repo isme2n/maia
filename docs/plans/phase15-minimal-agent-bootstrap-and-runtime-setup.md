@@ -298,6 +298,8 @@
 - Remove leftover wording about team defaults, model override layers, Hermes auth checks in doctor, and Maia-managed setup wizard logic.
 - Ensure examples do not imply Maia is a CLI messenger.
 
+**Status:** completed via explicit first-run README section, operator-facing agent help wording, and CLI-only passthrough wording alignment across README/PRD/tests.
+
 **Validation:**
 - `PYTHONPATH=src python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py`
 - `bash scripts/verify.sh`

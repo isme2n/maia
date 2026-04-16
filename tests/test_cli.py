@@ -112,6 +112,8 @@ def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
 def test_readme_locks_part1_public_flow() -> None:
     text = README_PATH.read_text(encoding="utf-8")
 
+    assert "## First run" in text
+    assert "Install Maia, then follow the Part 1 bootstrap path in this order" in text
     assert "maia doctor" in text
     assert "maia setup" in text
     assert "maia agent new planner" in text
@@ -124,12 +126,14 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
+    assert "interactive CLI-only passthrough to `hermes setup`" in text
     assert "operator-facing state stays `not-configured` until runtime config exists" in text
     assert "still lands in the next task" not in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "CLI messenger" not in text
+    assert "Secondary surfaces" in text
 
 
 def test_prd_locks_part1_operator_story() -> None:
@@ -138,6 +142,7 @@ def test_prd_locks_part1_operator_story() -> None:
     assert "doctor → setup → agent new → agent setup → agent start" in text
     assert "identity" in text.lower()
     assert "hermes setup" in text
+    assert "interactive CLI-only" in text
     assert "send/reply" not in text
 
 
@@ -148,6 +153,15 @@ def test_phase15_task102_matches_part1_contract() -> None:
     assert "Only infra readiness; no Hermes login/API key/provider checks." in text
     assert "No team defaults, no model policy wizard." in text
     assert "agent setup" in text
+
+
+def test_phase15_task108_closeout_is_recorded() -> None:
+    text = PHASE15_PLAN_PATH.read_text(encoding="utf-8")
+
+    assert "Task 108 — docs/help/tests closeout and scope cleanup" in text
+    assert "README first-run section must read like" in text
+    assert "Ensure examples do not imply Maia is a CLI messenger." in text
+    assert "Status:" in text
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
     assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
     assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
@@ -216,6 +230,32 @@ def test_agent_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) 
     assert "runtime image" not in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, AGENT_SETUP_EXAMPLES)
+
+
+def test_agent_runtime_help_uses_operator_wording(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Start an agent runtime" in captured.out
+    assert "Stop a running agent runtime" in captured.out
+    assert "Show agent runtime status" in captured.out
+    assert "Show agent runtime logs" in captured.out
+    assert "start agent" not in captured.out
+    assert "stop agent" not in captured.out
+    assert "status agent" not in captured.out
+    assert "logs agent" not in captured.out
+
+
+def test_agent_start_help_describes_part1_prerequisites(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "start", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Start an agent runtime after shared infra, agent setup, and runtime config are ready." in captured.out
+    assert "name" in captured.out
 
 
 def test_team_help(capsys: pytest.CaptureFixture[str]) -> None:

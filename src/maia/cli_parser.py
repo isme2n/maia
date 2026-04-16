@@ -301,19 +301,24 @@ def build_parser() -> argparse.ArgumentParser:
         command_help = {
             "new": "Create an agent identity",
             "setup": "Open hermes setup for an agent in the CLI",
-            "start": "start agent",
-            "stop": "stop agent",
-            "archive": "archive agent",
-            "restore": "restore agent",
-            "status": "status agent",
-            "logs": "logs agent",
-            "list": "list agent",
-            "tune": "tune agent",
-            "purge": "purge agent",
+            "start": "Start an agent runtime",
+            "stop": "Stop a running agent runtime",
+            "archive": "Archive an agent identity",
+            "restore": "Restore an archived agent identity",
+            "status": "Show agent runtime status",
+            "logs": "Show agent runtime logs",
+            "list": "List agent identities",
+            "tune": "Update stored agent metadata",
+            "purge": "Purge an agent identity and local state",
         }[command_name]
         command_description = {
             "new": "Create an agent identity record.",
             "setup": "Open hermes setup for an agent in the CLI without adding Maia-managed runtime configuration.",
+            "start": "Start an agent runtime after shared infra, agent setup, and runtime config are ready.",
+            "stop": "Stop a running agent runtime without changing the stored agent identity.",
+            "status": "Show the operator-facing agent status plus setup and runtime state.",
+            "logs": "Show recent runtime logs for an agent after setup is complete and the runtime has started.",
+            "list": "List stored agent identities with their operator-facing launch-readiness state.",
         }.get(command_name)
         command_parser = agent_commands.add_parser(
             command_name,

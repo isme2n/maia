@@ -9,7 +9,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 3. `doctor`는 infra readiness만 본다.
 4. `setup`은 shared infra bootstrap만 담당한다.
 5. `agent new`는 identity creation이다.
-6. `agent setup`은 해당 agent에 대한 `hermes setup` 진입점이다.
+6. `agent setup`은 해당 agent에 대한 interactive CLI-only `hermes setup` passthrough 진입점이다.
 7. messaging/thread/handoff surfaces는 남아 있어도 Part 1의 public golden flow는 아니다.
 
 ## In scope (Part 1 public contract)
@@ -70,3 +70,4 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - `doctor` 설명에 Hermes auth/provider/login checks가 없다.
 - `setup` 설명에 team/model defaults wizard 서사가 없다.
 - messaging commands are removed from public golden flow examples.
+- `agent setup` is described as an interactive CLI-only passthrough to `hermes setup`.

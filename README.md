@@ -2,6 +2,17 @@
 
 Control plane for bringing up Maia shared infra, creating agent identities, opening per-agent Hermes setup, and operating agent runtime lifecycle.
 
+## First run
+Install Maia, then follow the Part 1 bootstrap path in this order:
+
+1. `maia doctor`
+2. `maia setup`
+3. `maia agent new <name>`
+4. `maia agent setup <name>`
+5. `maia agent start <name>`
+
+`maia agent setup` is an interactive CLI-only passthrough to `hermes setup` for one agent. Maia does not replace or reinterpret the Hermes setup wizard.
+
 ## Part 1 operator flow
 Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story.
 
@@ -32,6 +43,10 @@ maia agent stop planner
 - `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
 - `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
 - Messaging and thread commands remain available but are not the primary Part 1 operator flow.
+
+## Secondary surfaces
+- Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows.
+- Collaboration commands (`send`, `reply`, `inbox`, `thread`, `handoff`, `workspace`) remain available, but they are not the public Part 1 bootstrap story.
 
 ## Runtime support boundary
 - Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
