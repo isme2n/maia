@@ -122,6 +122,7 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "hermes setup" in text
     assert "persona + call-sign defaults" in text
     assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
+    assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
     assert "operator-facing state stays `not-configured` until runtime config exists" in text
     assert "still lands in the next task" not in text

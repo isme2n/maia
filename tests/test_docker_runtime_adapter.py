@@ -12,6 +12,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.agent_model import AgentRecord, AgentStatus
+from maia.app_state import get_agent_hermes_home
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
 from maia.runtime_adapter import (
     RuntimeLogsRequest,
@@ -253,3 +254,39 @@ def test_docker_runtime_adapter_syncs_exited_container_to_stopped(tmp_path: Path
 
     assert status_result.runtime.runtime_status is RuntimeStatus.STOPPED
     assert RuntimeStateStorage().load(state_path)["agent-001"].runtime_status is RuntimeStatus.STOPPED
+
+
+def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -> None:
+    docker_script = tmp_path / "docker"
+    argv_path = tmp_path / "argv.json"
+    docker_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import json, sys\n"
+        "argv_path = Path(__file__).with_name('argv.json')\n"
+        "args = sys.argv[1:]\n"
+        "argv_path.write_text(json.dumps(args), encoding='utf-8')\n"
+        "print('runtime-001')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    docker_script.chmod(0o755)
+    home = tmp_path / "home"
+    state_path = home / ".maia" / "state.db"
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=state_path,
+        docker_bin=str(docker_script),
+    )
+
+    start_result = adapter.start(RuntimeStartRequest(agent=_build_agent()))
+    assert start_result.runtime.runtime_handle == "runtime-001"
+
+    args = json.loads(argv_path.read_text(encoding="utf-8"))
+    expected_home = get_agent_hermes_home("agent-001", {"HOME": str(home)})
+    assert "-v" in args
+    volume_value = args[args.index("-v") + 1]
+    assert volume_value == f"{expected_home}:/maia/hermes"
+    assert "-e" in args
+    env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
+    assert "HERMES_HOME=/maia/hermes" in env_values

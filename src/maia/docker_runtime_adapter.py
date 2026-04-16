@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from maia.app_state import get_agent_hermes_home
 from maia.runtime_adapter import (
     RuntimeAdapter,
     RuntimeLogsRequest,
@@ -46,7 +47,24 @@ class DockerRuntimeAdapter(RuntimeAdapter):
         if spec is None:
             raise ValueError("Runtime start requires agent.runtime_spec")
         existing_state = self._load_states().get(request.agent.agent_id)
-        command = [docker_bin, "run", "-d", "--label", f"maia.agent_id={request.agent.agent_id}", "-w", spec.workspace]
+        hermes_home = get_agent_hermes_home(
+            request.agent.agent_id,
+            {"HOME": str(self._state_path.parent.parent)},
+        )
+        hermes_home.mkdir(parents=True, exist_ok=True)
+        command = [
+            docker_bin,
+            "run",
+            "-d",
+            "--label",
+            f"maia.agent_id={request.agent.agent_id}",
+            "-w",
+            spec.workspace,
+            "-v",
+            f"{hermes_home}:/maia/hermes",
+            "-e",
+            "HERMES_HOME=/maia/hermes",
+        ]
         for key, value in sorted(spec.env.items()):
             command.extend(["-e", f"{key}={value}"])
         command.append(spec.image)

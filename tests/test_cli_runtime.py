@@ -28,6 +28,7 @@ from maia.app_state import (
 )
 from maia.collaboration_storage import CollaborationStorage
 from maia.runtime_state_storage import RuntimeStateStorage
+from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
@@ -130,6 +131,26 @@ def write_runtime_state(home: Path, payload: dict[str, object]) -> None:
         if isinstance(item, dict)
     }
     RuntimeStateStorage().save(get_state_db_path({"HOME": str(home)}), states)
+
+
+def mark_runtime_start_ready(home: Path, agent_id: str, *, setup_status: str = "complete") -> None:
+    SQLiteState(get_state_db_path({"HOME": str(home)})).set_infra_status(
+        "bootstrap",
+        status="ready",
+        detail="shared infra is ready",
+    )
+    write_runtime_state(
+        home,
+        {
+            "runtimes": [
+                {
+                    "agent_id": agent_id,
+                    "runtime_status": "stopped",
+                    "setup_status": setup_status,
+                }
+            ]
+        },
+    )
 
 
 def corrupt_sqlite_payload(db_path: Path, table: str, key_field: str, key_value: str, payload: str) -> None:
@@ -299,6 +320,8 @@ def _setup_v1_golden_flow(
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
     _write_fake_docker(fake_docker)
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     setup = run_module(tmp_path, "setup")
@@ -311,6 +334,10 @@ def _setup_v1_golden_flow(
 
     planner_id = create_agent(tmp_path, "planner")
     reviewer_id = create_agent(tmp_path, "reviewer")
+    planner_setup = run_module(tmp_path, "agent", "setup", planner_id)
+    assert planner_setup.returncode == 0
+    reviewer_setup = run_module(tmp_path, "agent", "setup", reviewer_id)
+    assert reviewer_setup.returncode == 0
 
     planner_tuned = run_module(
         tmp_path,
@@ -742,6 +769,8 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
         "name": "demo",
         "call_sign": "demo",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "∅",
     }
 
@@ -777,6 +806,8 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
         "name": "demo",
         "call_sign": "demo",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "nightwatch",
     }
 
@@ -797,6 +828,7 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
 
 def test_agent_status_reports_ready_after_runtime_configuration(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -829,6 +861,8 @@ def test_agent_status_reports_ready_after_runtime_configuration(tmp_path: Path) 
         "name": "demo",
         "call_sign": "demo",
         "status": "ready",
+        "setup": "complete",
+        "runtime": "stopped",
         "persona": "∅",
     }
 
@@ -841,6 +875,7 @@ def test_agent_status_reports_running_after_start(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -870,6 +905,8 @@ def test_agent_status_reports_running_after_start(tmp_path: Path, monkeypatch: p
         "name": "demo",
         "call_sign": "demo",
         "status": "running",
+        "setup": "complete",
+        "runtime": "running",
         "persona": "∅",
     }
 
@@ -928,6 +965,8 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
         "name": "alpha",
         "call_sign": "alpha",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "∅",
     }
 
@@ -964,6 +1003,8 @@ def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: 
         "name": "demo",
         "call_sign": "demo",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "research␠analyst↵",
     }
 
@@ -1003,6 +1044,8 @@ def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) ->
         "name": "planner",
         "call_sign": "planner",
         "status": "not-configured",
+        "setup": "complete",
+        "runtime": "stopped",
         "persona": "∅",
     }
     assert (hermes_home / "setup-marker.txt").read_text(encoding="utf-8") == "configured"
@@ -1051,6 +1094,67 @@ def test_agent_setup_passthrough_records_incomplete_setup_state_on_failure(tmp_p
             }
         ]
     }
+
+
+def test_agent_status_shows_setup_and_runtime_state_after_successful_setup(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
+    agent_id = create_agent(tmp_path, "planner")
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    setup = subprocess.run(
+        [sys.executable, "-m", "maia", "agent", "setup", "planner"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert setup.returncode == 0
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "planner",
+        "call_sign": "planner",
+        "status": "not-configured",
+        "setup": "complete",
+        "runtime": "stopped",
+        "persona": "∅",
+    }
+
+
+def test_agent_logs_distinguish_setup_not_done_from_runtime_not_running(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "planner")
+    no_setup_logs = run_module(tmp_path, "agent", "logs", agent_id)
+    assert no_setup_logs.returncode == 1
+    assert no_setup_logs.stderr.strip() == (
+        f"error: Can't show logs for agent {agent_id!r} yet because agent setup is not complete"
+    )
+
+    write_runtime_state(
+        tmp_path,
+        {
+            "runtimes": [
+                {
+                    "agent_id": agent_id,
+                    "runtime_status": "stopped",
+                    "setup_status": "complete",
+                }
+            ]
+        },
+    )
+    runtime_not_running = run_module(tmp_path, "agent", "logs", agent_id)
+    assert runtime_not_running.returncode == 1
+    assert runtime_not_running.stderr.strip() == (
+        f"error: Agent {agent_id!r} is not running right now"
+    )
 
 
 def test_agent_tune_runtime_spec_persists_and_can_clear(tmp_path: Path) -> None:
@@ -1183,6 +1287,86 @@ def test_agent_start_rejects_agent_without_runtime_spec(tmp_path: Path) -> None:
     )
 
 
+def test_agent_start_rejects_agent_when_shared_infra_is_not_ready(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+    SQLiteState(get_state_db_path({"HOME": str(tmp_path)})).set_infra_status(
+        "bootstrap",
+        status="failed",
+        detail="shared infra bootstrap failed",
+    )
+    setup_state = load_runtime_state(tmp_path)
+    setup_state["runtimes"] = [
+        {
+            "agent_id": agent_id,
+            "runtime_status": "stopped",
+            "setup_status": "complete",
+        }
+    ]
+    write_runtime_state(tmp_path, setup_state)
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert started.returncode == 1
+    assert started.stderr.strip() == (
+        f"error: Can't run agent {agent_id!r} yet because shared infra setup is not complete"
+    )
+
+
+def test_agent_start_rejects_agent_when_agent_setup_is_not_complete(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "runtime-demo")
+    SQLiteState(get_state_db_path({"HOME": str(tmp_path)})).set_infra_status(
+        "bootstrap",
+        status="ready",
+        detail="shared infra is ready",
+    )
+    setup_state = load_runtime_state(tmp_path)
+    setup_state["runtimes"] = [
+        {
+            "agent_id": agent_id,
+            "runtime_status": "stopped",
+            "setup_status": "incomplete",
+        }
+    ]
+    write_runtime_state(tmp_path, setup_state)
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert started.returncode == 1
+    assert started.stderr.strip() == (
+        f"error: Can't run agent {agent_id!r} yet because agent setup is incomplete"
+    )
+
+
 def test_agent_start_rejects_agent_with_missing_runtime_workspace(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "runtime-demo")
     registry = load_registry(tmp_path)
@@ -1309,6 +1493,7 @@ def test_agent_runtime_start_status_logs_stop_flow(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1350,6 +1535,8 @@ def test_agent_runtime_start_status_logs_stop_flow(
         "name": "demo",
         "call_sign": "demo",
         "status": "running",
+        "setup": "complete",
+        "runtime": "running",
         "persona": "∅",
     }
 
@@ -1400,6 +1587,7 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
     assert doctor.returncode == 0
 
     agent_id = create_agent(tmp_path, "planner")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1443,6 +1631,8 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
         "name": "planner",
         "call_sign": "planner",
         "status": "stopped",
+        "setup": "complete",
+        "runtime": "stopped",
         "persona": "∅",
     }
 
@@ -1465,6 +1655,7 @@ def test_live_host_runtime_checklist_flow_is_locked(
     assert doctor.returncode == 0
 
     agent_id = create_agent(tmp_path, "smoke")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1507,6 +1698,8 @@ def test_live_host_runtime_checklist_flow_is_locked(
         "name": "smoke",
         "call_sign": "smoke",
         "status": "stopped",
+        "setup": "complete",
+        "runtime": "stopped",
         "persona": "∅",
     }
 
@@ -1573,6 +1766,7 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1605,6 +1799,8 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
         "name": "demo",
         "call_sign": "demo",
         "status": "running",
+        "setup": "complete",
+        "runtime": "running",
         "persona": "∅",
     }
 
@@ -1620,6 +1816,7 @@ def test_agent_status_syncs_registry_to_stopped_when_container_has_exited(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1654,6 +1851,8 @@ def test_agent_status_syncs_registry_to_stopped_when_container_has_exited(
         "name": "demo",
         "call_sign": "demo",
         "status": "stopped",
+        "setup": "complete",
+        "runtime": "stopped",
         "persona": "∅",
     }
     assert load_registry(tmp_path)["agents"][0]["status"] == "stopped"
@@ -1670,6 +1869,7 @@ def test_agent_logs_syncs_registry_to_stopped_when_container_has_exited(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1721,6 +1921,7 @@ def test_agent_start_recovers_when_registry_says_running_but_runtime_is_stopped(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1764,6 +1965,7 @@ def test_agent_start_recovers_when_registry_says_running_but_runtime_is_stopped(
 
 def test_runtime_commands_require_active_runtime_state(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
 
     stopped = run_module(tmp_path, "agent", "stop", agent_id)
     assert stopped.returncode == 1
@@ -1786,6 +1988,7 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1814,7 +2017,15 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
     assert status.stderr.strip() == (
         f"error: Maia found an old saved runtime record for agent '{agent_id}', but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
-    assert load_runtime_state(tmp_path) == {"runtimes": []}
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": agent_id,
+                "runtime_status": "stopped",
+                "setup_status": "complete",
+            }
+        ]
+    }
 
     status_after = run_module(tmp_path, "agent", "status", agent_id)
     assert status_after.returncode == 0
@@ -1829,7 +2040,15 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
     assert logs.stderr.strip() == (
         f"error: Maia found an old saved runtime record for agent '{agent_id}', but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
-    assert load_runtime_state(tmp_path) == {"runtimes": []}
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": agent_id,
+                "runtime_status": "stopped",
+                "setup_status": "complete",
+            }
+        ]
+    }
 
 
 def test_runtime_commands_reject_running_agent_with_missing_runtime_state(
@@ -1843,6 +2062,7 @@ def test_runtime_commands_reject_running_agent_with_missing_runtime_state(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1910,6 +2130,7 @@ def test_agent_purge_removes_runtime_state(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
         "agent",
@@ -1973,6 +2194,7 @@ def test_import_prunes_dangling_runtime_state(
         "MAIA_ENV=test",
     )
     assert tuned.returncode == 0
+    mark_runtime_start_ready(dest_home, dest_agent)
     started = run_module(dest_home, "agent", "start", dest_agent)
     assert started.returncode == 0
 
@@ -2028,6 +2250,7 @@ def test_import_clears_runtime_state_even_for_surviving_agent_ids(
         "MAIA_ENV=test",
     )
     assert tuned.returncode == 0
+    mark_runtime_start_ready(home, agent_id)
     started = run_module(home, "agent", "start", agent_id)
     assert started.returncode == 0
     assert load_runtime_state(home)["runtimes"]
@@ -2278,6 +2501,8 @@ def test_v1_golden_flow_smoke_contract(
         "name": "planner",
         "call_sign": "planner",
         "status": "running",
+        "setup": "complete",
+        "runtime": "running",
         "persona": "∅",
     }
 
@@ -2340,7 +2565,7 @@ def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
     remaining_after_status = load_runtime_state(tmp_path)
     assert {
         runtime["agent_id"] for runtime in remaining_after_status["runtimes"]
-    } == {flow["reviewer_id"]}
+    } == {flow["planner_id"], flow["reviewer_id"]}
 
     logs = run_module(tmp_path, "agent", "logs", flow["reviewer_id"])
     assert logs.returncode == 1
@@ -2348,7 +2573,17 @@ def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
         f"error: Maia found an old saved runtime record for agent '{flow['reviewer_id']}', "
         "but the container is gone. The saved record was cleared. Start the agent again if you still need it"
     )
-    assert load_runtime_state(tmp_path) == {"runtimes": []}
+    assert {
+        (
+            runtime["agent_id"],
+            runtime["runtime_status"],
+            runtime["setup_status"],
+        )
+        for runtime in load_runtime_state(tmp_path)["runtimes"]
+    } == {
+        (flow["planner_id"], "stopped", "complete"),
+        (flow["reviewer_id"], "stopped", "complete"),
+    }
 
 
 def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
@@ -2774,6 +3009,8 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
         "name": "demo",
         "call_sign": "demo",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "analyst",
     }
     assert load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)})).default_agent_id == agent_id
@@ -3208,6 +3445,8 @@ def test_import_accepts_scope_version_1_and_2_manifests(
         "name": f"legacy-{scope_version}",
         "call_sign": f"legacy-{scope_version}",
         "status": "not-configured",
+        "setup": "not-started",
+        "runtime": "stopped",
         "persona": "∅",
     }
 

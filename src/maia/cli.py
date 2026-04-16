@@ -42,6 +42,7 @@ from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 from maia.rabbitmq_broker import RabbitMQBroker
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
+from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
 from maia.team_metadata import TeamMetadata, load_team_metadata, save_team_metadata
 
@@ -344,8 +345,9 @@ def _handle_agent_new(
 
 
 def _handle_agent_list(registry) -> int:
+    runtime_states = RuntimeStateStorage().load(get_state_db_path())
     for record in registry.list():
-        print(_format_record(record))
+        print(_format_record(record, runtime_state=runtime_states.get(record.agent_id)))
     return 0
 
 
@@ -1025,6 +1027,12 @@ def _workspace_context_unavailable_error(agent_id: str, detail: str) -> ValueErr
 
 def _agent_runtime_unavailable_error(agent_id: str, detail: str) -> ValueError:
     message = {
+        "shared infra setup is not complete": (
+            f"Can't run agent {agent_id!r} yet because shared infra setup is not complete"
+        ),
+        "agent setup is not complete": (
+            f"Can't run agent {agent_id!r} yet because agent setup is incomplete"
+        ),
         "runtime spec is not configured": (
             f"Can't run agent {agent_id!r} yet because runtime setup is missing"
         ),
@@ -1055,6 +1063,14 @@ def _agent_runtime_not_running_error(agent_id: str) -> ValueError:
     return ValueError(f"Agent {agent_id!r} is not running right now")
 
 
+def _agent_logs_unavailable_error(agent_id: str, detail: str) -> ValueError:
+    if detail == "agent setup is not complete":
+        return ValueError(
+            f"Can't show logs for agent {agent_id!r} yet because agent setup is not complete"
+        )
+    return _agent_runtime_unavailable_error(agent_id, detail)
+
+
 def _stale_runtime_state_cleared_error(agent_id: str) -> ValueError:
     return ValueError(
         f"Maia found an old saved runtime record for agent {agent_id!r}, but the container is gone. "
@@ -1079,6 +1095,23 @@ def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
     runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(record.agent_id)
     if runtime_state is None and record.status is AgentStatus.RUNNING:
         raise _agent_runtime_unavailable_error(record.agent_id, "local runtime state is missing")
+    return runtime_state
+
+
+def _require_shared_infra_ready(agent_id: str) -> None:
+    bootstrap = SQLiteState(get_state_db_path()).get_infra_status("bootstrap")
+    if bootstrap is None or bootstrap["status"] != "ready":
+        raise _agent_runtime_unavailable_error(agent_id, "shared infra setup is not complete")
+
+
+def _require_agent_setup_complete(
+    record: AgentRecord,
+    runtime_state: RuntimeState | None,
+    *,
+    error_factory: Callable[[str, str], ValueError] = _agent_runtime_unavailable_error,
+) -> RuntimeState:
+    if runtime_state is None or runtime_state.setup_status != "complete":
+        raise error_factory(record.agent_id, "agent setup is not complete")
     return runtime_state
 
 
@@ -1800,6 +1833,7 @@ def _handle_agent_status(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     record = registry.get(args.agent_id)
+    stored_runtime_state = _load_runtime_state_for_agent(record)
     try:
         runtime_state = _resolve_runtime_state_for_status(record, runtime_adapter)
     except ValueError as exc:
@@ -1808,7 +1842,7 @@ def _handle_agent_status(
             raise _stale_runtime_state_cleared_error(args.agent_id) from exc
         raise
     record = _sync_registry_status_from_runtime_state(record, runtime_state, storage, registry_path, registry)
-    print(_format_agent_status(record, runtime_state))
+    print(_format_agent_status(record, runtime_state, stored_runtime_state=stored_runtime_state))
     return 0
 
 
@@ -1835,6 +1869,8 @@ def _handle_agent_start(
         record,
         error_factory=_agent_runtime_unavailable_error,
     )
+    _require_shared_infra_ready(args.agent_id)
+    _require_agent_setup_complete(record, stored_runtime_state)
     if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
         raise _agent_runtime_already_active_error(args.agent_id)
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
@@ -1886,7 +1922,12 @@ def _handle_agent_logs(
 ) -> int:
     record = registry.get(args.agent_id)
     stored_runtime_state = _load_runtime_state_for_agent(record)
-    if stored_runtime_state is None or stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
+    _require_agent_setup_complete(
+        record,
+        stored_runtime_state,
+        error_factory=_agent_logs_unavailable_error,
+    )
+    if stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
         raise _agent_runtime_not_running_error(args.agent_id)
     try:
         logs_result = runtime_adapter.logs(
@@ -1936,7 +1977,19 @@ def _clear_stale_runtime_state(
     registry_path: str,
     registry,
 ) -> None:
-    RuntimeStateStorage().remove(get_state_db_path(), agent_id)
+    state_storage = RuntimeStateStorage()
+    states = state_storage.load(get_state_db_path())
+    existing = states.get(agent_id)
+    if existing is None:
+        state_storage.remove(get_state_db_path(), agent_id)
+    else:
+        states[agent_id] = RuntimeState(
+            agent_id=agent_id,
+            runtime_status=RuntimeStatus.STOPPED,
+            runtime_handle=None,
+            setup_status=existing.setup_status,
+        )
+        state_storage.save(get_state_db_path(), states)
     record = registry.get(agent_id)
     if record.status is AgentStatus.RUNNING:
         registry.set_status(agent_id, AgentStatus.STOPPED)
@@ -2013,21 +2066,21 @@ def _handle_agent_purge(
     return 0
 
 
-def _format_record(record: AgentRecord) -> str:
+def _format_record(record: AgentRecord, *, runtime_state: RuntimeState | None = None) -> str:
     return (
         f"agent_id={record.agent_id} "
         f"name={_format_preview_value(record.name)} "
         f"call_sign={_format_preview_value(record.call_sign)} "
-        f"status={_derive_operator_status(record)}"
+        f"status={_derive_operator_status(record, runtime_state=runtime_state)}"
     )
 
 
-def _derive_operator_status(record: AgentRecord) -> str:
+def _derive_operator_status(record: AgentRecord, runtime_state: RuntimeState | None = None) -> str:
     if record.status is AgentStatus.ARCHIVED:
         return AgentStatus.ARCHIVED.value
     if record.status is AgentStatus.RUNNING:
         return AgentStatus.RUNNING.value
-    if record.setup_status is AgentSetupStatus.CONFIGURED:
+    if record.setup_status is AgentSetupStatus.CONFIGURED and _derive_setup_state(runtime_state) == "complete":
         return AgentStatus.STOPPED.value if record.has_started else "ready"
     return AgentSetupStatus.NOT_CONFIGURED.value
 
@@ -2046,15 +2099,28 @@ def _resolve_agent_reference(registry, value: str) -> str:
         raise
 
 
-def _format_agent_status(record: AgentRecord, runtime_state: RuntimeState) -> str:
-    _ = runtime_state
+def _format_agent_status(
+    record: AgentRecord,
+    runtime_state: RuntimeState,
+    *,
+    stored_runtime_state: RuntimeState | None = None,
+) -> str:
+    setup_state = _derive_setup_state(stored_runtime_state)
     return (
         f"agent_id={record.agent_id} "
         f"name={_format_preview_value(record.name)} "
         f"call_sign={_format_preview_value(record.call_sign)} "
-        f"status={_derive_operator_status(record)} "
+        f"status={_derive_operator_status(record, runtime_state=stored_runtime_state)} "
+        f"setup={setup_state} "
+        f"runtime={runtime_state.runtime_status.value} "
         f"persona={_format_preview_value(record.persona)}"
     )
+
+
+def _derive_setup_state(runtime_state: RuntimeState | None) -> str:
+    if runtime_state is None or runtime_state.setup_status is None:
+        return "not-started"
+    return runtime_state.setup_status
 
 
 def _format_agent_tune_result(record: AgentRecord, updates: dict[str, object]) -> str:

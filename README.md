@@ -21,8 +21,9 @@ maia agent stop planner
 - `maia setup`: bootstrap shared infra only.
 - `maia agent new <name>`: create an agent identity record with persona + call-sign defaults and `not-configured` setup state.
 - `maia agent setup <name>`: open `hermes setup` for that agent.
-- `maia agent start|stop|status|logs <name>`: operate that agent after setup.
+- `maia agent start|stop|status|logs <name>`: operate that agent after shared infra, agent setup, and runtime config are ready.
 - `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
+- `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
 - A successful `maia agent setup` is recorded separately; the operator-facing state stays `not-configured` until runtime config exists.
 
 ## Known limitations
