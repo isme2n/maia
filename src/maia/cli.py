@@ -13,7 +13,7 @@ import sys
 import uuid
 from urllib.parse import quote
 
-from maia.agent_model import AgentRecord, AgentStatus
+from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus
 from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
     get_default_export_path,
@@ -284,7 +284,9 @@ def _handle_agent_new(
     record = AgentRecord(
         agent_id=uuid.uuid4().hex[:8],
         name=args.name,
+        call_sign=args.name,
         status=AgentStatus.STOPPED,
+        setup_status=AgentSetupStatus.NOT_CONFIGURED,
         persona="",
         role="",
         model="",
@@ -1791,6 +1793,7 @@ def _handle_agent_start(
     if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
         raise _agent_runtime_already_active_error(args.agent_id)
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
+    registry.set_has_started(args.agent_id, True)
     updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
     storage.save(registry_path, registry)
     print(
@@ -1967,8 +1970,19 @@ def _format_record(record: AgentRecord) -> str:
     return (
         f"agent_id={record.agent_id} "
         f"name={_format_preview_value(record.name)} "
-        f"status={record.status.value}"
+        f"call_sign={_format_preview_value(record.call_sign)} "
+        f"status={_derive_operator_status(record)}"
     )
+
+
+def _derive_operator_status(record: AgentRecord) -> str:
+    if record.status is AgentStatus.ARCHIVED:
+        return AgentStatus.ARCHIVED.value
+    if record.status is AgentStatus.RUNNING:
+        return AgentStatus.RUNNING.value
+    if record.setup_status is AgentSetupStatus.CONFIGURED:
+        return AgentStatus.STOPPED.value if record.has_started else "ready"
+    return AgentSetupStatus.NOT_CONFIGURED.value
 
 
 def _resolve_agent_reference(registry, value: str) -> str:
@@ -1986,19 +2000,13 @@ def _resolve_agent_reference(registry, value: str) -> str:
 
 
 def _format_agent_status(record: AgentRecord, runtime_state: RuntimeState) -> str:
-    runtime_handle = (
-        _format_preview_value(runtime_state.runtime_handle)
-        if runtime_state.runtime_handle is not None
-        else "-"
-    )
+    _ = runtime_state
     return (
-        f"{_format_record(record)} "
-        f"persona={_format_preview_value(record.persona)} "
-        f"role={_format_preview_value(record.role)} "
-        f"model={_format_preview_value(record.model)} "
-        f"tags={_format_encoded_list_or_dash(record.tags)} "
-        f"runtime_status={runtime_state.runtime_status.value} "
-        f"runtime_handle={runtime_handle}"
+        f"agent_id={record.agent_id} "
+        f"name={_format_preview_value(record.name)} "
+        f"call_sign={_format_preview_value(record.call_sign)} "
+        f"status={_derive_operator_status(record)} "
+        f"persona={_format_preview_value(record.persona)}"
     )
 
 

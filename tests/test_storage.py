@@ -294,6 +294,7 @@ def test_json_registry_storage_local_save_preserves_runtime_fields(tmp_path: Pat
                 "name": "planner",
                 "status": "stopped",
                 "persona": "careful",
+                "setup_status": "configured",
                 "runtime_spec": {
                     "image": "ghcr.io/example/planner:latest",
                     "workspace": "/workspace",

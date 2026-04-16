@@ -703,7 +703,9 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
     listed = run_module(tmp_path, "agent", "list")
     assert listed.returncode == 0
     assert listed.stderr == ""
-    assert listed.stdout.strip() == f"agent_id={agent_id} name=demo status=stopped"
+    assert listed.stdout.strip() == (
+        f"agent_id={agent_id} name=demo call_sign=demo status=not-configured"
+    )
 
     before = run_module(tmp_path, "agent", "status", agent_id)
     assert before.returncode == 0
@@ -711,13 +713,9 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
     assert parse_fields(before.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
-        "status": "stopped",
+        "call_sign": "demo",
+        "status": "not-configured",
         "persona": "∅",
-        "role": "∅",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "stopped",
-        "runtime_handle": "-",
     }
 
     tuned = run_module(
@@ -750,13 +748,9 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
     assert parse_fields(after.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
-        "status": "stopped",
+        "call_sign": "demo",
+        "status": "not-configured",
         "persona": "nightwatch",
-        "role": "researcher",
-        "model": "gpt-5",
-        "tags": "runtime,focus",
-        "runtime_status": "stopped",
-        "runtime_handle": "-",
     }
 
     assert load_registry(tmp_path) == {
@@ -771,6 +765,85 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
                 "tags": ["runtime", "focus"],
             }
         ]
+    }
+
+
+def test_agent_status_reports_ready_after_runtime_configuration(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert listed.stdout.strip() == (
+        f"agent_id={agent_id} name=demo call_sign=demo status=ready"
+    )
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "call_sign": "demo",
+        "status": "ready",
+        "persona": "∅",
+    }
+
+
+def test_agent_status_reports_running_after_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "demo",
+        "call_sign": "demo",
+        "status": "running",
+        "persona": "∅",
     }
 
 
@@ -823,10 +896,23 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
 
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 0
-    fields = parse_fields(status.stdout.strip())
-    assert fields["role"] == "∅"
-    assert fields["model"] == "∅"
-    assert fields["tags"] == "-"
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "alpha",
+        "call_sign": "alpha",
+        "status": "not-configured",
+        "persona": "∅",
+    }
+
+    registry = load_registry(tmp_path)
+    assert registry["agents"] == [
+        {
+            "agent_id": agent_id,
+            "name": "alpha",
+            "status": "stopped",
+            "persona": "",
+        }
+    ]
 
 
 
@@ -849,13 +935,9 @@ def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: 
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
-        "status": "stopped",
+        "call_sign": "demo",
+        "status": "not-configured",
         "persona": "research␠analyst↵",
-        "role": "∅",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "stopped",
-        "runtime_handle": "-",
     }
 
 
@@ -1154,13 +1236,9 @@ def test_agent_runtime_start_status_logs_stop_flow(
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
+        "call_sign": "demo",
         "status": "running",
         "persona": "∅",
-        "role": "∅",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "running",
-        "runtime_handle": "runtime-001",
     }
 
     logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "1")
@@ -1248,9 +1326,13 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
     assert stopped.returncode == 0
     status_stopped = run_module(tmp_path, "agent", "status", agent_id)
     assert status_stopped.returncode == 0
-    stopped_fields = parse_fields(status_stopped.stdout.strip())
-    assert stopped_fields["status"] == "stopped"
-    assert stopped_fields["runtime_status"] == "stopped"
+    assert parse_fields(status_stopped.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "planner",
+        "call_sign": "planner",
+        "status": "stopped",
+        "persona": "∅",
+    }
 
 
 def test_live_host_runtime_checklist_flow_is_locked(
@@ -1308,9 +1390,13 @@ def test_live_host_runtime_checklist_flow_is_locked(
 
     status_after_stop = run_module(tmp_path, "agent", "status", agent_id)
     assert status_after_stop.returncode == 0
-    after_stop_fields = parse_fields(status_after_stop.stdout.strip())
-    assert after_stop_fields["status"] == "stopped"
-    assert after_stop_fields["runtime_status"] == "stopped"
+    assert parse_fields(status_after_stop.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "smoke",
+        "call_sign": "smoke",
+        "status": "stopped",
+        "persona": "∅",
+    }
 
 
 def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
@@ -1405,13 +1491,9 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
+        "call_sign": "demo",
         "status": "running",
         "persona": "∅",
-        "role": "∅",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "running",
-        "runtime_handle": "runtime-001",
     }
 
 
@@ -1458,13 +1540,9 @@ def test_agent_status_syncs_registry_to_stopped_when_container_has_exited(
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
+        "call_sign": "demo",
         "status": "stopped",
         "persona": "∅",
-        "role": "∅",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "stopped",
-        "runtime_handle": "runtime-001",
     }
     assert load_registry(tmp_path)["agents"][0]["status"] == "stopped"
 
@@ -2086,13 +2164,9 @@ def test_v1_golden_flow_smoke_contract(
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": planner_id,
         "name": "planner",
+        "call_sign": "planner",
         "status": "running",
         "persona": "∅",
-        "role": "planner",
-        "model": "∅",
-        "tags": "-",
-        "runtime_status": "running",
-        "runtime_handle": "runtime-001",
     }
 
     logs = run_module(tmp_path, "agent", "logs", planner_id, "--tail-lines", "2")
@@ -2586,13 +2660,9 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
     assert parse_fields(status.stdout.strip()) == {
         "agent_id": agent_id,
         "name": "demo",
-        "status": "stopped",
+        "call_sign": "demo",
+        "status": "not-configured",
         "persona": "analyst",
-        "role": "reviewer",
-        "model": "gpt-5",
-        "tags": "qa,ops",
-        "runtime_status": "stopped",
-        "runtime_handle": "-",
     }
     assert load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)})).default_agent_id == agent_id
 
@@ -3021,10 +3091,26 @@ def test_import_accepts_scope_version_1_and_2_manifests(
 
     status = run_module(dest_home, "agent", "status", agent_id)
     assert status.returncode == 0
-    fields = parse_fields(status.stdout.strip())
-    assert fields["role"] == "legacy-role"
-    assert fields["model"] == "legacy-model"
-    assert fields["tags"] == f"legacy,v{scope_version}"
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": f"legacy-{scope_version}",
+        "call_sign": f"legacy-{scope_version}",
+        "status": "not-configured",
+        "persona": "∅",
+    }
+
+    registry = load_registry(dest_home)
+    assert registry["agents"] == [
+        {
+            "agent_id": agent_id,
+            "name": f"legacy-{scope_version}",
+            "status": "stopped",
+            "persona": "",
+            "role": "legacy-role",
+            "model": "legacy-model",
+            "tags": ["legacy", f"v{scope_version}"],
+        }
+    ]
 
     metadata = load_team_metadata(get_team_metadata_path({"HOME": str(dest_home)}))
     if expect_team_metadata:

@@ -10,7 +10,7 @@ from typing import Any, Self
 
 from maia.runtime_spec import RuntimeSpec
 
-__all__ = ["AgentRecord", "AgentStatus"]
+__all__ = ["AgentRecord", "AgentSetupStatus", "AgentStatus"]
 
 
 def _coerce_agent_status(value: object) -> "AgentStatus":
@@ -32,6 +32,12 @@ def _validate_agent_tags(value: object) -> list[str]:
     ):
         raise ValueError("Invalid agent tags: expected list of non-empty strings")
     return list(value)
+
+
+def _validate_agent_bool(value: object, *, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"Invalid agent {field_name}: expected bool")
+    return value
 
 
 def _normalize_agent_runtime_spec(value: object) -> RuntimeSpec | None:
@@ -67,14 +73,31 @@ class AgentStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class AgentSetupStatus(str, Enum):
+    """Setup readiness states for an agent identity."""
+
+    NOT_CONFIGURED = "not-configured"
+    CONFIGURED = "configured"
+
+
+def _coerce_agent_setup_status(value: object) -> "AgentSetupStatus":
+    try:
+        return value if isinstance(value, AgentSetupStatus) else AgentSetupStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid agent setup status: {value!r}") from exc
+
+
 @dataclass(slots=True)
 class AgentRecord:
     """Minimal agent identity and configuration snapshot."""
 
     agent_id: str
     name: str
-    status: AgentStatus
-    persona: str
+    call_sign: str = ""
+    status: AgentStatus = AgentStatus.STOPPED
+    setup_status: AgentSetupStatus = AgentSetupStatus.NOT_CONFIGURED
+    has_started: bool = False
+    persona: str = ""
     role: str = ""
     model: str = ""
     tags: list[str] = field(default_factory=list)
@@ -86,12 +109,20 @@ class AgentRecord:
 
         self.agent_id = _validate_agent_str(self.agent_id, field_name="agent_id")
         self.name = _validate_agent_str(self.name, field_name="name")
+        self.call_sign = _validate_agent_str(
+            self.call_sign or self.name,
+            field_name="call_sign",
+        )
         self.status = _coerce_agent_status(self.status)
+        self.setup_status = _coerce_agent_setup_status(self.setup_status)
+        self.has_started = _validate_agent_bool(self.has_started, field_name="has_started")
         self.persona = _validate_agent_str(self.persona, field_name="persona")
         self.role = _validate_agent_str(self.role, field_name="role")
         self.model = _validate_agent_str(self.model, field_name="model")
         self.tags = _validate_agent_tags(self.tags)
         self.runtime_spec = _normalize_agent_runtime_spec(self.runtime_spec)
+        if self.runtime_spec is not None and self.setup_status is AgentSetupStatus.NOT_CONFIGURED:
+            self.setup_status = AgentSetupStatus.CONFIGURED
         self.messaging_spec = _normalize_agent_messaging_spec(self.messaging_spec)
 
     def __copy__(self) -> Self:
@@ -100,7 +131,10 @@ class AgentRecord:
         return type(self)(
             agent_id=self.agent_id,
             name=self.name,
+            call_sign=self.call_sign,
             status=self.status,
+            setup_status=self.setup_status,
+            has_started=self.has_started,
             persona=self.persona,
             role=self.role,
             model=self.model,
@@ -118,6 +152,12 @@ class AgentRecord:
             "status": self.status.value,
             "persona": self.persona,
         }
+        if self.call_sign != self.name:
+            payload["call_sign"] = self.call_sign
+        if self.setup_status is not AgentSetupStatus.NOT_CONFIGURED:
+            payload["setup_status"] = self.setup_status.value
+        if self.has_started:
+            payload["has_started"] = True
         if self.role:
             payload["role"] = self.role
         if self.model:
@@ -139,11 +179,21 @@ class AgentRecord:
         tags = _validate_agent_tags(data.get("tags", []))
         runtime_spec = _normalize_agent_runtime_spec(data.get("runtime_spec"))
         messaging_spec = _normalize_agent_messaging_spec(data.get("messaging_spec"))
+        setup_status = data.get("setup_status")
+        if setup_status is None:
+            setup_status = (
+                AgentSetupStatus.CONFIGURED.value
+                if runtime_spec is not None
+                else AgentSetupStatus.NOT_CONFIGURED.value
+            )
 
         return cls(
             agent_id=data["agent_id"],
             name=data["name"],
+            call_sign=data.get("call_sign", data["name"]),
             status=data["status"],
+            setup_status=setup_status,
+            has_started=data.get("has_started", False),
             persona=data["persona"],
             role=role,
             model=model,

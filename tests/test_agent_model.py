@@ -86,6 +86,7 @@ def test_agent_record_round_trip_with_runtime_and_messaging_spec() -> None:
         "name": "runner",
         "status": "running",
         "persona": "careful",
+        "setup_status": "configured",
         "role": "executor",
         "model": "gpt-5.4",
         "tags": ["runtime", "queue"],
@@ -116,6 +117,39 @@ def test_agent_record_from_dict_accepts_legacy_shape_without_extension_fields() 
         persona="",
     )
     assert restored.to_dict() == payload
+
+
+def test_agent_record_from_dict_infers_configured_setup_for_legacy_runtime_spec() -> None:
+    payload = {
+        "agent_id": "agent-005b",
+        "name": "legacy-runtime",
+        "status": "stopped",
+        "persona": "",
+        "runtime_spec": {
+            "image": "ghcr.io/example/legacy:latest",
+            "workspace": "/workspace/legacy",
+            "command": ["python", "-m", "legacy"],
+            "env": {"MAIA_ENV": "test"},
+        },
+    }
+
+    restored = AgentRecord.from_dict(payload)
+
+    assert restored.setup_status.value == "configured"
+    assert restored.has_started is False
+    assert restored.to_dict() == {
+        "agent_id": "agent-005b",
+        "name": "legacy-runtime",
+        "status": "stopped",
+        "persona": "",
+        "setup_status": "configured",
+        "runtime_spec": {
+            "image": "ghcr.io/example/legacy:latest",
+            "workspace": "/workspace/legacy",
+            "command": ["python", "-m", "legacy"],
+            "env": {"MAIA_ENV": "test"},
+        },
+    }
 
 
 def test_agent_record_from_dict_accepts_extension_profile_fields_when_present() -> None:
@@ -312,6 +346,7 @@ def test_agent_record_direct_construction_accepts_serialized_extension_fields() 
         "name": "runner",
         "status": "running",
         "persona": "fast",
+        "setup_status": "configured",
         "role": "executor",
         "model": "gpt-5.4",
         "tags": ["runtime", "queue"],
@@ -361,6 +396,7 @@ def test_agent_record_direct_construction_accepts_valid_runtime_spec_instance() 
         "name": "runner",
         "status": "running",
         "persona": "fast",
+        "setup_status": "configured",
         "runtime_spec": {
             "image": "ghcr.io/example/runner:latest",
             "workspace": "/workspaces/runner",

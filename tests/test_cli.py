@@ -119,6 +119,8 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "maia agent stop planner" in text
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
+    assert "persona + call-sign defaults" in text
+    assert "not-configured`, `ready`, or `running`" in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text

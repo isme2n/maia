@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from maia.agent_model import AgentRecord, AgentStatus, RuntimeSpec
+from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus, RuntimeSpec
 
 __all__ = ["AgentRegistry"]
 
@@ -51,6 +51,14 @@ class AgentRegistry:
         self._records[agent_id] = updated
         return _clone_record(updated)
 
+    def set_has_started(self, agent_id: str, has_started: bool) -> AgentRecord:
+        """Update whether the agent has started before and return the new value."""
+
+        record = self._require(agent_id)
+        updated = replace(record, has_started=has_started)
+        self._records[agent_id] = updated
+        return _clone_record(updated)
+
     def set_profile_metadata(
         self,
         agent_id: str,
@@ -79,7 +87,16 @@ class AgentRegistry:
         """Replace the runtime spec for an existing record and return the new value."""
 
         record = self._require(agent_id)
-        updated = replace(record, runtime_spec=runtime_spec)
+        updated = replace(
+            record,
+            runtime_spec=runtime_spec,
+            setup_status=(
+                AgentSetupStatus.CONFIGURED
+                if runtime_spec is not None
+                else AgentSetupStatus.NOT_CONFIGURED
+            ),
+            has_started=(record.has_started if runtime_spec == record.runtime_spec else False),
+        )
         self._records[agent_id] = updated
         return _clone_record(updated)
 

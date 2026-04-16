@@ -19,9 +19,10 @@ maia agent stop planner
 ## What each command means
 - `maia doctor`: check shared infra readiness only: Docker, queue, and DB.
 - `maia setup`: bootstrap shared infra only.
-- `maia agent new <name>`: create an agent identity record.
+- `maia agent new <name>`: create an agent identity record with persona + call-sign defaults and `not-configured` setup state.
 - `maia agent setup <name>`: open `hermes setup` for that agent.
 - `maia agent start|stop|status|logs <name>`: operate that agent after setup.
+- `maia agent list|status` surface the operator-facing state as `not-configured`, `ready`, or `running`.
 
 ## Known limitations
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
