@@ -1201,6 +1201,113 @@ def test_merge_broker_inbox_messages_preserves_thread_topic(tmp_path: Path) -> N
     assert merged.threads[0].topic == "review handoff"
 
 
+def test_merge_broker_inbox_messages_updates_existing_thread_metadata(tmp_path: Path) -> None:
+    storage = CollaborationStorage()
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    storage.save(
+        collaboration_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-001",
+                topic="",
+                participants=["planner-id"],
+                created_by="planner-id",
+                status="open",
+                created_at="2026-04-15T11:00:00Z",
+                updated_at="2026-04-15T11:00:00Z",
+            )
+        ],
+        messages=[],
+    )
+    collaboration = storage.load(collaboration_path)
+
+    merged = cli_module._merge_broker_inbox_messages(
+        storage,
+        collaboration_path,
+        collaboration,
+        [
+            (
+                BrokerMessageEnvelope(
+                    message=MessageRecord(
+                        message_id="msg-001",
+                        thread_id="thread-001",
+                        from_agent="planner-id",
+                        to_agent="reviewer-id",
+                        kind=MessageKind.REQUEST,
+                        body="broker delivery",
+                        created_at="2026-04-15T12:00:00Z",
+                    ),
+                    receipt_handle="42",
+                    delivery_attempt=1,
+                ),
+                {"thread_topic": "review handoff"},
+            )
+        ],
+    )
+
+    assert merged.threads[0].topic == "review handoff"
+    assert merged.threads[0].participants == ["planner-id", "reviewer-id"]
+    assert merged.threads[0].updated_at == "2026-04-15T12:00:00Z"
+
+
+def test_merge_broker_inbox_messages_dedupes_existing_message(tmp_path: Path) -> None:
+    storage = CollaborationStorage()
+    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
+    storage.save(
+        collaboration_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-001",
+                topic="review handoff",
+                participants=["planner-id", "reviewer-id"],
+                created_by="planner-id",
+                status="open",
+                created_at="2026-04-15T11:00:00Z",
+                updated_at="2026-04-15T12:00:00Z",
+            )
+        ],
+        messages=[
+            MessageRecord(
+                message_id="msg-001",
+                thread_id="thread-001",
+                from_agent="planner-id",
+                to_agent="reviewer-id",
+                kind=MessageKind.REQUEST,
+                body="broker delivery",
+                created_at="2026-04-15T12:00:00Z",
+            )
+        ],
+    )
+    collaboration = storage.load(collaboration_path)
+
+    merged = cli_module._merge_broker_inbox_messages(
+        storage,
+        collaboration_path,
+        collaboration,
+        [
+            (
+                BrokerMessageEnvelope(
+                    message=MessageRecord(
+                        message_id="msg-001",
+                        thread_id="thread-001",
+                        from_agent="planner-id",
+                        to_agent="reviewer-id",
+                        kind=MessageKind.REQUEST,
+                        body="broker delivery",
+                        created_at="2026-04-15T12:00:00Z",
+                    ),
+                    receipt_handle="42",
+                    delivery_attempt=2,
+                ),
+                {"thread_topic": "review handoff"},
+            )
+        ],
+    )
+
+    assert len(merged.messages) == 1
+    assert merged.messages[0].message_id == "msg-001"
+
+
 def test_send_does_not_persist_metadata_when_broker_publish_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1309,7 +1416,7 @@ def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
                     to_agent=analyst_id,
                     kind=MessageKind.NOTE,
                     body="loop analyst in",
-                    created_at="2026-04-15T12:01:00Z",
+                    created_at="2099-04-15T12:01:00Z",
                 ),
                 receipt_handle="43",
                 delivery_attempt=1,
@@ -1319,6 +1426,17 @@ def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
 
     assert main(["inbox", analyst_id]) == 0
     capsys.readouterr()
+    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
+    merged_thread = next(thread for thread in collaboration.threads if thread.thread_id == thread_id)
+    assert merged_thread.participants == [planner_id, reviewer_id, analyst_id]
+    assert merged_thread.updated_at == "2099-04-15T12:01:00Z"
+
+    assert main(["thread", "show", thread_id]) == 0
+    show_lines = capsys.readouterr().out.strip().splitlines()
+    show_fields = _parse_fields(show_lines[0])
+    assert show_fields["participants"] == f"{planner_id},{reviewer_id},{analyst_id}"
+    assert show_fields["pending_on"] == analyst_id
+
     fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
     fake_broker.closed = False
 
