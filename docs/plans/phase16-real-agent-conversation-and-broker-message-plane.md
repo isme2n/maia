@@ -51,12 +51,17 @@
 ---
 
 ## Recommended task breakdown
-1. Task 109 — Part 2 contract and public surface lock
-2. Task 110 — broker delivery semantics and inbox ack policy hardening
-3. Task 111 — broker pull merge into local collaboration cache/thread state
-4. Task 112 — running-agent multi-turn conversation regression flow
-5. Task 113 — operator visibility for pending threads and recent handoffs
-6. Task 114 — Part 2 docs/help/tests closeout
+1. [x] Task 109 — Part 2 contract and public surface lock
+2. [x] Task 110 — broker delivery semantics and inbox ack policy hardening
+3. [x] Task 111 — broker pull merge into local collaboration cache/thread state
+4. [x] Task 112 — running-agent multi-turn conversation regression flow
+5. [x] Task 113 — operator visibility for pending threads and recent handoffs
+6. [x] Task 114 — Part 2 docs/help/tests closeout
+
+## Part 2 closeout status
+- Status: complete
+- Closeout summary: running agents now exchange multi-turn broker-backed messages, Maia exposes thread/handoff/workspace visibility plus runtime follow-through, and the public docs/help/tests tell the same operator story.
+- Reviewer bar: targeted tests + full verify + reviewer approve + clean worktree
 
 ---
 

@@ -70,6 +70,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - Maia는 control plane과 visibility surface를 제공하고, live delivery는 broker/message plane이 담당한다.
 - `send` / `reply` / `inbox`는 Part 2에서 debug/diagnostic/operator check surface로 남을 수 있지만 제품 정체성이 되면 안 된다.
 - `thread` / `handoff` / `workspace`는 open collaboration visibility surface로 남는다.
+- public operator visibility flow는 `thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs` 순서로 닫는다.
 
 ## Success criteria for this contract lock
 - README/help/tests/plan이 같은 public flow를 말한다.
@@ -78,3 +79,9 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - messaging commands are removed from public golden flow examples.
 - `agent setup` is described as an interactive CLI-only passthrough to `hermes setup`.
 - Part 2 is described as real broker-backed agent conversation, not a CLI messenger product.
+
+## Part 2 completion criteria
+- running agent 두 개 이상이 broker를 통해 multi-turn message exchange를 한다.
+- Maia는 `thread`, `handoff`, `workspace`, `agent status`, `agent logs`를 하나의 operator visibility story로 보여준다.
+- operator는 `thread list`와 `thread show`에서 pending thread, recent handoff, participant runtime 상태를 직접 볼 수 있다.
+- README/help/tests/roadmap/phase plan이 같은 Part 2 closeout story를 말한다.

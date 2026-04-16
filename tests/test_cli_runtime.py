@@ -2729,6 +2729,31 @@ def test_v1_golden_flow_smoke_contract(
     assert parse_fields(log_lines[2]) == {"line": "line␠2"}
 
 
+def test_v1_golden_flow_visibility_path_closes_part2_operator_story(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = _setup_v1_golden_flow(tmp_path, monkeypatch)
+
+    commands = [
+        ("thread", "list", "--status", "open"),
+        ("thread", "show", flow["thread_id"]),
+        ("handoff", "show", flow["handoff_id"]),
+        ("workspace", "show", flow["planner_id"]),
+        ("agent", "status", flow["planner_id"]),
+        ("agent", "logs", flow["planner_id"], "--tail-lines", "2"),
+    ]
+    outputs = [run_module(tmp_path, *command) for command in commands]
+
+    assert [result.returncode for result in outputs] == [0, 0, 0, 0, 0, 0]
+    assert outputs[0].stdout.startswith("thread ")
+    assert outputs[1].stdout.startswith("thread ")
+    assert outputs[2].stdout.startswith("handoff_id=")
+    assert outputs[3].stdout.startswith("workspace ")
+    assert outputs[4].stdout.startswith("agent_id=")
+    assert outputs[5].stdout.startswith("logs ")
+
+
 def test_v1_golden_flow_reports_malformed_runtime_state_at_status_and_logs_steps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

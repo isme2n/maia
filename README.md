@@ -56,6 +56,16 @@ Part 2 is where running agents talk to each other over the broker/message plane.
 - The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` so operators can see open collaboration state, recent handoffs, and participant runtime context.
 - The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange between running agents.
 
+## Part 2 visibility flow
+- `maia thread list --status open`
+- `maia thread show <thread_id>`
+- `maia handoff show <handoff_id>`
+- `maia workspace show <agent_id>`
+- `maia agent status <agent_id>`
+- `maia agent logs <agent_id> --tail-lines 20`
+
+This is the public operator path for checking who is pending, which thread is open, what the latest handoff was, and whether the source/target runtimes are still healthy.
+
 ## Runtime support boundary
 - Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
 - Run `maia doctor` before using `agent start|stop|status|logs` for real.

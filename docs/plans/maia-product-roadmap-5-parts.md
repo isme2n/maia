@@ -41,8 +41,8 @@
 **What must be true at the end of Part 2:**
 - running agent 두 개 이상이 실제 broker를 통해 메시지를 주고받는다.
 - multi-turn question / answer / report 흐름이 된다.
-- Maia는 thread/message/handoff 상태를 관찰할 수 있다.
-- operator는 누가 대기 중인지, 어떤 thread가 열려 있는지 볼 수 있다.
+- Maia는 `thread`, `handoff`, `workspace`, `agent status`, `agent logs`를 하나의 operator visibility flow로 묶어 보여준다.
+- operator는 누가 대기 중인지, 어떤 thread가 열려 있는지, 최근 handoff와 participant runtime 상태를 볼 수 있다.
 - 이 흐름이 “CLI가 대신 대화하는 제품”처럼 보이지 않고, 실제 agent-to-agent message plane으로 정리된다.
 
 **Includes:**
@@ -131,7 +131,7 @@
 
 ## Progress tracker
 - [x] Part 1 complete
-- [ ] Part 2 complete
+- [x] Part 2 complete
 - [ ] Part 3 complete
 - [ ] Part 4 complete
 - [ ] Part 5 complete

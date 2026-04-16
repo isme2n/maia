@@ -18,6 +18,14 @@ PART2_CONVERSATION_CONTRACT = (
     "`send`, `reply`, and `inbox` are useful for diagnostics and controlled operator checks, not the primary product identity.",
     "`thread`, `handoff`, and `workspace` are the public visibility surfaces for open collaboration state.",
 )
+PART2_VISIBILITY_FLOW = (
+    "maia thread list --status open",
+    "maia thread show <thread_id>",
+    "maia handoff show <handoff_id>",
+    "maia workspace show <agent_id>",
+    "maia agent status <agent_id>",
+    "maia agent logs <agent_id> --tail-lines 20",
+)
 AGENT_COMMANDS = (
     "new",
     "setup",
@@ -154,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
         ("Part 2 conversation contract:", PART2_CONVERSATION_CONTRACT),
+        ("Part 2 visibility flow:", PART2_VISIBILITY_FLOW),
     )
 
     top_level = parser.add_subparsers(dest="resource")

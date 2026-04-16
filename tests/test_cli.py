@@ -37,6 +37,7 @@ from maia.cli_parser import (
     KNOWN_LIMITATIONS,
     PART1_OPERATOR_FLOW,
     PART2_CONVERSATION_CONTRACT,
+    PART2_VISIBILITY_FLOW,
     QUICKSTART_EXAMPLES,
     RUNTIME_PREREQ_EXAMPLES,
     RUNTIME_RECOVERY_CHECKLIST,
@@ -135,11 +136,14 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "running agents talk to each other over the broker/message plane" in text
     assert "operator manually relays every message in a CLI messenger" in text
     assert "thread`, `handoff`, and `workspace`" in text
+    assert "## Part 2 visibility flow" in text
+    assert "public operator path for checking who is pending" in text
     assert "still lands in the next task" not in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "Secondary surfaces" in text
+    _assert_contains_lines(text, PART2_VISIBILITY_FLOW)
 
 
 def test_prd_locks_part1_operator_story() -> None:
@@ -151,6 +155,10 @@ def test_prd_locks_part1_operator_story() -> None:
     assert "interactive CLI-only" in text
     assert "Part 2 direction" in text
     assert "running agents가 broker 위에서 multi-turn으로 대화" in text
+    assert "thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs" in text
+    assert "## Part 2 completion criteria" in text
+    assert "pending thread" in text
+    assert "closeout story" in text
     assert "public golden flow" in text
 
 
@@ -181,6 +189,9 @@ def test_phase16_plan_locks_part2_contract() -> None:
     assert "사람이 CLI로 직접 모든 메시지를 relay하는 제품" in text
     assert "Task 109 — Part 2 contract and public surface lock" in text
     assert "Task 114 — Part 2 docs/help/tests closeout" in text
+    assert "## Part 2 closeout status" in text
+    assert "Status: complete" in text
+    assert "public docs/help/tests tell the same operator story" in text
 
 
 def test_roadmap_points_part2_to_phase16_plan() -> None:
@@ -188,6 +199,11 @@ def test_roadmap_points_part2_to_phase16_plan() -> None:
 
     assert "## Part 2 — Real Agent Conversation" in text
     assert "docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md" in text
+    assert "`thread`, `handoff`, `workspace`, `agent status`, `agent logs`" in text
+    assert "최근 handoff와 participant runtime 상태" in text
+    assert "[x] Part 2 complete" in text
+
+
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
     assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
     assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
@@ -221,14 +237,17 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Part 1 operator flow:" in captured.out
     assert "Known limitations:" in captured.out
     assert "Part 2 conversation contract:" in captured.out
+    assert "Part 2 visibility flow:" in captured.out
     assert "Quickstart (local state only):" not in captured.out
     assert "V1 smoke checklist:" not in captured.out
     assert "send <" not in captured.out
     assert "reply <" not in captured.out
-    assert "thread show" not in captured.out
+    assert "maia thread show <thread_id>" in captured.out
+    assert "maia handoff show <handoff_id>" in captured.out
     _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
+    _assert_contains_lines(captured.out, PART2_VISIBILITY_FLOW)
 
 
 def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixture[str]) -> None:
@@ -735,6 +754,7 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "## Part 1 operator flow" in readme
     assert "## What each command means" in readme
     assert "## Known limitations" in readme
+    assert "## Part 2 visibility flow" in readme
     assert "## Runtime support boundary" in readme
     assert "## Live host runtime recovery" in readme
     assert "## V1 release checklist" in readme
@@ -745,6 +765,11 @@ def test_readme_examples_align_with_public_help() -> None:
     for line in PART1_OPERATOR_FLOW:
         assert line in readme
     for line in KNOWN_LIMITATIONS:
+        assert line in readme
+    assert "running agents talk to each other over the broker/message plane" in readme
+    assert "diagnostics and controlled operator checks" in readme
+    assert "public Part 2 visibility story centers on `thread`, `handoff`, and `workspace`" in readme
+    for line in PART2_VISIBILITY_FLOW:
         assert line in readme
     for line in RUNTIME_SUPPORT_BOUNDARY:
         assert line in readme
