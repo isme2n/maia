@@ -32,6 +32,7 @@ from maia.bundle_archive import (
 )
 from maia.broker import BrokerMessageEnvelope, MessageBroker
 from maia.cli_parser import (
+    AGENT_ID_COMMANDS,
     LIFECYCLE_STATUS_BY_COMMAND,
     TOP_LEVEL_COLLAB_COMMANDS,
     build_parser,
@@ -87,6 +88,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         command_name = _get_runtime_command_name(args)
         if resource == "doctor":
             return _handle_doctor()
+        if resource == "setup":
+            return _handle_setup_placeholder()
         if resource == "import":
             return _handle_transfer_import(args, storage, registry_path)
         if resource == "export":
@@ -156,9 +159,14 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
                     message_broker.close()
 
         registry = storage.load(registry_path)
+        if resource == "agent" and command_name in AGENT_ID_COMMANDS:
+            args.agent_lookup = args.agent_id
+            args.agent_id = _resolve_agent_reference(registry, args.agent_id)
         runtime_adapter = _build_runtime_adapter()
         if command_name == "new":
             return _handle_agent_new(args, storage, registry_path, registry)
+        if command_name == "setup":
+            return _handle_agent_setup_placeholder(args, registry)
         if command_name == "list":
             return _handle_agent_list(registry)
         if command_name == "status":
@@ -197,6 +205,20 @@ def _handle_doctor() -> int:
         f"next_step={_format_preview_value(_doctor_next_step(checks, failed_checks))}"
     )
     return 0 if not failed_checks else 1
+
+
+def _handle_setup_placeholder() -> int:
+    raise ValueError(
+        "Shared infra bootstrap is not implemented yet. Task 104 will wire `maia setup` to Docker, queue, and DB bootstrap"
+    )
+
+
+def _handle_agent_setup_placeholder(args: argparse.Namespace, registry) -> int:
+    registry.get(args.agent_id)
+    requested_name = getattr(args, "agent_lookup", args.agent_id)
+    raise ValueError(
+        f"Agent setup for {requested_name!r} is not implemented yet. Task 106 will open `hermes setup` for that agent"
+    )
 
 
 def _is_doctor_failure(check: dict[str, str]) -> bool:
@@ -2128,6 +2150,20 @@ def _format_record(record: AgentRecord) -> str:
         f"name={_format_preview_value(record.name)} "
         f"status={record.status.value}"
     )
+
+
+def _resolve_agent_reference(registry, value: str) -> str:
+    try:
+        return registry.get(value).agent_id
+    except LookupError:
+        matching = [record for record in registry.list() if record.name == value]
+        if len(matching) == 1:
+            return matching[0].agent_id
+        if len(matching) > 1:
+            raise ValueError(
+                f"Agent name {value!r} matches multiple agents. Use agent_id instead"
+            )
+        raise
 
 
 def _format_agent_status(record: AgentRecord, runtime_state: RuntimeState) -> str:

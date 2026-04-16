@@ -1,52 +1,55 @@
 # Maia
 
-Control plane for operating a Maia team with portable state, runtime control, collaboration threads, and handoffs.
+Control plane for bringing up Maia shared infra, creating agent identities, opening per-agent Hermes setup, and operating agent runtime lifecycle.
 
-## Quickstart
-Maia v1의 최소 지원 경로는 로컬 portable-state control plane이다. 아래 흐름은 Docker나 broker 없이 바로 재현 가능한 현재 지원 범위만 보여준다.
-
-```bash
-maia agent new planner
-maia agent list
-maia export
-maia inspect ~/.maia/exports/maia-state.maia
-```
-
-Runtime control이나 live collaboration을 쓰기 전에는 host readiness를 먼저 확인한다.
+## Part 1 operator flow
+Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story.
 
 ```bash
 maia doctor
+maia setup
+maia agent new planner
+maia agent setup planner
+maia agent start planner
+maia agent status planner
+maia agent logs planner --tail-lines 20
+maia agent stop planner
 ```
+
+## What each command means
+- `maia doctor`: check shared infra readiness only: Docker, queue, and DB.
+- `maia setup`: bootstrap shared infra only.
+- `maia agent new <name>`: create an agent identity record.
+- `maia agent setup <name>`: open `hermes setup` for that agent.
+- `maia agent start|stop|status|logs <name>`: operate that agent after setup.
 
 ## Known limitations
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
-- Broker-backed collaboration requires MAIA_BROKER_URL and a reachable broker; without it, Maia falls back to local JSON collaboration state.
-- No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.
-- No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.
-- No DB migration or live-state restore: import/export covers portable state only.
+- Shared infra depends on a reachable queue and DB state path.
+- `maia setup` and `maia agent setup` are public Part 1 commands, but their real bootstrap wiring lands in later tasks; they fail cleanly for now.
+- Messaging and thread commands remain available but are not the primary Part 1 operator flow.
 
 ## Runtime support boundary
-- Fake-docker tests verify Maia's runtime command flow, not whether Docker works on this host.
-- Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.
-- If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.
-- Broker-backed collaboration and runtime validation are separate checks.
+- Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
+- Run `maia doctor` before using `agent start|stop|status|logs` for real.
+- Run `maia setup` to bootstrap shared infra before the first agent run.
 
 ## Live host runtime recovery
-- If doctor fails, fix Docker first.
-- If start fails, rerun doctor and re-check the runtime image, workspace, command, and env values.
-- If Maia says the saved runtime record is old, check Docker and start the agent again if needed.
-- If status or logs show stopped, confirm whether the container already exited before restarting it.
+- If doctor fails, fix Docker, queue, or DB access first.
+- If setup fails, finish shared infra bootstrap before retrying agent commands.
+- If agent setup fails, rerun `maia agent setup <name>`.
+- If start fails, rerun doctor and confirm shared infra is ready.
 
 ## V1 release checklist
-- Quickstart/help/README describe only the supported v1 surfaces and known limitations.
-- Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> `maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.
-- Run `maia doctor` before runtime-control or live-collaboration smoke.
-- The v1 smoke checklist below passes end-to-end on a representative host.
+- Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.
+- `doctor` stays infra-only: Docker, queue, and DB.
+- `agent new` stays identity-only in the public story.
+- `agent setup` is the operator path to open `hermes setup` for one agent.
 
 ## Development notes
 - Codex CLI is used as the primary coding agent.
 - This repository is initialized for iterative development.
-- Docker is required for runtime control, and `maia doctor` now checks both Docker readiness and optional broker readiness via `MAIA_BROKER_URL`.
+- Docker is required for runtime control, and the Part 1 `maia doctor` contract is limited to shared infra readiness: Docker, queue, and DB.
 - Harness watch policy v2 uses role-specific watch patterns via `scripts/codex-watch-patterns.sh`.
 - Reviewer approval is read from a structured marker block and parsed with `python3 scripts/codex-parse-review.py <review-output-file>`.
 
@@ -107,72 +110,24 @@ maia doctor
 
 ## Operator examples
 - Public examples use the installed `maia` entrypoint.
-- v1 smoke checklist:
+- Part 1 operator flow:
   - `maia doctor`
+  - `maia setup`
   - `maia agent new planner`
-  - `maia agent new reviewer`
-  - `maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
-  - `maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
-  - `maia agent start <planner_id>`
-  - `maia agent start <reviewer_id>`
-  - `maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
-  - `maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
-  - `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
-  - `maia thread list --status open`
-  - `maia thread show <thread_id>`
-  - `maia handoff show <handoff_id>`
-  - `maia workspace show <planner_id>`
-  - `maia agent status <planner_id>`
-  - `maia agent logs <planner_id> --tail-lines 20`
-- Live host runtime checklist:
-  - `maia doctor`
-  - `maia agent new <name>`
-  - `maia agent tune <id> --runtime-image ... --runtime-workspace ... --runtime-command ... --runtime-env ...`
-  - `maia agent start <id>`
-  - `maia agent status <id>`
-  - `maia agent logs <id>`
-  - `maia agent stop <id>`
-  - `maia agent status <id>`
-- Live host report format:
+  - `maia agent setup planner`
+  - `maia agent start planner`
+  - `maia agent status planner`
+  - `maia agent logs planner --tail-lines 20`
+  - `maia agent stop planner`
+- Shared infra report format:
   - `doctor=ok|fail`
+  - `setup=ok|fail`
+  - `agent_setup=ok|fail`
   - `live_runtime_smoke=ok|fail`
-  - `failed_step=-|doctor|start|status|logs|stop`
-  - `next_action=<one short sentence>`
-- Export portable state:
-  - `maia export`
-  - `maia export backups/team.maia`
-  - `maia export backups/team.maia --label prod --description 'Nightly snapshot'`
-- Inspect a snapshot before import:
-  - `maia inspect backups/team.maia`
-  - `maia inspect backups/manifest.json`
-- Show current team metadata:
-  - `maia team show`
-- Update team metadata safely:
-  - `maia team update --name research-lab --tags research,ops`
-  - `maia team update --description 'Nightly migration team' --default-agent <agent_id>`
-  - `maia team update --clear-default-agent --clear-tags`
-- Review open thread state:
-  - `maia thread list --status open`
-  - `maia thread list --agent <reviewer_id>`
-  - `maia thread show <thread_id>`
-- Follow a handoff into workspace/runtime checks:
-  - `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
-  - `maia handoff show <handoff_id>`
-  - `maia handoff list --thread-id <thread_id>`
-  - `maia workspace show <planner_id>`
-  - `maia agent status <planner_id>`
-  - `maia agent logs <planner_id> --tail-lines 20`
-- Tune agent profile metadata:
-  - `maia agent tune <agent_id> --role researcher --model gpt-5 --tags runtime,focus`
-- Clear agent profile metadata fields:
-  - `maia agent tune <agent_id> --clear-role --clear-model --clear-tags`
-- Clear optional team metadata fields:
-  - `maia team update --clear-description --clear-tags --clear-default-agent`
-- Preview or apply an import:
-  - `maia import backups/team.maia --preview`
-  - `maia import backups/team.maia --preview --verbose-preview`
-  - `maia import backups/team.maia`
-  - `maia import backups/team.maia --yes`
+- Secondary surfaces (not Part 1 bootstrap):
+  - Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`
+  - Team metadata: `maia team show`, `maia team update ...`
+  - Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`
 
 ## Portable state scope
 - Portable state kinds currently exported:

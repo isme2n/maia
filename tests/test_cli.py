@@ -18,6 +18,7 @@ from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnve
 from maia.cli import main
 from maia import cli as cli_module
 from maia.cli_parser import (
+    AGENT_SETUP_EXAMPLES,
     AGENT_TUNE_EXAMPLES,
     DOCTOR_EXAMPLES,
     EXPORT_EXAMPLES,
@@ -28,10 +29,12 @@ from maia.cli_parser import (
     IMPORT_EXAMPLES,
     INSPECT_EXAMPLES,
     KNOWN_LIMITATIONS,
+    PART1_OPERATOR_FLOW,
     QUICKSTART_EXAMPLES,
     RUNTIME_PREREQ_EXAMPLES,
     RUNTIME_RECOVERY_CHECKLIST,
     RUNTIME_SUPPORT_BOUNDARY,
+    SETUP_EXAMPLES,
     TEAM_SHOW_EXAMPLES,
     TEAM_UPDATE_EXAMPLES,
     THREAD_EXAMPLES,
@@ -44,8 +47,10 @@ from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 
 README_PATH = REPO_ROOT / "README.md"
+PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
 PHASE10_PLAN_PATH = REPO_ROOT / "docs/plans/phase10-release-hardening-and-v1-closeout.md"
 PHASE12_PLAN_PATH = REPO_ROOT / "docs/plans/phase12-live-runtime-readiness-and-host-validation.md"
+PHASE15_PLAN_PATH = REPO_ROOT / "docs/plans/phase15-minimal-agent-bootstrap-and-runtime-setup.md"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
@@ -97,8 +102,37 @@ def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
         assert line in text
 
 
+def test_readme_locks_part1_public_flow() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+
+    assert "maia doctor" in text
+    assert "maia setup" in text
+    assert "maia agent new planner" in text
+    assert "maia agent setup planner" in text
+    assert "maia agent start planner" in text
+    assert "maia agent stop planner" in text
+    assert "shared infra" in text.lower()
+    assert "hermes setup" in text
+    assert "send/reply/inbox/thread" not in text
+    assert "CLI messenger" not in text
 
 
+def test_prd_locks_part1_operator_story() -> None:
+    text = PRD_PATH.read_text(encoding="utf-8")
+
+    assert "doctor → setup → agent new → agent setup → agent start" in text
+    assert "identity" in text.lower()
+    assert "hermes setup" in text
+    assert "send/reply" not in text
+
+
+def test_phase15_task102_matches_part1_contract() -> None:
+    text = PHASE15_PLAN_PATH.read_text(encoding="utf-8")
+
+    assert "doctor → setup → agent new → agent setup → agent start" in text
+    assert "Only infra readiness; no Hermes login/API key/provider checks." in text
+    assert "No team defaults, no model policy wizard." in text
+    assert "agent setup" in text
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["--help"])
@@ -109,6 +143,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "agent" in captured.out
     assert "team" in captured.out
     assert "doctor" in captured.out
+    assert "setup" in captured.out
     assert "send" in captured.out
     assert "inbox" in captured.out
     assert "thread" in captured.out
@@ -119,40 +154,45 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Export Maia portable state" in captured.out
     assert "Import Maia portable state safely" in captured.out
     assert "Inspect an importable Maia snapshot" in captured.out
-    assert "Quickstart (local state only):" in captured.out
-    assert "Before runtime or live collaboration:" in captured.out
+    assert "Check shared infra readiness" in captured.out
+    assert "Bootstrap shared Maia infra" in captured.out
+    assert "Part 1 operator flow:" in captured.out
     assert "Known limitations:" in captured.out
-    assert "Runtime support boundary:" in captured.out
-    assert "V1 release checklist:" in captured.out
-    assert "V1 smoke checklist:" in captured.out
-    assert "Live host runtime checklist:" in captured.out
-    assert "Runtime recovery checklist:" in captured.out
-    assert "Live host report format:" in captured.out
-    assert "Golden flow smoke contract:" not in captured.out
-    assert "Phase 7" not in captured.out
-    _assert_contains_lines(captured.out, QUICKSTART_EXAMPLES)
-    _assert_contains_lines(captured.out, RUNTIME_PREREQ_EXAMPLES)
+    assert "Quickstart (local state only):" not in captured.out
+    assert "V1 smoke checklist:" not in captured.out
+    assert "send <" not in captured.out
+    assert "reply <" not in captured.out
+    assert "thread show" not in captured.out
+    _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
-    _assert_contains_lines(captured.out, RUNTIME_SUPPORT_BOUNDARY)
-    _assert_contains_lines(captured.out, V1_RELEASE_CHECKLIST)
-    _assert_contains_lines(captured.out, GOLDEN_FLOW_SMOKE_CONTRACT)
-    _assert_contains_lines(captured.out, HOST_VALIDATION_CHECKLIST)
-    _assert_contains_lines(captured.out, RUNTIME_RECOVERY_CHECKLIST)
-    _assert_contains_lines(captured.out, HOST_VALIDATION_REPORT_TEMPLATE)
 
 
-def test_agent_help(capsys: pytest.CaptureFixture[str]) -> None:
+def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        main(["agent", "--help"])
+        main(["agent", "new", "--help"])
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "usage: maia agent" in captured.out
-    assert "new" in captured.out
-    assert "logs" in captured.out
-    assert "purge" in captured.out
-    assert "export" not in captured.out
-    assert "import" not in captured.out
+    assert "Create an agent identity" in captured.out
+    assert "Agent name" in captured.out
+    assert "provider" not in captured.out
+    assert "model" not in captured.out
+    assert "runtime image" not in captured.out
+    assert "login" not in captured.out
+
+
+def test_agent_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "setup", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Open hermes setup for an agent" in captured.out
+    assert "hermes setup" in captured.out
+    assert "provider" not in captured.out
+    assert "runtime image" not in captured.out
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, AGENT_SETUP_EXAMPLES)
 
 
 def test_team_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -217,6 +257,20 @@ def test_build_parser_workspace_show_shape() -> None:
     assert args.resource == "workspace"
     assert args.workspace_command == "show"
     assert args.agent_id == "reviewer1234"
+
+
+def test_build_parser_setup_shape() -> None:
+    args = build_parser().parse_args(["setup"])
+
+    assert args.resource == "setup"
+
+
+def test_build_parser_agent_setup_shape() -> None:
+    args = build_parser().parse_args(["agent", "setup", "planner"])
+
+    assert args.resource == "agent"
+    assert args.agent_command == "setup"
+    assert args.agent_id == "planner"
 
 
 def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -293,10 +347,55 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Check local runtime and broker prerequisites" in captured.out
+    assert "Check shared infra readiness" in captured.out
+    assert "Docker" in captured.out
+    assert "queue" in captured.out
+    assert "DB" in captured.out
+    assert "provider" not in captured.out
+    assert "login" not in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, DOCTOR_EXAMPLES)
     assert "doctor" in captured.out
+
+
+def test_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["setup", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Bootstrap shared Maia infra" in captured.out
+    assert "Docker" in captured.out
+    assert "queue" in captured.out
+    assert "DB" in captured.out
+    assert "team defaults" not in captured.out
+    assert "model defaults" not in captured.out
+    assert "wizard" not in captured.out
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, SETUP_EXAMPLES)
+
+
+def test_setup_command_fails_cleanly_until_task104(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["setup"]) == 1
+    captured = capsys.readouterr()
+    assert "Shared infra bootstrap is not implemented yet" in captured.err
+    assert "Task 104" in captured.err
+
+
+def test_agent_setup_command_fails_cleanly_until_task106(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+
+    assert main(["agent", "setup", "planner"]) == 1
+    captured = capsys.readouterr()
+    assert "Agent setup for" in captured.err
+    assert "is not implemented yet" in captured.err
+    assert "Task 106" in captured.err
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:
@@ -402,18 +501,17 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "Hermes agents" not in readme
     assert "python -m maia" not in readme
     assert "Public examples use the installed `maia` entrypoint." in readme
-    assert "## Quickstart" in readme
+    assert "## Part 1 operator flow" in readme
+    assert "## What each command means" in readme
     assert "## Known limitations" in readme
     assert "## Runtime support boundary" in readme
     assert "## Live host runtime recovery" in readme
     assert "## V1 release checklist" in readme
-    assert "v1 smoke checklist:" in readme
-    assert "Live host runtime checklist:" in readme
-    assert "Live host report format:" in readme
-    assert "v1 golden flow smoke contract:" not in readme
-    for line in QUICKSTART_EXAMPLES:
-        assert line in readme
-    for line in RUNTIME_PREREQ_EXAMPLES:
+    assert "v1 smoke checklist:" not in readme
+    assert "Live host runtime checklist:" not in readme
+    assert "Live host report format:" not in readme
+    assert "Part 1 operator flow:" in readme
+    for line in PART1_OPERATOR_FLOW:
         assert line in readme
     for line in KNOWN_LIMITATIONS:
         assert line in readme
@@ -423,23 +521,12 @@ def test_readme_examples_align_with_public_help() -> None:
         assert line in readme
     for line in V1_RELEASE_CHECKLIST:
         assert line in readme
-    for lines in (
-        DOCTOR_EXAMPLES,
-        GOLDEN_FLOW_SMOKE_CONTRACT,
-        HOST_VALIDATION_CHECKLIST,
-        HOST_VALIDATION_REPORT_TEMPLATE,
-        AGENT_TUNE_EXAMPLES,
-        EXPORT_EXAMPLES,
-        IMPORT_EXAMPLES,
-        INSPECT_EXAMPLES,
-        TEAM_SHOW_EXAMPLES,
-        TEAM_UPDATE_EXAMPLES,
-        THREAD_EXAMPLES,
-        WORKSPACE_EXAMPLES,
-        HANDOFF_EXAMPLES,
-    ):
-        for line in lines:
-            assert f"`{line}`" in readme
+    assert "Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`" in readme
+    assert "Team metadata: `maia team show`, `maia team update ...`" in readme
+    assert "Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`" in readme
+    assert f"`{DOCTOR_EXAMPLES[0]}`" in readme
+    assert f"`{SETUP_EXAMPLES[0]}`" in readme
+    assert f"`{AGENT_SETUP_EXAMPLES[0]}`" in readme
 
 
 def test_phase10_plan_locks_v1_release_and_smoke_checklists() -> None:
@@ -447,10 +534,6 @@ def test_phase10_plan_locks_v1_release_and_smoke_checklists() -> None:
 
     assert "## V1 release checklist" in plan
     assert "## V1 smoke checklist" in plan
-    for line in V1_RELEASE_CHECKLIST:
-        assert line in plan
-    for line in GOLDEN_FLOW_SMOKE_CONTRACT:
-        assert f"`{line}`" in plan
     assert "`bash scripts/verify.sh`" in plan
     assert "reviewer approve" in plan
     assert "clean worktree" in plan
@@ -461,10 +544,6 @@ def test_phase12_plan_locks_runtime_boundary_and_host_checklist() -> None:
 
     assert "## Scope" in plan
     assert "## Host validation runbook" in plan
-    for line in RUNTIME_SUPPORT_BOUNDARY:
-        assert line in plan
-    for line in HOST_VALIDATION_CHECKLIST:
-        assert f"`{line}`" in plan
     assert "`maia doctor`" in plan
     assert "`maia agent start <id>`" in plan
     assert "`maia agent stop <id>`" in plan
@@ -476,12 +555,7 @@ def test_phase13_plan_locks_recovery_and_report_contract() -> None:
     assert "## Runtime support boundary" in plan
     assert "## Live host runtime recovery" in plan
     assert "## Live host validation report template" in plan
-    for line in RUNTIME_SUPPORT_BOUNDARY:
-        assert line in plan
-    for line in RUNTIME_RECOVERY_CHECKLIST:
-        assert line in plan
-    for line in HOST_VALIDATION_REPORT_TEMPLATE:
-        assert f"`{line}`" in plan
+    assert "`doctor=ok|fail`" in plan
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(

@@ -8,13 +8,14 @@ from maia.agent_model import AgentStatus
 from maia.handoff_model import HandoffKind
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
-TOP_LEVEL_INFO_COMMANDS = ("doctor",)
+TOP_LEVEL_INFO_COMMANDS = ("doctor", "setup")
 TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
 THREAD_COMMANDS = ("list", "show")
 HANDOFF_COMMANDS = ("add", "list", "show")
 WORKSPACE_COMMANDS = ("show",)
 AGENT_COMMANDS = (
     "new",
+    "setup",
     "start",
     "stop",
     "archive",
@@ -32,78 +33,52 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "archive": AgentStatus.ARCHIVED,
     "restore": AgentStatus.STOPPED,
 }
-AGENT_ID_COMMANDS = frozenset({"status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
-QUICKSTART_EXAMPLES = (
+AGENT_ID_COMMANDS = frozenset({"setup", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+PART1_OPERATOR_FLOW = (
+    "maia doctor",
+    "maia setup",
     "maia agent new planner",
-    "maia agent list",
-    "maia export",
-    "maia inspect ~/.maia/exports/maia-state.maia",
+    "maia agent setup planner",
+    "maia agent start planner",
+    "maia agent status planner",
+    "maia agent logs planner --tail-lines 20",
+    "maia agent stop planner",
 )
+DOCTOR_EXAMPLES = ("maia doctor",)
+SETUP_EXAMPLES = ("maia setup",)
+AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
+QUICKSTART_EXAMPLES = PART1_OPERATOR_FLOW
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 RUNTIME_SUPPORT_BOUNDARY = (
-    "Fake-docker tests verify Maia's runtime command flow, not whether Docker works on this host.",
-    "Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.",
-    "If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.",
-    "Broker-backed collaboration and runtime validation are separate checks.",
+    "Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.",
+    "Run `maia doctor` before using `agent start|stop|status|logs` for real.",
+    "Run `maia setup` to bootstrap shared infra before the first agent run.",
 )
 V1_RELEASE_CHECKLIST = (
-    "Quickstart/help/README describe only the supported v1 surfaces and known limitations.",
-    "Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> "
-    "`maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.",
-    "Run `maia doctor` before runtime-control or live-collaboration smoke.",
-    "The v1 smoke checklist below passes end-to-end on a representative host.",
+    "Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.",
+    "`doctor` stays infra-only: Docker, queue, and DB.",
+    "`agent new` stays identity-only in the public story.",
+    "`agent setup` is the operator path to open `hermes setup` for one agent.",
 )
 KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
-    "Broker-backed collaboration requires MAIA_BROKER_URL and a reachable broker; without it, Maia falls back to local JSON collaboration state.",
-    "No always-on daemon/orchestrator: Maia runs as an operator-invoked CLI only.",
-    "No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.",
-    "No DB migration or live-state restore: import/export covers portable state only.",
+    "Shared infra depends on a reachable queue and DB state path.",
+    "`maia setup` and `maia agent setup` are public Part 1 commands, but their real bootstrap wiring lands in later tasks; they fail cleanly for now.",
+    "Messaging and thread commands remain available but are not the primary Part 1 operator flow.",
 )
-GOLDEN_FLOW_SMOKE_CONTRACT = (
-    "maia doctor",
-    "maia agent new planner",
-    "maia agent new reviewer",
-    "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest "
-    "--runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m "
-    "--runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner",
-    "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest "
-    "--runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m "
-    "--runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer",
-    "maia agent start <planner_id>",
-    "maia agent start <reviewer_id>",
-    "maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'",
-    "maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'",
-    "maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> "
-    "--type report --location reports/review.md --summary 'Review notes ready'",
-    "maia thread list --status open",
-    "maia thread show <thread_id>",
-    "maia handoff show <handoff_id>",
-    "maia workspace show <planner_id>",
-    "maia agent status <planner_id>",
-    "maia agent logs <planner_id> --tail-lines 20",
-)
-HOST_VALIDATION_CHECKLIST = (
-    "maia doctor",
-    "maia agent new <name>",
-    "maia agent tune <id> --runtime-image ... --runtime-workspace ... --runtime-command ... --runtime-env ...",
-    "maia agent start <id>",
-    "maia agent status <id>",
-    "maia agent logs <id>",
-    "maia agent stop <id>",
-    "maia agent status <id>",
-)
+GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW
+HOST_VALIDATION_CHECKLIST = PART1_OPERATOR_FLOW
 RUNTIME_RECOVERY_CHECKLIST = (
-    "If doctor fails, fix Docker first.",
-    "If start fails, rerun doctor and re-check the runtime image, workspace, command, and env values.",
-    "If Maia says the saved runtime record is old, check Docker and start the agent again if needed.",
-    "If status or logs show stopped, confirm whether the container already exited before restarting it.",
+    "If doctor fails, fix Docker, queue, or DB access first.",
+    "If setup fails, finish shared infra bootstrap before retrying agent commands.",
+    "If agent setup fails, rerun `maia agent setup <name>`.",
+    "If start fails, rerun doctor and confirm shared infra is ready.",
 )
 HOST_VALIDATION_REPORT_TEMPLATE = (
     "doctor=ok|fail",
+    "setup=ok|fail",
+    "agent_setup=ok|fail",
     "live_runtime_smoke=ok|fail",
-    "failed_step=-|doctor|start|status|logs|stop",
-    "next_action=<one short sentence>",
 )
 EXPORT_EXAMPLES = (
     "maia export",
@@ -120,7 +95,6 @@ INSPECT_EXAMPLES = (
     "maia inspect backups/team.maia",
     "maia inspect backups/manifest.json",
 )
-DOCTOR_EXAMPLES = ("maia doctor",)
 THREAD_EXAMPLES = (
     "maia thread list --status open",
     "maia thread list --agent <reviewer_id>",
@@ -171,15 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(parser=parser)
     parser.epilog = _format_epilog_sections(
-        ("Quickstart (local state only):", QUICKSTART_EXAMPLES),
-        ("Before runtime or live collaboration:", RUNTIME_PREREQ_EXAMPLES),
+        ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
-        ("Runtime support boundary:", RUNTIME_SUPPORT_BOUNDARY),
-        ("V1 release checklist:", V1_RELEASE_CHECKLIST),
-        ("V1 smoke checklist:", GOLDEN_FLOW_SMOKE_CONTRACT),
-        ("Live host runtime checklist:", HOST_VALIDATION_CHECKLIST),
-        ("Runtime recovery checklist:", RUNTIME_RECOVERY_CHECKLIST),
-        ("Live host report format:", HOST_VALIDATION_REPORT_TEMPLATE),
     )
 
     top_level = parser.add_subparsers(dest="resource")
@@ -239,17 +206,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_INFO_COMMANDS:
         help_text = {
-            "doctor": "Check local runtime and broker prerequisites",
+            "doctor": "Check shared infra readiness (Docker, queue, DB)",
+            "setup": "Bootstrap shared Maia infra (Docker, queue, DB)",
+        }[command_name]
+        description_text = {
+            "doctor": "Check shared infra readiness for Docker, queue, and DB access only.",
+            "setup": "Bootstrap shared Maia infra only: Docker-backed services, queue, and DB state.",
         }[command_name]
         command_parser = top_level.add_parser(
             command_name,
             help=help_text,
-            description=help_text,
+            description=description_text,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "doctor":
             command_parser.epilog = _format_epilog("Examples:", DOCTOR_EXAMPLES)
+        if command_name == "setup":
+            command_parser.epilog = _format_epilog("Examples:", SETUP_EXAMPLES)
 
     for command_name in TOP_LEVEL_COLLAB_COMMANDS:
         help_text = {
@@ -323,16 +297,39 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{" + ",".join(AGENT_COMMANDS) + "}",
     )
     for command_name in AGENT_COMMANDS:
+        command_help = {
+            "new": "Create an agent identity",
+            "setup": "Open hermes setup for an agent",
+            "start": "start agent",
+            "stop": "stop agent",
+            "archive": "archive agent",
+            "restore": "restore agent",
+            "status": "status agent",
+            "logs": "logs agent",
+            "list": "list agent",
+            "tune": "tune agent",
+            "purge": "purge agent",
+        }[command_name]
+        command_description = {
+            "new": "Create an agent identity record.",
+            "setup": "Open hermes setup for an agent without adding Maia-managed runtime configuration.",
+        }.get(command_name)
         command_parser = agent_commands.add_parser(
             command_name,
-            help=f"{command_name} agent",
+            help=command_help,
+            description=command_description,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "new":
             command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
-            command_parser.add_argument("agent_id", help="Agent id")
+            if command_name in {"setup", "start", "stop", "status", "logs"}:
+                command_parser.add_argument("agent_id", metavar="name", help="Agent name")
+            else:
+                command_parser.add_argument("agent_id", help="Agent id")
+        if command_name == "setup":
+            command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_EXAMPLES)
         if command_name == "logs":
             command_parser.add_argument(
                 "--tail-lines",
