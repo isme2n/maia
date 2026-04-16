@@ -63,7 +63,8 @@ V1_RELEASE_CHECKLIST = (
 KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
     "Shared infra depends on a reachable queue and DB state path.",
-    "`maia setup` and `maia agent setup` are public Part 1 commands, but their real bootstrap wiring lands in later tasks; they fail cleanly for now.",
+    "`maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.",
+    "`maia agent setup` still lands in the next task; use it as the operator path into `hermes setup` for one agent.",
     "Messaging and thread commands remain available but are not the primary Part 1 operator flow.",
 )
 GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW

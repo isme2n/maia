@@ -86,6 +86,7 @@ def parse_fields(line: str) -> dict[str, str]:
         "profiles",
         "purged",
         "doctor",
+        "setup",
         "logs",
         "workspace",
     }:
@@ -172,23 +173,62 @@ def _write_fake_docker(path: Path) -> None:
         "if state_path.exists():\n"
         "    state = json.loads(state_path.read_text(encoding='utf-8'))\n"
         "else:\n"
-        "    state = {'containers': {}, 'counter': 0}\n"
+        "    state = {'containers': {}, 'networks': [], 'volumes': [], 'counter': 0}\n"
         "args = sys.argv[1:]\n"
         "def save():\n"
         "    state_path.write_text(json.dumps(state), encoding='utf-8')\n"
         "if args == ['--version']:\n"
         "    print('Docker version 27.0.0')\n"
         "    raise SystemExit(0)\n"
-        "if args == ['compose', 'version']:\n"
-        "    print('Docker Compose version v2.29.0')\n"
-        "    raise SystemExit(0)\n"
         "if args == ['info']:\n"
         "    print('Server Version: 27.0.0')\n"
         "    raise SystemExit(0)\n"
+        "if args[:2] == ['network', 'inspect']:\n"
+        "    name = args[2]\n"
+        "    if name not in state['networks']:\n"
+        "        print('missing network', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    print(name)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['network', 'create']:\n"
+        "    name = args[2]\n"
+        "    if name not in state['networks']:\n"
+        "        state['networks'].append(name)\n"
+        "        save()\n"
+        "    print(name)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['volume', 'inspect']:\n"
+        "    name = args[2]\n"
+        "    if name not in state['volumes']:\n"
+        "        print('missing volume', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    print(name)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['volume', 'create']:\n"
+        "    name = args[2]\n"
+        "    if name not in state['volumes']:\n"
+        "        state['volumes'].append(name)\n"
+        "        save()\n"
+        "    print(name)\n"
+        "    raise SystemExit(0)\n"
         "if args[:2] == ['run', '-d']:\n"
-        "    state['counter'] += 1\n"
-        "    handle = f\"runtime-{state['counter']:03d}\"\n"
-        "    state['containers'][handle] = {'status': 'running', 'logs': ['line 1', 'line 2']}\n"
+        "    if '--name' in args:\n"
+        "        handle = args[args.index('--name') + 1]\n"
+        "        logs = ['rabbitmq ready']\n"
+        "    else:\n"
+        "        state['counter'] += 1\n"
+        "        handle = f\"runtime-{state['counter']:03d}\"\n"
+        "        logs = ['line 1', 'line 2']\n"
+        "    state['containers'][handle] = {'status': 'running', 'logs': logs}\n"
+        "    save()\n"
+        "    print(handle)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:1] == ['start']:\n"
+        "    handle = args[1]\n"
+        "    if handle not in state['containers']:\n"
+        "        print('missing container', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    state['containers'][handle]['status'] = 'running'\n"
         "    save()\n"
         "    print(handle)\n"
         "    raise SystemExit(0)\n"
@@ -233,7 +273,10 @@ def _setup_v1_golden_flow(
     fake_docker = fake_bin / "docker"
     _write_fake_docker(fake_docker)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    setup = run_module(tmp_path, "setup")
+    assert setup.returncode == 0
+    assert setup.stderr == ""
 
     doctor = run_module(tmp_path, "doctor")
     assert doctor.returncode == 0
@@ -402,7 +445,6 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     empty_bin = tmp_path / 'empty-bin'
     empty_bin.mkdir()
     monkeypatch.setenv('PATH', str(empty_bin))
-    monkeypatch.delenv('MAIA_BROKER_URL', raising=False)
 
     result = run_module(tmp_path, 'doctor')
 
@@ -414,21 +456,67 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
         'detail': 'Docker␠is␠not␠installed␠or␠not␠on␠PATH',
         'remediation': 'Install␠Docker␠on␠this␠host␠to␠use␠runtime␠commands',
     }
-    assert parse_fields(lines[3]) == {
-        'check': 'broker_url',
-        'status': 'missing',
-        'detail': 'Broker␠mode␠is␠off␠because␠MAIA_BROKER_URL␠is␠not␠set',
-        'remediation': 'Optional:␠set␠MAIA_BROKER_URL␠if␠you␠want␠broker-backed␠collaboration',
+    assert parse_fields(lines[2]) == {
+        'check': 'queue',
+        'status': 'blocked',
+        'detail': 'Queue␠health␠needs␠a␠working␠Docker␠daemon',
+        'remediation': 'Fix␠Docker␠first⸴␠then␠run␠maia␠doctor␠again',
     }
+    assert parse_fields(lines[3])['check'] == 'state_db'
+    assert parse_fields(lines[3])['status'] == 'ok'
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
-        'failed': 'docker_cli,docker_compose,docker_daemon',
+        'failed': 'docker_cli,docker_daemon,queue',
         'next_step': 'install␠Docker⸴␠then␠run␠maia␠doctor␠again',
     }
 
 
-def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[0]) == {
+        'check': 'docker_cli',
+        'status': 'ok',
+        'detail': str(fake_docker),
+        'remediation': 'No␠action␠needed',
+    }
+    assert parse_fields(lines[1]) == {
+        'check': 'docker_daemon',
+        'status': 'ok',
+        'detail': 'Docker␠is␠ready',
+        'remediation': 'No␠action␠needed',
+    }
+    assert parse_fields(lines[2]) == {
+        'check': 'queue',
+        'status': 'missing',
+        'detail': 'RabbitMQ␠container␠maia-rabbitmq␠is␠not␠running',
+        'remediation': 'Run␠maia␠setup␠to␠bootstrap␠shared␠infra',
+    }
+    state_db_fields = parse_fields(lines[3])
+    assert state_db_fields['check'] == 'state_db'
+    assert state_db_fields['status'] == 'ok'
+    assert state_db_fields['detail'] == str(get_state_db_path({'HOME': str(tmp_path)}))
+    assert parse_fields(lines[4]) == {
+        'kind': 'summary',
+        'status': 'fail',
+        'failed': 'queue',
+        'next_step': 'run␠maia␠setup␠to␠bootstrap␠shared␠infra',
+    }
+
+
+def test_doctor_accepts_reachable_external_queue_before_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import socket
 
     fake_bin = tmp_path / 'bin'
@@ -448,89 +536,121 @@ def test_doctor_reports_healthy_docker_stack(tmp_path: Path, monkeypatch: pytest
 
     assert result.returncode == 0
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[0]) == {
-        'check': 'docker_cli',
-        'status': 'ok',
-        'detail': str(fake_docker),
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[1]) == {
-        'check': 'docker_compose',
-        'status': 'ok',
-        'detail': 'Docker␠Compose␠is␠available',
-        'remediation': 'No␠action␠needed',
-    }
     assert parse_fields(lines[2]) == {
-        'check': 'docker_daemon',
+        'check': 'queue',
         'status': 'ok',
-        'detail': 'Docker␠is␠ready',
+        'detail': f'RabbitMQ␠is␠reachable␠at␠{host}:{port}',
         'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[3])['check'] == 'broker_url'
-    assert parse_fields(lines[3])['status'] == 'ok'
-    assert parse_fields(lines[3])['detail'] == f'amqp://guest:***@{host}:{port}/%2F'
-    assert parse_fields(lines[4]) == {
-        'check': 'broker_tcp',
-        'status': 'ok',
-        'detail': f'Broker␠is␠reachable␠at␠{host}:{port}',
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[5]) == {
-        'kind': 'summary',
-        'status': 'ok',
-        'failed': '-',
-        'next_step': 'runtime␠commands␠are␠ready␠to␠use',
-    }
-
-
-def test_doctor_accepts_broker_url_without_explicit_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_bin = tmp_path / 'bin'
-    fake_bin.mkdir()
-    fake_docker = fake_bin / 'docker'
-    _write_fake_docker(fake_docker)
-    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1/%2F')
-
-    result = run_module(tmp_path, 'doctor')
-
-    assert result.returncode == 1
-    lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[3]) == {
-        'check': 'broker_url',
-        'status': 'ok',
-        'detail': 'amqp://guest:***@127.0.0.1/%2F',
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[4])['check'] == 'broker_tcp'
-
-
-def test_redact_broker_url_preserves_ipv6_brackets_and_hides_password() -> None:
-    assert cli_module._redact_broker_url('amqp://guest:secret@[::1]:5672/%2F') == 'amqp://guest:***@[::1]:5672/%2F'
-
-
-def test_doctor_reports_invalid_broker_url_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_bin = tmp_path / 'bin'
-    fake_bin.mkdir()
-    fake_docker = fake_bin / 'docker'
-    _write_fake_docker(fake_docker)
-    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1:notaport/%2F')
-
-    result = run_module(tmp_path, 'doctor')
-
-    assert result.returncode == 1
-    lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[3]) == {
-        'check': 'broker_url',
-        'status': 'fail',
-        'detail': 'MAIA_BROKER_URL␠needs␠a␠numeric␠port',
-        'remediation': 'Use␠a␠full␠AMQP␠URL␠like␠amqp://user:***@host:5672/vhost',
     }
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
+        'status': 'ok',
+        'failed': '-',
+        'next_step': 'shared␠infra␠is␠ready',
+    }
+
+
+def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1:6553/%2F')
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[2])['check'] == 'queue'
+    assert parse_fields(lines[2])['status'] == 'fail'
+    assert parse_fields(lines[-1]) == {
+        'kind': 'summary',
         'status': 'fail',
-        'failed': 'broker_url',
-        'next_step': 'set␠MAIA_BROKER_URL␠if␠you␠want␠broker-backed␠collaboration',
+        'failed': 'queue',
+        'next_step': 'fix␠MAIA_BROKER_URL␠or␠the␠external␠RabbitMQ␠service⸴␠then␠run␠maia␠doctor␠again',
+    }
+
+
+def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    state_db_path = get_state_db_path({'HOME': str(tmp_path)})
+    state_db_path.parent.mkdir(parents=True, exist_ok=True)
+    state_db_path.write_text('not a sqlite database', encoding='utf-8')
+
+    doctor = run_module(tmp_path, 'doctor')
+    assert doctor.returncode == 1
+    assert doctor.stderr == ''
+    doctor_lines = doctor.stdout.strip().splitlines()
+    state_db_fields = parse_fields(doctor_lines[3])
+    assert state_db_fields['check'] == 'state_db'
+    assert state_db_fields['status'] == 'fail'
+    assert state_db_fields['detail'].startswith('Maia␠state␠DB␠at␠')
+    assert state_db_fields['detail'].endswith('␠is␠unreadable')
+    assert state_db_fields['remediation'] == (
+        'Repair␠or␠replace␠the␠local␠Maia␠state␠DB⸴␠then␠run␠maia␠doctor␠again'
+    )
+
+    setup = run_module(tmp_path, 'setup')
+    assert setup.returncode == 1
+    assert setup.stdout == ''
+    assert 'error: Maia state DB at' in setup.stderr
+    assert 'is unreadable' in setup.stderr
+    assert 'Traceback' not in setup.stderr
+
+
+def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    setup = run_module(tmp_path, 'setup')
+
+    assert setup.returncode == 0
+    setup_lines = setup.stdout.strip().splitlines()
+    assert setup_lines[0] == 'Created Maia network maia.'
+    assert setup_lines[1] == 'Created Maia volume maia-rabbitmq-data.'
+    assert setup_lines[2] == 'Started shared queue maia-rabbitmq.'
+    assert setup_lines[3] == f'SQLite state is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
+    assert setup_lines[4] == 'Shared infra is ready. Next: run maia agent new <name>.'
+    assert setup.stderr == ''
+
+    doctor = run_module(tmp_path, 'doctor')
+    assert doctor.returncode == 0
+    doctor_lines = doctor.stdout.strip().splitlines()
+    assert parse_fields(doctor_lines[2]) == {
+        'check': 'queue',
+        'status': 'ok',
+        'detail': 'RabbitMQ␠container␠maia-rabbitmq␠is␠running',
+        'remediation': 'No␠action␠needed',
+    }
+    assert parse_fields(doctor_lines[3]) == {
+        'check': 'state_db',
+        'status': 'ok',
+        'detail': str(get_state_db_path({'HOME': str(tmp_path)})),
+        'remediation': 'No␠action␠needed',
+    }
+    assert parse_fields(doctor_lines[4]) == {
+        'kind': 'summary',
+        'status': 'ok',
+        'failed': '-',
+        'next_step': 'shared␠infra␠is␠ready',
     }
 
 
@@ -558,13 +678,12 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
     )
     fake_docker.chmod(0o755)
     monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.delenv('MAIA_BROKER_URL', raising=False)
 
     result = run_module(tmp_path, 'doctor')
 
     assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[2]) == {
+    assert parse_fields(lines[1]) == {
         'check': 'docker_daemon',
         'status': 'fail',
         'detail': 'Docker␠is␠installed⸴␠but␠this␠user␠cannot␠talk␠to␠the␠Docker␠daemon',
@@ -573,7 +692,7 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
     assert parse_fields(lines[-1]) == {
         'kind': 'summary',
         'status': 'fail',
-        'failed': 'docker_daemon',
+        'failed': 'docker_daemon,queue',
         'next_step': 'fix␠Docker␠permissions␠for␠this␠user⸴␠then␠run␠maia␠doctor␠again',
     }
 
@@ -1084,6 +1203,9 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
 
+    setup = run_module(tmp_path, "setup")
+    assert setup.returncode == 0
+
     doctor = run_module(tmp_path, "doctor")
     assert doctor.returncode == 0
 
@@ -1141,6 +1263,9 @@ def test_live_host_runtime_checklist_flow_is_locked(
     _write_fake_docker(fake_docker)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+
+    setup = run_module(tmp_path, "setup")
+    assert setup.returncode == 0
 
     doctor = run_module(tmp_path, "doctor")
     assert doctor.returncode == 0

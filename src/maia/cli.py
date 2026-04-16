@@ -8,12 +8,10 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 import os
 from pathlib import Path
-import shutil
-import socket
 import subprocess
 import sys
 import uuid
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.runtime_spec import RuntimeSpec
@@ -38,6 +36,7 @@ from maia.cli_parser import (
 from maia.collaboration_storage import CollaborationStorage
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
 from maia.handoff_model import HandoffKind, HandoffRecord
+from maia import infra_runtime
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 from maia.rabbitmq_broker import RabbitMQBroker
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
@@ -86,7 +85,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if resource == "doctor":
             return _handle_doctor()
         if resource == "setup":
-            return _handle_setup_placeholder()
+            return _handle_setup()
         if resource == "import":
             return _handle_transfer_import(args, storage, state_path)
         if resource == "export":
@@ -188,7 +187,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
 
 
 def _handle_doctor() -> int:
-    checks = _collect_doctor_checks()
+    checks = infra_runtime.collect_doctor_checks(get_state_db_path())
     failed_checks = [check["name"] for check in checks if _is_doctor_failure(check)]
     for check in checks:
         print(
@@ -204,10 +203,12 @@ def _handle_doctor() -> int:
     return 0 if not failed_checks else 1
 
 
-def _handle_setup_placeholder() -> int:
-    raise ValueError(
-        "Shared infra bootstrap is not implemented yet. Task 104 will wire `maia setup` to Docker, queue, and DB bootstrap"
-    )
+def _handle_setup() -> int:
+    steps = infra_runtime.bootstrap_shared_infra(get_state_db_path())
+    for step in steps:
+        print(_format_setup_step_line(step))
+    print("Shared infra is ready. Next: run maia agent new <name>.")
+    return 0
 
 
 def _handle_agent_setup_placeholder(args: argparse.Namespace, registry) -> int:
@@ -219,203 +220,44 @@ def _handle_agent_setup_placeholder(args: argparse.Namespace, registry) -> int:
 
 
 def _is_doctor_failure(check: dict[str, str]) -> bool:
-    if check["name"] == "broker_url" and check["status"] == "missing":
-        return False
     return check["status"] != "ok"
 
 
 def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) -> str:
     if not failed_checks:
-        return "runtime commands are ready to use"
+        return "shared infra is ready"
     if "docker_cli" in failed_checks:
         return "install Docker, then run maia doctor again"
-    if "docker_compose" in failed_checks:
-        return "install the Docker Compose plugin, then run maia doctor again"
     if "docker_daemon" in failed_checks:
         docker_daemon_check = next((check for check in checks if check["name"] == "docker_daemon"), None)
         if docker_daemon_check and "cannot talk to the Docker daemon" in docker_daemon_check["detail"]:
             return "fix Docker permissions for this user, then run maia doctor again"
         return "start Docker, then run maia doctor again"
-    if "broker_url" in failed_checks:
-        return "set MAIA_BROKER_URL if you want broker-backed collaboration"
-    if "broker_tcp" in failed_checks:
-        return "start the broker or fix network access, then run maia doctor again"
+    if "queue" in failed_checks:
+        if os.environ.get("MAIA_BROKER_URL", "").strip():
+            return "fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again"
+        return "run maia setup to bootstrap shared infra"
+    if "state_db" in failed_checks:
+        return "fix local Maia state permissions, then run maia doctor again"
     return "fix the failed checks above, then run maia doctor again"
 
 
-def _collect_doctor_checks() -> list[dict[str, str]]:
-    checks: list[dict[str, str]] = []
-    docker_bin = shutil.which("docker")
-    if docker_bin is None:
-        checks.extend(
-            [
-                {
-                    "name": "docker_cli",
-                    "status": "missing",
-                    "detail": "Docker is not installed or not on PATH",
-                    "remediation": "Install Docker on this host to use runtime commands",
-                },
-                {
-                    "name": "docker_compose",
-                    "status": "missing",
-                    "detail": "Docker Compose is unavailable because Docker is missing",
-                    "remediation": "Install Docker first, then make sure the Docker Compose plugin is available",
-                },
-                {
-                    "name": "docker_daemon",
-                    "status": "missing",
-                    "detail": "Docker can't run because Docker is missing",
-                    "remediation": "Install Docker, then start the Docker service",
-                },
-            ]
-        )
-    else:
-        checks.extend(
-            [
-                _run_doctor_probe(
-                    "docker_cli",
-                    [docker_bin, "--version"],
-                    success_detail=docker_bin,
-                    success_remediation="No action needed",
-                    failure_remediation="Make sure the Docker binary is installed and available on PATH",
-                ),
-                _run_doctor_probe(
-                    "docker_compose",
-                    [docker_bin, "compose", "version"],
-                    success_detail="Docker Compose is available",
-                    success_remediation="No action needed",
-                    failure_remediation="Install or enable the Docker Compose plugin",
-                ),
-                _run_doctor_probe(
-                    "docker_daemon",
-                    [docker_bin, "info"],
-                    success_detail="Docker is ready",
-                    success_remediation="No action needed",
-                    failure_remediation="Start Docker or fix Docker access permissions",
-                ),
-            ]
-        )
-
-    checks.extend(_collect_broker_doctor_checks())
-    return checks
-
-
-def _collect_broker_doctor_checks() -> list[dict[str, str]]:
-    broker_url = os.environ.get("MAIA_BROKER_URL", "").strip()
-    if not broker_url:
-        return [
-            {
-                "name": "broker_url",
-                "status": "missing",
-                "detail": "Broker mode is off because MAIA_BROKER_URL is not set",
-                "remediation": "Optional: set MAIA_BROKER_URL if you want broker-backed collaboration",
-            }
-        ]
-
-    parsed = urlparse(broker_url)
-    try:
-        port = parsed.port
-    except ValueError:
-        return [
-            {
-                "name": "broker_url",
-                "status": "fail",
-                "detail": "MAIA_BROKER_URL needs a numeric port",
-                "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
-            }
-        ]
-    if not parsed.hostname:
-        return [
-            {
-                "name": "broker_url",
-                "status": "fail",
-                "detail": "MAIA_BROKER_URL needs a hostname",
-                "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
-            }
-        ]
-    if port is None:
-        port = 5671 if parsed.scheme == "amqps" else 5672
-
-    redacted_broker_url = _redact_broker_url(broker_url)
-
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=2):
-            pass
-    except OSError as exc:
-        detail = exc.strerror or str(exc)
-        return [
-            {
-                "name": "broker_url",
-                "status": "ok",
-                "detail": redacted_broker_url,
-                "remediation": "No action needed",
-            },
-            {
-                "name": "broker_tcp",
-                "status": "fail",
-                "detail": detail,
-                "remediation": "Start the broker service or fix access to the configured host and port",
-            },
-        ]
-
-    return [
-        {
-            "name": "broker_url",
-            "status": "ok",
-            "detail": redacted_broker_url,
-            "remediation": "No action needed",
-        },
-        {
-            "name": "broker_tcp",
-            "status": "ok",
-            "detail": f"Broker is reachable at {parsed.hostname}:{port}",
-            "remediation": "No action needed",
-        },
-    ]
-
-
-def _run_doctor_probe(
-    name: str,
-    command: list[str],
-    *,
-    success_detail: str,
-    success_remediation: str,
-    failure_remediation: str,
-) -> dict[str, str]:
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        detail = exc.strerror or str(exc)
-        return {
-            "name": name,
-            "status": "missing",
-            "detail": detail,
-            "remediation": failure_remediation,
-        }
-
-    if result.returncode == 0:
-        return {
-            "name": name,
-            "status": "ok",
-            "detail": success_detail,
-            "remediation": success_remediation,
-        }
-
-    detail = (result.stderr or result.stdout or "probe failed").strip()
-    if name == "docker_daemon" and "permission denied" in detail.lower():
-        detail = "Docker is installed, but this user cannot talk to the Docker daemon"
-        failure_remediation = "Start Docker and make sure your user has permission to use it"
-    return {
-        "name": name,
-        "status": "fail",
-        "detail": detail,
-        "remediation": failure_remediation,
+def _format_setup_step_line(step: dict[str, str]) -> str:
+    action_by_status = {
+        "created": "Created",
+        "started": "Started",
+        "ready": "Ready",
     }
+    action = action_by_status.get(step["status"], step["status"].capitalize())
+    if step["step"] == "network":
+        return f"{action} Maia network {step['detail']}."
+    if step["step"] == "volume":
+        return f"{action} Maia volume {step['detail']}."
+    if step["step"] == "queue":
+        return f"{action} shared queue {step['detail']}."
+    if step["step"] == "db":
+        return f"SQLite state is ready at {step['detail']}."
+    return f"{action} {step['step']} {step['detail']}."
 
 
 def _build_message_broker() -> MessageBroker | None:
@@ -423,23 +265,6 @@ def _build_message_broker() -> MessageBroker | None:
     if not broker_url:
         return None
     return RabbitMQBroker(broker_url=broker_url)
-
-
-def _redact_broker_url(broker_url: str) -> str:
-    parsed = urlparse(broker_url)
-    if not parsed.scheme or not parsed.hostname:
-        return broker_url
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    netloc = host
-    if parsed.port is not None:
-        netloc = f"{netloc}:{parsed.port}"
-    if parsed.username is not None:
-        netloc = f"{parsed.username}:***@{netloc}"
-    return parsed._replace(netloc=netloc).geturl()
-
-
 def _build_runtime_adapter() -> DockerRuntimeAdapter:
     return DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),

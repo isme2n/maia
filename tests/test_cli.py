@@ -119,6 +119,8 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "maia agent stop planner" in text
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
+    assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
+    assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "CLI messenger" not in text
 
@@ -385,11 +387,27 @@ def test_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> Non
     _assert_contains_lines(captured.out, SETUP_EXAMPLES)
 
 
-def test_setup_command_fails_cleanly_until_task104(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["setup"]) == 1
+def test_setup_command_prints_bootstrap_summary_from_infra_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "bootstrap_shared_infra",
+        lambda state_path: [
+            {"step": "network", "status": "created", "detail": "maia"},
+            {"step": "queue", "status": "started", "detail": "maia-rabbitmq"},
+            {"step": "db", "status": "ready", "detail": str(state_path)},
+        ],
+    )
+
+    assert main(["setup"]) == 0
     captured = capsys.readouterr()
-    assert "Shared infra bootstrap is not implemented yet" in captured.err
-    assert "Task 104" in captured.err
+    assert "Created Maia network maia." in captured.out
+    assert "Started shared queue maia-rabbitmq." in captured.out
+    assert "SQLite state is ready at" in captured.out
+    assert "Shared infra is ready. Next: run maia agent new <name>." in captured.out
+    assert captured.err == ""
 
 
 def test_agent_setup_command_fails_cleanly_until_task106(

@@ -26,7 +26,8 @@ maia agent stop planner
 ## Known limitations
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
 - Shared infra depends on a reachable queue and DB state path.
-- `maia setup` and `maia agent setup` are public Part 1 commands, but their real bootstrap wiring lands in later tasks; they fail cleanly for now.
+- `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
+- `maia agent setup` still lands in the next task; use it as the operator path into `hermes setup` for one agent.
 - Messaging and thread commands remain available but are not the primary Part 1 operator flow.
 
 ## Runtime support boundary
@@ -91,11 +92,11 @@ maia agent stop planner
 - The `.maia` bundle is a single zip-backed archive containing exactly one `manifest.json` and exactly one `registry.json` for the current v1 format.
 - `maia import <path>` accepts either a `.maia` bundle archive, a raw registry JSON path, or a `manifest.json` path. When a manifest is provided, Maia resolves the referenced registry file from the same bundle directory.
 - `~/.maia/exports/` is the portable snapshot area, while `~/.maia/runtime/` is reserved for runtime-only state that should not be treated as a portable backup.
-- `maia agent start|stop <agent_id>` updates the stored lifecycle status and prints the lightweight runtime signal returned by the configured runtime adapter (`runtime_status`, `runtime_handle`).
-- `maia agent status <agent_id>` confirms the stored/runtime status for the handoff source or target agent chosen from `thread show`, `handoff show`, or `workspace show`.
-- `maia agent logs <agent_id> --tail-lines <n>` tails recent runtime log lines for the same agent after the workspace/status check.
-- `maia agent archive|restore <agent_id>` updates only the stored lifecycle status and prints `updated agent_id=<id> status=<status>`.
-- `maia agent tune <agent_id> ...` updates agent persona/profile metadata in place. Supported flags now include persona (`--persona`, `--persona-file`), role (`--role`, `--clear-role`), model (`--model`, `--clear-model`), and tags (`--tags`, `--clear-tags`).
+- `maia agent start|stop <name>` updates the stored lifecycle status and prints the lightweight runtime signal returned by the configured runtime adapter (`runtime_status`, `runtime_handle`).
+- `maia agent status <name>` confirms the stored/runtime status for the handoff source or target agent chosen from `thread show`, `handoff show`, or `workspace show`.
+- `maia agent logs <name> --tail-lines <n>` tails recent runtime log lines for the same agent after the workspace/status check.
+- `maia agent archive|restore <name>` updates only the stored lifecycle status and prints `updated agent_id=<id> status=<status>`.
+- `maia agent tune <name> ...` updates agent persona/profile metadata in place. Supported flags now include persona (`--persona`, `--persona-file`), role (`--role`, `--clear-role`), model (`--model`, `--clear-model`), and tags (`--tags`, `--clear-tags`).
 - `maia export <path>` writes a `.maia` single-file bundle when `<path>` ends with `.maia`; otherwise it writes the current registry JSON plus a sibling `manifest.json` for debugging/backcompat flows.
 - `maia import <path>` replaces the current registry with the snapshot at `<path>` and preserves the stored agent order, lifecycle status, persona, role, model, and tags from that bundle.
 - Portable agent profile metadata is now preserved in the registry/export/import contract:
