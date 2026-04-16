@@ -1067,7 +1067,7 @@ def test_inbox_surfaces_broker_ack_failure(
 
     assert main(["inbox", reviewer_id]) == 1
     captured = capsys.readouterr()
-    assert "ack failed" in captured.err
+    assert captured.err.strip() == f"error: Broker inbox ack failed for agent {reviewer_id!r}: ack failed"
 
 
 def test_broker_inbox_message_can_be_replied_to_after_local_merge(
@@ -1121,7 +1121,7 @@ def test_broker_inbox_message_can_be_replied_to_after_local_merge(
     assert fake_broker.closed is True
 
 
-def test_broker_inbox_empty_pull_falls_back_to_local_cache(
+def test_broker_inbox_empty_pull_does_not_replay_local_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1156,6 +1156,7 @@ def test_broker_inbox_empty_pull_falls_back_to_local_cache(
 
     fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
     fake_broker.closed = False
+    fake_broker.acked.clear()
     assert main(["inbox", reviewer_id]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert _parse_fields(lines[0]) == {
@@ -1165,6 +1166,7 @@ def test_broker_inbox_empty_pull_falls_back_to_local_cache(
         "ack": "complete",
     }
     assert len(lines) == 1
+    assert fake_broker.acked == []
     assert fake_broker.closed is True
 
 
@@ -1225,6 +1227,47 @@ def test_send_does_not_persist_metadata_when_broker_publish_fails(
     captured = capsys.readouterr()
     assert "broker publish failed" in captured.err
     assert not get_collaboration_path({"HOME": str(tmp_path)}).exists()
+    assert fake_broker.closed is True
+
+
+def test_reply_does_not_persist_metadata_when_broker_publish_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_broker = FakeMessageBroker()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review",
+        "--topic",
+        "review handoff",
+    ]) == 0
+    sent_fields = _parse_fields(capsys.readouterr().out.strip())
+    payload_before = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
+
+    fake_broker.closed = False
+    fake_broker.publish_error = ValueError("broker publish failed")
+    assert main([
+        "reply",
+        sent_fields["message_id"],
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "should not persist",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "broker publish failed" in captured.err
+    assert get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8") == payload_before
     assert fake_broker.closed is True
 
 

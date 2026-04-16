@@ -904,8 +904,6 @@ def _ack_broker_messages(
     for envelope in envelopes:
         try:
             message_broker.ack(envelope)
-        except ValueError:
-            raise
         except Exception as exc:
             raise ValueError(
                 f"Broker inbox ack failed for agent {agent_id!r}: {exc}"
