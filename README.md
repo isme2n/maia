@@ -22,13 +22,14 @@ maia agent stop planner
 - `maia agent new <name>`: create an agent identity record with persona + call-sign defaults and `not-configured` setup state.
 - `maia agent setup <name>`: open `hermes setup` for that agent.
 - `maia agent start|stop|status|logs <name>`: operate that agent after setup.
-- `maia agent list|status` surface the operator-facing state as `not-configured`, `ready`, or `running`.
+- `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
+- A successful `maia agent setup` is recorded separately; the operator-facing state stays `not-configured` until runtime config exists.
 
 ## Known limitations
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
 - Shared infra depends on a reachable queue and DB state path.
 - `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
-- `maia agent setup` still lands in the next task; use it as the operator path into `hermes setup` for one agent.
+- `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
 - Messaging and thread commands remain available but are not the primary Part 1 operator flow.
 
 ## Runtime support boundary

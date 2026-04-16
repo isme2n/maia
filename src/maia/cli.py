@@ -14,6 +14,7 @@ import uuid
 from urllib.parse import quote
 
 from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus
+import maia.agent_setup_session as agent_setup_session
 from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
     get_default_export_path,
@@ -162,7 +163,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
         if command_name == "new":
             return _handle_agent_new(args, storage, state_path, registry)
         if command_name == "setup":
-            return _handle_agent_setup_placeholder(args, registry)
+            return _handle_agent_setup(args, storage, state_path, registry)
         if command_name == "list":
             return _handle_agent_list(registry)
         if command_name == "status":
@@ -211,12 +212,56 @@ def _handle_setup() -> int:
     return 0
 
 
-def _handle_agent_setup_placeholder(args: argparse.Namespace, registry) -> int:
-    registry.get(args.agent_id)
-    requested_name = getattr(args, "agent_lookup", args.agent_id)
-    raise ValueError(
-        f"Agent setup for {requested_name!r} is not implemented yet. Task 106 will open `hermes setup` for that agent"
+def _handle_agent_setup(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    _ = (storage, registry_path)
+    record = registry.get(args.agent_id)
+    requested_name = getattr(args, "agent_lookup", record.name)
+    try:
+        result = agent_setup_session.run_agent_setup_session(
+            agent_id=record.agent_id,
+            agent_name=record.name,
+        )
+    except ValueError as exc:
+        _record_agent_setup_status(record.agent_id, "incomplete")
+        print(
+            f"Agent setup failed for {requested_name!r}. "
+            f"Rerun maia agent setup {requested_name} after fixing the Hermes setup issue. {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    _record_agent_setup_status(record.agent_id, result.setup_status)
+    if result.exit_code == 0:
+        print(
+            f"Agent setup completed for {requested_name!r}. "
+            f"Hermes home is ready at {result.hermes_home}. "
+            f"Next: if runtime config is already set, run maia agent start {requested_name}"
+        )
+        return 0
+    print(
+        f"Agent setup failed for {requested_name!r}. "
+        f"Rerun maia agent setup {requested_name} after fixing the Hermes setup issue",
+        file=sys.stderr,
     )
+    return result.exit_code
+
+
+def _record_agent_setup_status(agent_id: str, setup_status: str) -> None:
+    state_storage = RuntimeStateStorage()
+    state_path = get_state_db_path()
+    states = state_storage.load(state_path)
+    existing = states.get(agent_id)
+    states[agent_id] = RuntimeState(
+        agent_id=agent_id,
+        runtime_status=(RuntimeStatus.STOPPED if existing is None else existing.runtime_status),
+        runtime_handle=None if existing is None else existing.runtime_handle,
+        setup_status=setup_status,
+    )
+    state_storage.save(state_path, states)
 
 
 def _is_doctor_failure(check: dict[str, str]) -> bool:
@@ -1874,6 +1919,8 @@ def _resolve_runtime_state_for_status(
 ) -> RuntimeState:
     stored_runtime_state = _load_runtime_state_for_agent(record)
     if stored_runtime_state is not None:
+        if stored_runtime_state.runtime_handle is None:
+            return stored_runtime_state
         return runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
     return RuntimeState(agent_id=record.agent_id, runtime_status=RuntimeStatus.STOPPED)
 

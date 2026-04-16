@@ -64,7 +64,7 @@ KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
     "Shared infra depends on a reachable queue and DB state path.",
     "`maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.",
-    "`maia agent setup` still lands in the next task; use it as the operator path into `hermes setup` for one agent.",
+    "`maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.",
     "Messaging and thread commands remain available but are not the primary Part 1 operator flow.",
 )
 GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW
@@ -300,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     for command_name in AGENT_COMMANDS:
         command_help = {
             "new": "Create an agent identity",
-            "setup": "Open hermes setup for an agent",
+            "setup": "Open hermes setup for an agent in the CLI",
             "start": "start agent",
             "stop": "stop agent",
             "archive": "archive agent",
@@ -313,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
         }[command_name]
         command_description = {
             "new": "Create an agent identity record.",
-            "setup": "Open hermes setup for an agent without adding Maia-managed runtime configuration.",
+            "setup": "Open hermes setup for an agent in the CLI without adding Maia-managed runtime configuration.",
         }.get(command_name)
         command_parser = agent_commands.add_parser(
             command_name,

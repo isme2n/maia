@@ -15,6 +15,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.app_state import (
+    get_agent_hermes_home,
     get_collaboration_path,
     get_runtime_state_path,
     get_state_db_path,
@@ -120,7 +121,10 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
     assert "persona + call-sign defaults" in text
-    assert "not-configured`, `ready`, or `running`" in text
+    assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
+    assert "interactive `hermes setup` session only in the CLI" in text
+    assert "operator-facing state stays `not-configured` until runtime config exists" in text
+    assert "still lands in the next task" not in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
@@ -145,6 +149,9 @@ def test_phase15_task102_matches_part1_contract() -> None:
     assert "agent setup" in text
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
     assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
+    assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
+        tmp_path / ".maia" / "agents" / "planner1234" / "hermes"
+    )
 
 
 def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -203,6 +210,7 @@ def test_agent_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) 
     captured = capsys.readouterr()
     assert "Open hermes setup for an agent" in captured.out
     assert "hermes setup" in captured.out
+    assert "in the CLI" in captured.out
     assert "provider" not in captured.out
     assert "runtime image" not in captured.out
     assert "Examples:" in captured.out
@@ -412,20 +420,125 @@ def test_setup_command_prints_bootstrap_summary_from_infra_runtime(
     assert captured.err == ""
 
 
-def test_agent_setup_command_fails_cleanly_until_task106(
+def test_agent_setup_command_runs_hermes_setup_and_records_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     capsys.readouterr()
+
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+
+    monkeypatch.setattr(
+        cli_module.agent_setup_session,
+        "run_agent_setup_session",
+        lambda *, agent_id, agent_name: cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+        ),
+    )
+
+    assert main(["agent", "setup", "planner"]) == 0
+    captured = capsys.readouterr()
+    assert "Agent setup completed for 'planner'" in captured.out
+    assert str(hermes_home) in captured.out
+    assert "if runtime config is already set" in captured.out
+    assert "maia agent start planner" in captured.out
+    assert captured.err == ""
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[agent_id].to_dict() == {
+        "agent_id": agent_id,
+        "runtime_status": "stopped",
+        "setup_status": "complete",
+    }
+
+
+def test_agent_setup_command_records_incomplete_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+
+    monkeypatch.setattr(
+        cli_module.agent_setup_session,
+        "run_agent_setup_session",
+        lambda *, agent_id, agent_name: cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=7,
+            hermes_home=hermes_home,
+            setup_status="incomplete",
+        ),
+    )
+
+    assert main(["agent", "setup", "planner"]) == 7
+    captured = capsys.readouterr()
+    assert "Agent setup failed for 'planner'" in captured.err
+    assert "maia agent setup planner" in captured.err
+    assert captured.out == ""
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[agent_id].to_dict() == {
+        "agent_id": agent_id,
+        "runtime_status": "stopped",
+        "setup_status": "incomplete",
+    }
+
+
+def test_agent_setup_session_normalizes_signal_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module.agent_setup_session.shutil, "which", lambda name: "/tmp/fake-hermes")
+    monkeypatch.setattr(
+        cli_module.agent_setup_session.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], -2),
+    )
+
+    result = cli_module.agent_setup_session.run_agent_setup_session(
+        agent_id="planner1234",
+        agent_name="planner",
+    )
+
+    assert result.exit_code == 130
+    assert result.setup_status == "incomplete"
+    assert result.hermes_home == get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)})
+
+
+def test_agent_setup_command_records_incomplete_when_hermes_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    monkeypatch.setattr(
+        cli_module.agent_setup_session.shutil,
+        "which",
+        lambda name: None,
+    )
 
     assert main(["agent", "setup", "planner"]) == 1
     captured = capsys.readouterr()
-    assert "Agent setup for" in captured.err
-    assert "is not implemented yet" in captured.err
-    assert "Task 106" in captured.err
+    assert "Agent setup failed for 'planner'" in captured.err
+    assert "Hermes CLI was not found in PATH" in captured.err
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[agent_id].to_dict() == {
+        "agent_id": agent_id,
+        "runtime_status": "stopped",
+        "setup_status": "incomplete",
+    }
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:

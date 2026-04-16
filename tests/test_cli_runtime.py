@@ -18,6 +18,7 @@ sys.path.insert(0, str(SRC_ROOT))
 from maia.agent_model import AgentRecord
 from maia import cli as cli_module
 from maia.app_state import (
+    get_agent_hermes_home,
     get_collaboration_path,
     get_default_export_path,
     get_registry_path,
@@ -162,6 +163,32 @@ def read_bundle_archive(path: Path) -> dict[str, object]:
 def line_map(stdout: str) -> dict[str, str]:
     lines = [line for line in stdout.strip().splitlines() if line]
     return {line.split()[0]: line for line in lines}
+
+
+def _write_fake_hermes(path: Path) -> None:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import os, sys\n"
+        "args = sys.argv[1:]\n"
+        "if args[:1] != ['setup']:\n"
+        "    print('unsupported hermes command', file=sys.stderr)\n"
+        "    raise SystemExit(2)\n"
+        "hermes_home = os.environ.get('HERMES_HOME', '')\n"
+        "if not hermes_home:\n"
+        "    print('missing HERMES_HOME', file=sys.stderr)\n"
+        "    raise SystemExit(3)\n"
+        "target = Path(hermes_home)\n"
+        "target.mkdir(parents=True, exist_ok=True)\n"
+        "(target / 'setup-marker.txt').write_text('configured', encoding='utf-8')\n"
+        "print(f'fake-hermes-setup hermes_home={hermes_home} agent_id={os.environ.get(\"MAIA_AGENT_ID\", \"\")} agent_name={os.environ.get(\"MAIA_AGENT_NAME\", \"\")}')\n"
+        "if os.environ.get('MAIA_FAKE_HERMES_FAIL') == '1':\n"
+        "    print('fake-hermes-setup failed', file=sys.stderr)\n"
+        "    raise SystemExit(7)\n"
+        "raise SystemExit(0)\n",
+        encoding='utf-8',
+    )
+    path.chmod(0o755)
 
 
 def _write_fake_docker(path: Path) -> None:
@@ -938,6 +965,91 @@ def test_agent_tune_and_status_encode_persona_whitespace_and_newlines(tmp_path: 
         "call_sign": "demo",
         "status": "not-configured",
         "persona": "research␠analyst↵",
+    }
+
+
+def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
+    agent_id = create_agent(tmp_path, "planner")
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "agent", "setup", "planner"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    assert f"hermes_home={hermes_home}" in result.stdout
+    assert f"agent_id={agent_id}" in result.stdout
+    assert "Agent setup completed for 'planner'" in result.stdout
+    assert "if runtime config is already set" in result.stdout
+    assert "maia agent start planner" in result.stdout
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "planner",
+        "call_sign": "planner",
+        "status": "not-configured",
+        "persona": "∅",
+    }
+    assert (hermes_home / "setup-marker.txt").read_text(encoding="utf-8") == "configured"
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": agent_id,
+                "runtime_status": "stopped",
+                "setup_status": "complete",
+            }
+        ]
+    }
+
+
+def test_agent_setup_passthrough_records_incomplete_setup_state_on_failure(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
+    agent_id = create_agent(tmp_path, "planner")
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["MAIA_FAKE_HERMES_FAIL"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "agent", "setup", "planner"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 7
+    assert "fake-hermes-setup failed" in result.stderr
+    assert "Agent setup failed for 'planner'" in result.stderr
+    assert "maia agent setup planner" in result.stderr
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": agent_id,
+                "runtime_status": "stopped",
+                "setup_status": "incomplete",
+            }
+        ]
     }
 
 

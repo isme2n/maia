@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from pathlib import Path
 
 __all__ = [
+    "get_agent_dir",
+    "get_agent_hermes_home",
+    "get_agents_dir",
     "get_collaboration_path",
     "get_default_export_path",
     "get_exports_dir",
@@ -18,6 +21,8 @@ __all__ = [
     "get_team_metadata_path",
 ]
 
+_AGENT_HERMES_HOME_DIRNAME = "hermes"
+_AGENTS_DIRNAME = "agents"
 _MAIA_HOME_DIRNAME = ".maia"
 _COLLABORATION_FILENAME = "collaboration.json"
 _DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
@@ -37,6 +42,24 @@ def get_maia_home(env: Mapping[str, str] | None = None) -> Path:
     if home:
         return Path(home).expanduser() / _MAIA_HOME_DIRNAME
     return Path.home() / _MAIA_HOME_DIRNAME
+
+
+def get_agents_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Return the directory for per-agent Maia state."""
+
+    return get_maia_home(env) / _AGENTS_DIRNAME
+
+
+def get_agent_dir(agent_id: str, env: Mapping[str, str] | None = None) -> Path:
+    """Return the Maia directory for one agent."""
+
+    return get_agents_dir(env) / agent_id
+
+
+def get_agent_hermes_home(agent_id: str, env: Mapping[str, str] | None = None) -> Path:
+    """Return the dedicated Hermes home path for one agent."""
+
+    return get_agent_dir(agent_id, env) / _AGENT_HERMES_HOME_DIRNAME
 
 
 def get_registry_path(env: Mapping[str, str] | None = None) -> Path:
