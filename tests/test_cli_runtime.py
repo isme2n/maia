@@ -2380,6 +2380,212 @@ def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
     assert len(collaboration["messages"]) == 2
 
 
+def test_running_agent_multi_turn_conversation_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    assert run_module(tmp_path, "setup").returncode == 0
+    assert run_module(tmp_path, "doctor").returncode == 0
+
+    planner_id = create_agent(tmp_path, "planner")
+    reviewer_id = create_agent(tmp_path, "reviewer")
+    assert run_module(tmp_path, "agent", "setup", planner_id).returncode == 0
+    assert run_module(tmp_path, "agent", "setup", reviewer_id).returncode == 0
+
+    assert run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        planner_id,
+        "--role",
+        "planner",
+        "--runtime-image",
+        "ghcr.io/example/planner:latest",
+        "--runtime-workspace",
+        "/workspace/planner",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "planner",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=planner",
+    ).returncode == 0
+    assert run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        reviewer_id,
+        "--role",
+        "reviewer",
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-command=-m",
+        "--runtime-command",
+        "reviewer",
+        "--runtime-env",
+        "MAIA_ENV=test",
+        "--runtime-env",
+        "MAIA_ROLE=reviewer",
+    ).returncode == 0
+
+    assert run_module(tmp_path, "agent", "start", planner_id).returncode == 0
+    assert run_module(tmp_path, "agent", "start", reviewer_id).returncode == 0
+
+    sent = run_module(
+        tmp_path,
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please review the latest patch",
+        "--topic",
+        "review handoff",
+        "--kind",
+        "request",
+    )
+    assert sent.returncode == 0
+    sent_fields = parse_fields(sent.stdout.strip())
+    thread_id = sent_fields["thread_id"]
+    first_message_id = sent_fields["message_id"]
+    sent_created_at = load_collaboration(tmp_path)["messages"][0]["created_at"]
+
+    reviewer_inbox = run_module(tmp_path, "inbox", reviewer_id)
+    assert reviewer_inbox.returncode == 0
+    reviewer_lines = reviewer_inbox.stdout.strip().splitlines()
+    assert parse_fields(reviewer_lines[0]) == {
+        "agent_id": reviewer_id,
+        "messages": "1",
+    }
+    assert parse_fields(reviewer_lines[1]) == {
+        "message_id": first_message_id,
+        "thread_id": thread_id,
+        "from_agent": planner_id,
+        "to_agent": reviewer_id,
+        "kind": "request",
+        "body": "please␠review␠the␠latest␠patch",
+        "created_at": sent_created_at,
+        "reply_to_message_id": "-",
+    }
+
+    replied = run_module(
+        tmp_path,
+        "reply",
+        first_message_id,
+        "--from-agent",
+        reviewer_id,
+        "--body",
+        "review complete",
+        "--kind",
+        "answer",
+    )
+    assert replied.returncode == 0
+    reply_fields = parse_fields(replied.stdout.strip())
+    assert reply_fields["kind"] == "answer"
+    reply_message_id = reply_fields["message_id"]
+    collaboration = load_collaboration(tmp_path)
+    sent_created_at = collaboration["messages"][0]["created_at"]
+    reply_created_at = collaboration["messages"][1]["created_at"]
+
+    planner_inbox = run_module(tmp_path, "inbox", planner_id)
+    assert planner_inbox.returncode == 0
+    planner_lines = planner_inbox.stdout.strip().splitlines()
+    assert parse_fields(planner_lines[0]) == {
+        "agent_id": planner_id,
+        "messages": "1",
+    }
+    assert parse_fields(planner_lines[1]) == {
+        "message_id": reply_message_id,
+        "thread_id": thread_id,
+        "from_agent": reviewer_id,
+        "to_agent": planner_id,
+        "kind": "answer",
+        "body": "review␠complete",
+        "created_at": reply_created_at,
+        "reply_to_message_id": first_message_id,
+    }
+
+    added = run_module(
+        tmp_path,
+        "handoff",
+        "add",
+        "--thread-id",
+        thread_id,
+        "--from-agent",
+        reviewer_id,
+        "--to-agent",
+        planner_id,
+        "--type",
+        "report",
+        "--location",
+        "reports/review.md",
+        "--summary",
+        "Review notes ready",
+    )
+    assert added.returncode == 0
+    added_fields = parse_fields(added.stdout.strip())
+    handoff_id = added_fields["handoff_id"]
+
+    thread_show = run_module(tmp_path, "thread", "show", thread_id)
+    assert thread_show.returncode == 0
+    thread_lines = thread_show.stdout.strip().splitlines()
+    assert parse_fields(thread_lines[0]) == {
+        "thread_id": thread_id,
+        "topic": "review␠handoff",
+        "participants": f"{planner_id},{reviewer_id}",
+        "participant_runtime": f"{planner_id}:running,{reviewer_id}:running",
+        "status": "open",
+        "updated_at": reply_created_at,
+        "pending_on": planner_id,
+        "handoffs": "1",
+        "messages": "2",
+        "created_by": planner_id,
+        "created_at": sent_created_at,
+        "recent_handoff_id": handoff_id,
+        "recent_handoff_from": reviewer_id,
+        "recent_handoff_to": planner_id,
+        "recent_handoff_type": "report",
+        "recent_handoff_location": "reports/review.md",
+        "recent_handoff_summary": "Review␠notes␠ready",
+        "recent_handoff_created_at": added_fields["created_at"],
+    }
+
+    planner_status = run_module(tmp_path, "agent", "status", planner_id)
+    reviewer_status = run_module(tmp_path, "agent", "status", reviewer_id)
+    assert planner_status.returncode == 0
+    assert reviewer_status.returncode == 0
+    assert parse_fields(planner_status.stdout.strip())["runtime"] == "running"
+    assert parse_fields(reviewer_status.stdout.strip())["runtime"] == "running"
+
+    planner_logs = run_module(tmp_path, "agent", "logs", planner_id, "--tail-lines", "2")
+    reviewer_logs = run_module(tmp_path, "agent", "logs", reviewer_id, "--tail-lines", "2")
+    assert planner_logs.returncode == 0
+    assert reviewer_logs.returncode == 0
+    assert parse_fields(planner_logs.stdout.strip().splitlines()[0]) == {
+        "agent_id": planner_id,
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+        "lines": "2",
+    }
+    assert parse_fields(reviewer_logs.stdout.strip().splitlines()[0]) == {
+        "agent_id": reviewer_id,
+        "runtime_status": "running",
+        "runtime_handle": "runtime-002",
+        "lines": "2",
+    }
+
+
 def test_v1_golden_flow_smoke_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
