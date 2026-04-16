@@ -194,7 +194,7 @@ def _handle_doctor() -> int:
     print(
         f"doctor kind=summary status={'ok' if not failed_checks else 'fail'} "
         f"failed={','.join(failed_checks) if failed_checks else '-'} "
-        f"next_step={_format_preview_value(_doctor_next_step(failed_checks))}"
+        f"next_step={_format_preview_value(_doctor_next_step(checks, failed_checks))}"
     )
     return 0 if not failed_checks else 1
 
@@ -205,7 +205,7 @@ def _is_doctor_failure(check: dict[str, str]) -> bool:
     return check["status"] != "ok"
 
 
-def _doctor_next_step(failed_checks: list[str]) -> str:
+def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) -> str:
     if not failed_checks:
         return "runtime commands are ready to use"
     if "docker_cli" in failed_checks:
@@ -213,6 +213,9 @@ def _doctor_next_step(failed_checks: list[str]) -> str:
     if "docker_compose" in failed_checks:
         return "install the Docker Compose plugin, then run maia doctor again"
     if "docker_daemon" in failed_checks:
+        docker_daemon_check = next((check for check in checks if check["name"] == "docker_daemon"), None)
+        if docker_daemon_check and "cannot talk to the Docker daemon" in docker_daemon_check["detail"]:
+            return "fix Docker permissions for this user, then run maia doctor again"
         return "start Docker, then run maia doctor again"
     if "broker_url" in failed_checks:
         return "set MAIA_BROKER_URL if you want broker-backed collaboration"
@@ -385,6 +388,9 @@ def _run_doctor_probe(
         }
 
     detail = (result.stderr or result.stdout or "probe failed").strip()
+    if name == "docker_daemon" and "permission denied" in detail.lower():
+        detail = "Docker is installed, but this user cannot talk to the Docker daemon"
+        failure_remediation = "Start Docker and make sure your user has permission to use it"
     return {
         "name": name,
         "status": "fail",

@@ -25,6 +25,12 @@ maia doctor
 - No workspace sync/file transfer: handoff/workspace show pointers and runtime context only.
 - No DB migration or live-state restore: import/export covers portable state only.
 
+## Runtime support boundary
+- Fake-docker tests prove the runtime control-plane contract, not your machine's Docker setup.
+- Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.
+- If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.
+- Broker-backed collaboration and runtime validation are separate checks.
+
 ## V1 release checklist
 - Quickstart/help/README describe only the supported v1 surfaces and known limitations.
 - Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> `maia export` -> `maia inspect ~/.maia/exports/maia-state.maia`.
@@ -112,6 +118,14 @@ maia doctor
   - `maia workspace show <planner_id>`
   - `maia agent status <planner_id>`
   - `maia agent logs <planner_id> --tail-lines 20`
+- Live host runtime checklist:
+  - `maia doctor`
+  - `maia agent new <name>`
+  - `maia agent tune <id> --runtime-image ... --runtime-workspace ... --runtime-command ... --runtime-env ...`
+  - `maia agent start <id>`
+  - `maia agent status <id>`
+  - `maia agent logs <id>`
+  - `maia agent stop <id>`
 - Export portable state:
   - `maia export`
   - `maia export backups/team.maia`

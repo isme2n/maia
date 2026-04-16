@@ -497,6 +497,50 @@ def test_doctor_reports_invalid_broker_url_port(tmp_path: Path, monkeypatch: pyt
     }
 
 
+def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    fake_docker.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then\n"
+        "  echo 'Docker version 27.0.0'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = \"compose\" ] && [ \"$2\" = \"version\" ]; then\n"
+        "  echo 'Docker Compose version v2.29.0'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = \"info\" ]; then\n"
+        "  echo 'permission denied while trying to connect to the Docker daemon socket' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo 'unsupported command' >&2\n"
+        "exit 1\n",
+        encoding='utf-8',
+    )
+    fake_docker.chmod(0o755)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv('MAIA_BROKER_URL', raising=False)
+
+    result = run_module(tmp_path, 'doctor')
+
+    assert result.returncode == 1
+    lines = result.stdout.strip().splitlines()
+    assert parse_fields(lines[2]) == {
+        'check': 'docker_daemon',
+        'status': 'fail',
+        'detail': 'Docker␠is␠installed⸴␠but␠this␠user␠cannot␠talk␠to␠the␠Docker␠daemon',
+        'remediation': 'Start␠Docker␠and␠make␠sure␠your␠user␠has␠permission␠to␠use␠it',
+    }
+    assert parse_fields(lines[-1]) == {
+        'kind': 'summary',
+        'status': 'fail',
+        'failed': 'docker_daemon',
+        'next_step': 'fix␠Docker␠permissions␠for␠this␠user⸴␠then␠run␠maia␠doctor␠again',
+    }
+
+
 def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
 

@@ -40,6 +40,12 @@ QUICKSTART_EXAMPLES = (
     "maia inspect ~/.maia/exports/maia-state.maia",
 )
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
+RUNTIME_SUPPORT_BOUNDARY = (
+    "Fake-docker tests prove the runtime control-plane contract, not your machine's Docker setup.",
+    "Run `maia doctor` on the host before using `agent start|stop|status|logs` for real.",
+    "If `maia doctor` fails, fix Docker on the host first, then retry the runtime command.",
+    "Broker-backed collaboration and runtime validation are separate checks.",
+)
 V1_RELEASE_CHECKLIST = (
     "Quickstart/help/README describe only the supported v1 surfaces and known limitations.",
     "Local portable-state path stays reproducible: `maia agent new planner` -> `maia agent list` -> "
@@ -76,6 +82,15 @@ GOLDEN_FLOW_SMOKE_CONTRACT = (
     "maia workspace show <planner_id>",
     "maia agent status <planner_id>",
     "maia agent logs <planner_id> --tail-lines 20",
+)
+HOST_VALIDATION_CHECKLIST = (
+    "maia doctor",
+    "maia agent new <name>",
+    "maia agent tune <id> --runtime-image ... --runtime-workspace ... --runtime-command ... --runtime-env ...",
+    "maia agent start <id>",
+    "maia agent status <id>",
+    "maia agent logs <id>",
+    "maia agent stop <id>",
 )
 EXPORT_EXAMPLES = (
     "maia export",
@@ -146,8 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
         ("Quickstart (local state only):", QUICKSTART_EXAMPLES),
         ("Before runtime or live collaboration:", RUNTIME_PREREQ_EXAMPLES),
         ("Known limitations:", KNOWN_LIMITATIONS),
+        ("Runtime support boundary:", RUNTIME_SUPPORT_BOUNDARY),
         ("V1 release checklist:", V1_RELEASE_CHECKLIST),
         ("V1 smoke checklist:", GOLDEN_FLOW_SMOKE_CONTRACT),
+        ("Live host runtime checklist:", HOST_VALIDATION_CHECKLIST),
     )
 
     top_level = parser.add_subparsers(dest="resource")
