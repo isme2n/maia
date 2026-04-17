@@ -35,22 +35,23 @@
 - Run `maia doctor` before runtime-control or live-collaboration smoke.
 - The v1 smoke checklist below passes end-to-end on a representative host.
 - Task 081 executes the repo closeout gates: `bash scripts/verify.sh`, reviewer approve, and clean worktree.
+- Task 117/118/119 close the late RC blockers: default first-start runtime bootstrap, SQLite-backed runtime self-discovery, and stale worker-image freshness.
 
 ## V1 smoke checklist
 - `maia doctor`
+- `maia setup`
 - `maia agent new planner`
 - `maia agent new reviewer`
-- `maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner`
-- `maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer`
+- `maia agent setup planner`
+- `maia agent setup reviewer`
 - `maia agent start <planner_id>`
 - `maia agent start <reviewer_id>`
 - `maia send <planner_id> <reviewer_id> --body 'please review the latest patch' --topic 'review handoff'`
-- `maia reply <message_id> --from-agent <reviewer_id> --body 'review complete'`
+- verify broker-backed reply from reviewer
 - `maia handoff add --thread-id <thread_id> --from-agent <reviewer_id> --to-agent <planner_id> --type report --location reports/review.md --summary 'Review notes ready'`
 - `maia thread list --status open`
 - `maia thread show <thread_id>`
 - `maia handoff show <handoff_id>`
-- `maia workspace show <planner_id>`
 - `maia agent status <planner_id>`
 - `maia agent logs <planner_id> --tail-lines 20`
 
