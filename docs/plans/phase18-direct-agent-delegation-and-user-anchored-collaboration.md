@@ -36,10 +36,11 @@
 - Dynamic agent addition stays supported, but it is not the primary value proposition of this phase.
 
 ## Minimum state contract for this phase
-- The original conversation anchor is the user-facing conversation where the request began: `user <-> A` in the canonical `user -> A -> B -> A -> user` loop.
-- Delegation metadata such as `delegated_to`, `delegation_status`, `current_thread_id`, and `latest_internal_update` belongs to that original `user <-> A` anchor conversation.
-- Internal A <-> B turns and user-facing A <-> user relays are distinct event classes and must not be collapsed into the same synthetic "relay" concept.
-- A reviewer must be able to trace every user-visible delegation update back to a real stored internal A <-> B message turn.
+- Long-term product target: the original conversation anchor is the user-facing conversation where the request began: `user <-> A` in the canonical `user -> A -> B -> A -> user` loop.
+- Current truthful Maia closeout model: until Maia has a separate first-class user conversation object, the anchor is represented by the A-owned collaboration thread/context.
+- Delegation metadata such as `delegated_to`, `delegation_status`, `current_thread_id`, and `latest_internal_update` belongs to that current anchor context.
+- Internal A <-> B turns and any future user-facing A <-> user relays are distinct event classes and must not be collapsed into the same synthetic "relay" concept.
+- A reviewer must be able to trace every surfaced delegation update back to a real stored internal A <-> B message turn.
 
 ### Locked delegation_status meanings
 | Triggering event | delegation_status | Locked meaning |
@@ -103,16 +104,16 @@ At minimum, the closeout task must show:
 - a real delegated request message from anchor agent A to delegate agent B
 - at least one intermediate message from B back to A (`question` or `report`)
 - persistence/visibility of that intermediate turn in thread/message state
-- a relay from A back into the original user-facing conversation context
-- a final result message from B to A
-- a final result relay from A to the original user-facing conversation context
+- a continuation on the same anchor context from A back to B when the loop requires it
+- a final result message or handoff from B to A
+- final readiness surfaced on that same anchor context
 
 ---
 
 ## Verification bar for the phase
 - targeted pytest for each task
 - broader CLI/runtime regression before closeout
-- representative live smoke for user -> A -> B -> A -> user loop
+- representative live smoke for the truthful current anchor-thread loop, with future user-facing relay proof deferred until Maia has a first-class user conversation object
 - reviewer approve per task
 - clean scoped commits
 - docs/help/tests align to the same public story
@@ -122,5 +123,10 @@ At minimum, the closeout task must show:
 - The active conversation agent remains the user-facing anchor while collaborating internally.
 - Internal collaboration supports request -> question/report -> answer -> final result.
 - The user can see minimal delegation status without a dashboard-first experience.
-- A representative live smoke proves results return to the original conversation context.
+- A representative live smoke proves truthful anchor-context continuity today, without inventing a fake extra user-conversation subsystem.
 - README/help/tests tell the same product story.
+
+## Closeout note for Task 124
+- Current Maia code still has no separate first-class user conversation object.
+- The truthful closeout interpretation is the anchor thread/context owned by agent A: the delegated request begins there, intermediate turns stay visible there, and final handoff readiness is reported there.
+- Task 124 regression should therefore lock `A -> B -> A -> B -> A` collaboration on one anchor thread and verify that `thread show`/`handoff show` surface the full loop without inventing a fake extra user subsystem.

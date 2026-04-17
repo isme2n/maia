@@ -2703,6 +2703,225 @@ def test_v1_golden_flow_smoke_contract(
     assert parse_fields(log_lines[2]) == {"line": "line␠2"}
 
 
+def test_live_runtime_delegation_loop_stays_on_anchor_thread_in_current_maia_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_hermes(fake_hermes)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    assert run_module(tmp_path, "setup").returncode == 0
+    assert run_module(tmp_path, "doctor").returncode == 0
+
+    anchor_id = create_agent(tmp_path, "economist")
+    delegate_id = create_agent(tmp_path, "tech")
+    assert run_module(tmp_path, "agent", "setup", anchor_id).returncode == 0
+    assert run_module(tmp_path, "agent", "setup", delegate_id).returncode == 0
+    assert run_module(tmp_path, "agent", "start", anchor_id).returncode == 0
+    assert run_module(tmp_path, "agent", "start", delegate_id).returncode == 0
+
+    delegated_request = run_module(
+        tmp_path,
+        "send",
+        anchor_id,
+        delegate_id,
+        "--body",
+        "Please build the crawler and tell me what input format you still need.",
+        "--topic",
+        "crawler delegation",
+    )
+    assert delegated_request.returncode == 0
+    delegated_request_fields = parse_fields(delegated_request.stdout.strip())
+    thread_id = delegated_request_fields["thread_id"]
+    delegated_request_id = delegated_request_fields["message_id"]
+
+    delegate_question = run_module(
+        tmp_path,
+        "send",
+        delegate_id,
+        anchor_id,
+        "--body",
+        "Which site should I target and what output schema do you want?",
+        "--thread-id",
+        thread_id,
+        "--kind",
+        "question",
+    )
+    assert delegate_question.returncode == 0
+    delegate_question_fields = parse_fields(delegate_question.stdout.strip())
+    delegate_question_id = delegate_question_fields["message_id"]
+
+    thread_after_question = run_module(tmp_path, "thread", "show", thread_id)
+    assert thread_after_question.returncode == 0
+    question_lines = thread_after_question.stdout.strip().splitlines()
+    assert parse_fields(question_lines[0])["created_by"] == anchor_id
+    assert parse_fields(question_lines[0])["current_thread_id"] == thread_id
+    assert parse_fields(question_lines[0])["delegated_to"] == delegate_id
+    assert parse_fields(question_lines[0])["delegation_status"] == "needs_user_input"
+    assert parse_fields(question_lines[0])["latest_internal_update"] == (
+        f"{delegate_id}␠question:␠Which␠site␠should␠I␠target␠and␠what␠output␠sche…"
+    )
+    assert parse_fields(question_lines[2]) == {
+        "message_id": delegate_question_id,
+        "thread_id": thread_id,
+        "from_agent": delegate_id,
+        "to_agent": anchor_id,
+        "kind": "question",
+        "body": "Which␠site␠should␠I␠target␠and␠what␠output␠schema␠do␠you␠want?",
+        "created_at": parse_fields(question_lines[2])["created_at"],
+        "reply_to_message_id": "-",
+    }
+
+    anchor_answer = run_module(
+        tmp_path,
+        "reply",
+        delegate_question_id,
+        "--from-agent",
+        anchor_id,
+        "--body",
+        "Target example.com and emit JSONL with title,url,summary.",
+    )
+    assert anchor_answer.returncode == 0
+    anchor_answer_fields = parse_fields(anchor_answer.stdout.strip())
+    anchor_answer_id = anchor_answer_fields["message_id"]
+    assert anchor_answer_fields["thread_id"] == thread_id
+    assert anchor_answer_fields["reply_to_message_id"] == delegate_question_id
+    assert anchor_answer_fields["delegation_status"] == "answered"
+    assert anchor_answer_fields["current_thread_id"] == thread_id
+
+    delegate_report = run_module(
+        tmp_path,
+        "reply",
+        anchor_answer_id,
+        "--from-agent",
+        delegate_id,
+        "--body",
+        "Crawler is running; initial scrape looks clean.",
+        "--kind",
+        "report",
+    )
+    assert delegate_report.returncode == 0
+    delegate_report_fields = parse_fields(delegate_report.stdout.strip())
+    delegate_report_id = delegate_report_fields["message_id"]
+    assert delegate_report_fields["thread_id"] == thread_id
+    assert delegate_report_fields["reply_to_message_id"] == anchor_answer_id
+    assert delegate_report_fields["delegation_status"] == "answered"
+    assert delegate_report_fields["current_thread_id"] == thread_id
+
+    final_handoff = run_module(
+        tmp_path,
+        "handoff",
+        "add",
+        "--thread-id",
+        thread_id,
+        "--from-agent",
+        delegate_id,
+        "--to-agent",
+        anchor_id,
+        "--type",
+        "report",
+        "--location",
+        "artifacts/crawler.jsonl",
+        "--summary",
+        "Crawler output ready for the anchor reply",
+    )
+    assert final_handoff.returncode == 0
+    final_handoff_fields = parse_fields(final_handoff.stdout.strip())
+
+    collaboration = load_collaboration(tmp_path)
+    message_created_at = {
+        message["message_id"]: message["created_at"]
+        for message in collaboration["messages"]
+    }
+
+    thread_show = run_module(tmp_path, "thread", "show", thread_id)
+    assert thread_show.returncode == 0
+    thread_lines = thread_show.stdout.strip().splitlines()
+    assert parse_fields(thread_lines[0]) == {
+        "thread_id": thread_id,
+        "topic": "crawler␠delegation",
+        "participants": f"{anchor_id},{delegate_id}",
+        "participant_runtime": f"{anchor_id}:running,{delegate_id}:running",
+        "status": "open",
+        "updated_at": message_created_at[delegate_report_id],
+        "pending_on": anchor_id,
+        "delegated_to": delegate_id,
+        "delegation_status": "handoff_ready",
+        "current_thread_id": thread_id,
+        "latest_internal_update": f"{delegate_id}␠report:␠Crawler␠output␠ready␠for␠the␠anchor␠reply",
+        "handoffs": "1",
+        "messages": "4",
+        "created_by": anchor_id,
+        "created_at": message_created_at[delegated_request_id],
+        "recent_handoff_id": final_handoff_fields["handoff_id"],
+        "recent_handoff_from": delegate_id,
+        "recent_handoff_to": anchor_id,
+        "recent_handoff_type": "report",
+        "recent_handoff_location": "artifacts/crawler.jsonl",
+        "recent_handoff_summary": "Crawler␠output␠ready␠for␠the␠anchor␠reply",
+        "recent_handoff_created_at": final_handoff_fields["created_at"],
+    }
+    assert parse_fields(thread_lines[1]) == {
+        "message_id": delegated_request_id,
+        "thread_id": thread_id,
+        "from_agent": anchor_id,
+        "to_agent": delegate_id,
+        "kind": "request",
+        "body": "Please␠build␠the␠crawler␠and␠tell␠me␠what␠input␠format␠you␠still␠need.",
+        "created_at": message_created_at[delegated_request_id],
+        "reply_to_message_id": "-",
+    }
+    assert parse_fields(thread_lines[2]) == {
+        "message_id": delegate_question_id,
+        "thread_id": thread_id,
+        "from_agent": delegate_id,
+        "to_agent": anchor_id,
+        "kind": "question",
+        "body": "Which␠site␠should␠I␠target␠and␠what␠output␠schema␠do␠you␠want?",
+        "created_at": message_created_at[delegate_question_id],
+        "reply_to_message_id": "-",
+    }
+    assert parse_fields(thread_lines[3]) == {
+        "message_id": anchor_answer_id,
+        "thread_id": thread_id,
+        "from_agent": anchor_id,
+        "to_agent": delegate_id,
+        "kind": "answer",
+        "body": "Target␠example.com␠and␠emit␠JSONL␠with␠title⸴url⸴summary.",
+        "created_at": message_created_at[anchor_answer_id],
+        "reply_to_message_id": delegate_question_id,
+    }
+    assert parse_fields(thread_lines[4]) == {
+        "message_id": delegate_report_id,
+        "thread_id": thread_id,
+        "from_agent": delegate_id,
+        "to_agent": anchor_id,
+        "kind": "report",
+        "body": "Crawler␠is␠running;␠initial␠scrape␠looks␠clean.",
+        "created_at": message_created_at[delegate_report_id],
+        "reply_to_message_id": anchor_answer_id,
+    }
+
+    handoff_show = run_module(tmp_path, "handoff", "show", final_handoff_fields["handoff_id"])
+    assert handoff_show.returncode == 0
+    handoff_lines = handoff_show.stdout.strip().splitlines()
+    assert parse_fields(handoff_lines[0]) == {
+        "handoff_id": final_handoff_fields["handoff_id"],
+        "thread_id": thread_id,
+        "from_agent": delegate_id,
+        "to_agent": anchor_id,
+        "type": "report",
+        "location": "artifacts/crawler.jsonl",
+        "summary": "Crawler␠output␠ready␠for␠the␠anchor␠reply",
+        "created_at": final_handoff_fields["created_at"],
+    }
+
+
 def test_v1_golden_flow_visibility_path_closes_part2_operator_story(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

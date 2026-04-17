@@ -96,6 +96,7 @@
 **Planned design input:**
 - `docs/plans/phase18-direct-agent-delegation-and-user-anchored-collaboration.md`
 - Part 4 wording must keep the public story as `user -> A -> B -> A -> user`, with agent A staying the user-facing anchor instead of Maia becoming a front desk.
+- Closeout note: Task 124 locked a truthful regression using Maia's current anchor-thread interpretation, so the live delegation loop is verified on the same A-owned thread/context until a separate first-class user conversation object exists.
 
 ---
 
