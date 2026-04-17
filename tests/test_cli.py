@@ -1833,6 +1833,10 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert open_fields["status"] == "open"
     assert open_fields["updated_at"] == "2026-04-15T12:02:00Z"
     assert open_fields["pending_on"] == "planner"
+    assert open_fields["delegated_to"] == "reviewer"
+    assert open_fields["delegation_status"] == "answered"
+    assert open_fields["current_thread_id"] == "thread-001"
+    assert open_fields["latest_internal_update"] == "reviewer␠answer:␠latest␠update"
     assert open_fields["handoffs"] == "1"
     assert open_fields["messages"] == "2"
     assert open_fields["recent_handoff_id"] == "artifact-001"
@@ -1850,6 +1854,8 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert colon_fields["thread_id"] == "thread-003"
     assert colon_fields["participant_runtime"] == "agent%3A1:stopped"
     assert colon_fields["pending_on"] == "-"
+    assert colon_fields["delegated_to"] == "-"
+    assert colon_fields["delegation_status"] == "-"
     assert colon_fields["recent_handoff_id"] == "-"
 
     assert main(["thread", "list", "--agent", "reviewer"]) == 0
@@ -1869,6 +1875,10 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert show_fields["thread_id"] == "thread-001"
     assert show_fields["participant_runtime"] == "planner:running,reviewer:stopped"
     assert show_fields["pending_on"] == "planner"
+    assert show_fields["delegated_to"] == "reviewer"
+    assert show_fields["delegation_status"] == "answered"
+    assert show_fields["current_thread_id"] == "thread-001"
+    assert show_fields["latest_internal_update"] == "reviewer␠answer:␠latest␠update"
     assert show_fields["handoffs"] == "1"
     assert show_fields["messages"] == "2"
     assert show_fields["created_by"] == "planner"
@@ -1925,6 +1935,8 @@ def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_inval
     assert fields["thread_id"] == "thread-invalid-runtime"
     assert fields["participant_runtime"] == "planner:stopped"
     assert fields["pending_on"] == "-"
+    assert fields["delegated_to"] == "-"
+    assert fields["delegation_status"] == "-"
 
 
 def test_thread_show_preserves_message_order_when_timestamps_tie(
@@ -1968,9 +1980,190 @@ def test_thread_show_preserves_message_order_when_timestamps_tie(
     second_message_fields = _parse_fields(thread_lines[2])
 
     assert thread_fields["pending_on"] == planner_id
+    assert thread_fields["delegated_to"] == reviewer_id
+    assert thread_fields["delegation_status"] == "answered"
+    assert thread_fields["current_thread_id"] == sent_fields["thread_id"]
+    assert thread_fields["latest_internal_update"] == f"{reviewer_id}␠answer:␠review␠complete"
     assert first_message_fields["message_id"] == sent_fields["message_id"]
     assert second_message_fields["message_id"] == reply_fields["message_id"]
     assert second_message_fields["reply_to_message_id"] == sent_fields["message_id"]
+
+
+def test_send_and_reply_surface_delegation_status_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        "please inspect the patch",
+        "--topic",
+        "delegation status",
+    ]) == 0
+    sent_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert sent_fields["delegated_to"] == reviewer_id
+    assert sent_fields["delegation_status"] == "pending"
+    assert sent_fields["current_thread_id"] == sent_fields["thread_id"]
+    assert sent_fields["latest_internal_update"] == f"{planner_id}␠request:␠please␠inspect␠the␠patch"
+
+    assert main([
+        "send",
+        reviewer_id,
+        planner_id,
+        "--thread-id",
+        sent_fields["thread_id"],
+        "--kind",
+        "question",
+        "--body",
+        "Which repo should I use?",
+    ]) == 0
+    question_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert question_fields["delegated_to"] == reviewer_id
+    assert question_fields["delegation_status"] == "needs_user_input"
+    assert question_fields["current_thread_id"] == sent_fields["thread_id"]
+    assert question_fields["latest_internal_update"] == f"{reviewer_id}␠question:␠Which␠repo␠should␠I␠use?"
+
+    assert main([
+        "reply",
+        question_fields["message_id"],
+        "--from-agent",
+        planner_id,
+        "--kind",
+        "answer",
+        "--body",
+        "Use the maia repo.",
+    ]) == 0
+    answer_fields = _parse_fields(capsys.readouterr().out.strip())
+    assert answer_fields["delegated_to"] == reviewer_id
+    assert answer_fields["delegation_status"] == "answered"
+    assert answer_fields["current_thread_id"] == sent_fields["thread_id"]
+    assert answer_fields["latest_internal_update"] == f"{planner_id}␠answer:␠Use␠the␠maia␠repo."
+
+
+def test_thread_delegation_status_prefers_newer_message_over_older_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+
+    state_db_path = get_state_db_path({"HOME": str(tmp_path)})
+    CollaborationStorage().save(
+        state_db_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-stale-handoff",
+                topic="delegation freshness",
+                participants=[planner_id, reviewer_id],
+                created_by=planner_id,
+                status="open",
+                created_at="2026-04-17T12:00:00Z",
+                updated_at="2026-04-17T12:04:00Z",
+            )
+        ],
+        messages=[
+            MessageRecord(
+                message_id="msg-new-request",
+                thread_id="thread-stale-handoff",
+                from_agent=planner_id,
+                to_agent=reviewer_id,
+                kind=MessageKind.REQUEST,
+                body="Please continue with v2.",
+                created_at="2026-04-17T12:04:00Z",
+            )
+        ],
+        handoffs=[
+            HandoffRecord(
+                handoff_id="handoff-old",
+                thread_id="thread-stale-handoff",
+                from_agent=reviewer_id,
+                to_agent=planner_id,
+                kind=HandoffKind.REPORT,
+                location="reports/v1.md",
+                summary="V1 ready",
+                created_at="2026-04-17T12:03:00Z",
+            )
+        ],
+    )
+
+    assert main(["thread", "show", "thread-stale-handoff"]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip().splitlines()[0])
+    assert fields["delegated_to"] == reviewer_id
+    assert fields["delegation_status"] == "pending"
+    assert fields["latest_internal_update"] == f"{planner_id}␠request:␠Please␠continue␠with␠v2."
+
+
+def test_thread_without_internal_events_does_not_fabricate_delegation_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    state_db_path = get_state_db_path({"HOME": str(tmp_path)})
+    CollaborationStorage().save(
+        state_db_path,
+        threads=[
+            ThreadRecord(
+                thread_id="thread-no-events",
+                topic="empty delegation",
+                participants=["planner", "reviewer"],
+                created_by="planner",
+                status="open",
+                created_at="2026-04-17T12:00:00Z",
+                updated_at="2026-04-17T12:00:00Z",
+            )
+        ],
+        messages=[],
+        handoffs=[],
+    )
+
+    assert main(["thread", "show", "thread-no-events"]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip().splitlines()[0])
+    assert fields["delegated_to"] == "-"
+    assert fields["delegation_status"] == "-"
+    assert fields["latest_internal_update"] == "-"
+
+
+def test_latest_internal_update_truncates_long_internal_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
+
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    long_body = "This is a very long internal update that should be summarized before it reaches lightweight delegation status output."
+
+    assert main([
+        "send",
+        planner_id,
+        reviewer_id,
+        "--body",
+        long_body,
+        "--topic",
+        "delegation truncation",
+    ]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip())
+    assert fields["delegation_status"] == "pending"
+    assert fields["latest_internal_update"].startswith(f"{planner_id}␠request:␠This␠is␠a␠very␠long␠internal␠update")
+    assert fields["latest_internal_update"].endswith("…")
 
 
 @pytest.mark.parametrize(

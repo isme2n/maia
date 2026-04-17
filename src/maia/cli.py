@@ -415,9 +415,17 @@ def _handle_send(
         threads=threads,
         messages=messages,
     )
+    thread_messages = [
+        saved_message for saved_message in messages if saved_message.thread_id == thread.thread_id
+    ]
+    thread_handoffs = [
+        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
+    ]
+    delegation_fields = _format_delegation_status_fields(thread, thread_messages, thread_handoffs)
     print(
         f"sent thread_id={thread.thread_id} message_id={message.message_id} "
-        f"from_agent={message.from_agent} to_agent={message.to_agent} kind={message.kind.value}"
+        f"from_agent={message.from_agent} to_agent={message.to_agent} kind={message.kind.value} "
+        f"{delegation_fields}"
     )
     return 0
 
@@ -675,10 +683,17 @@ def _handle_reply(
         threads=threads,
         messages=messages,
     )
+    thread_messages = [
+        saved_message for saved_message in messages if saved_message.thread_id == thread.thread_id
+    ]
+    thread_handoffs = [
+        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
+    ]
+    delegation_fields = _format_delegation_status_fields(thread, thread_messages, thread_handoffs)
     print(
         f"replied thread_id={thread.thread_id} message_id={message.message_id} "
         f"reply_to_message_id={source_message.message_id} from_agent={message.from_agent} "
-        f"to_agent={message.to_agent} kind={message.kind.value}"
+        f"to_agent={message.to_agent} kind={message.kind.value} {delegation_fields}"
     )
     return 0
 
@@ -772,6 +787,11 @@ def _format_thread_overview_fields(
     runtime_states: dict[str, RuntimeState],
 ) -> str:
     recent_handoff = _select_recent_handoff(thread_handoffs)
+    delegation_fields = _format_delegation_status_fields(
+        thread,
+        thread_messages,
+        thread_handoffs,
+    )
     return (
         f"thread_id={thread.thread_id} "
         f"topic={_format_preview_value(thread.topic)} "
@@ -779,12 +799,128 @@ def _format_thread_overview_fields(
         f"participant_runtime={_format_thread_participant_runtime(thread.participants, runtime_states)} "
         f"status={thread.status} updated_at={thread.updated_at} "
         f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
+        f"{delegation_fields} "
         f"handoffs={len(thread_handoffs)} messages={len(thread_messages)} "
         f"recent_handoff_id={recent_handoff.handoff_id if recent_handoff is not None else '-'} "
         f"recent_handoff_to={recent_handoff.to_agent if recent_handoff is not None else '-'} "
         f"recent_handoff_type={recent_handoff.kind.value if recent_handoff is not None else '-'} "
         f"recent_handoff_summary={_format_preview_value(recent_handoff.summary) if recent_handoff is not None else '-'}"
     )
+
+
+def _format_delegation_status_fields(
+    thread: ThreadRecord,
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> str:
+    delegated_to = _derive_delegated_to(thread, thread_messages, thread_handoffs)
+    delegation_status = _derive_delegation_status(thread, thread_messages, thread_handoffs)
+    latest_internal_update = _derive_latest_internal_update(
+        thread,
+        thread_messages,
+        thread_handoffs,
+    )
+    return (
+        f"delegated_to={_format_preview_value(delegated_to)} "
+        f"delegation_status={delegation_status} "
+        f"current_thread_id={thread.thread_id} "
+        f"latest_internal_update={_format_preview_value(latest_internal_update)}"
+    )
+
+
+def _derive_delegated_to(
+    thread: ThreadRecord,
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> str:
+    anchor_agent = thread.created_by
+    latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
+    if latest_event is None:
+        return "-"
+    _event_kind, payload = latest_event
+    return _derive_delegated_counterparty(anchor_agent, payload.from_agent, payload.to_agent)
+
+
+def _derive_delegated_counterparty(anchor_agent: str, from_agent: str, to_agent: str) -> str:
+    if from_agent == anchor_agent and to_agent != anchor_agent:
+        return to_agent
+    if to_agent == anchor_agent and from_agent != anchor_agent:
+        return from_agent
+    if from_agent != anchor_agent:
+        return from_agent
+    if to_agent != anchor_agent:
+        return to_agent
+    return "-"
+
+
+def _derive_delegation_status(
+    thread: ThreadRecord,
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> str:
+    anchor_agent = thread.created_by
+    latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
+    if latest_event is None:
+        return "-"
+    event_kind, payload = latest_event
+    if event_kind == "handoff":
+        return "handoff_ready" if payload.to_agent == anchor_agent else "answered"
+    if payload.kind is MessageKind.REQUEST:
+        return "pending"
+    if payload.kind is MessageKind.QUESTION and payload.to_agent == anchor_agent:
+        return "needs_user_input"
+    if payload.kind in {MessageKind.ANSWER, MessageKind.REPORT}:
+        return "answered"
+    if payload.kind is MessageKind.HANDOFF:
+        return "handoff_ready" if payload.to_agent == anchor_agent else "answered"
+    return "-"
+
+
+def _derive_latest_internal_update(
+    thread: ThreadRecord,
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> str:
+    latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
+    if latest_event is None:
+        return "-"
+    event_kind, payload = latest_event
+    if event_kind == "handoff":
+        summary = payload.summary if payload.summary else payload.location
+        return f"{payload.from_agent} {payload.kind.value}: {_summarize_internal_update_text(summary)}"
+    return f"{payload.from_agent} {payload.kind.value}: {_summarize_internal_update_text(payload.body)}"
+
+
+def _summarize_internal_update_text(value: str, *, max_length: int = 48) -> str:
+    if len(value) <= max_length:
+        return value
+    truncated = value[: max_length - 1].rstrip()
+    return f"{truncated}…"
+
+
+def _select_latest_internal_event(
+    thread_messages: Sequence[MessageRecord],
+    thread_handoffs: Sequence[HandoffRecord],
+) -> tuple[str, MessageRecord | HandoffRecord] | None:
+    latest_message = _sorted_thread_messages(thread_messages)[-1] if thread_messages else None
+    latest_handoff = _select_recent_handoff(thread_handoffs)
+    if latest_message is None and latest_handoff is None:
+        return None
+    if latest_handoff is None:
+        return ("message", latest_message)
+    if latest_message is None:
+        return ("handoff", latest_handoff)
+    if latest_handoff.created_at >= latest_message.created_at:
+        return ("handoff", latest_handoff)
+    return ("message", latest_message)
+
+
+def _select_latest_handoff_to_anchor(
+    thread_handoffs: Sequence[HandoffRecord],
+    anchor_agent: str,
+) -> HandoffRecord | None:
+    anchor_handoffs = [handoff for handoff in thread_handoffs if handoff.to_agent == anchor_agent]
+    return max(anchor_handoffs, key=_handoff_sort_key, default=None)
 
 
 def _require_thread(collaboration, thread_id: str) -> ThreadRecord:
