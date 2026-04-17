@@ -85,6 +85,7 @@ class RuntimeState:
     runtime_status: RuntimeStatus
     runtime_handle: str | None = None
     setup_status: str | None = None
+    gateway_setup_status: str | None = None
 
     def __post_init__(self) -> None:
         _validate_str(self.agent_id, error="Invalid runtime state agent_id: expected str")
@@ -98,6 +99,10 @@ class RuntimeState:
             self.setup_status,
             error="Invalid runtime state setup_status: expected str",
         )
+        _validate_optional_str(
+            self.gateway_setup_status,
+            error="Invalid runtime state gateway_setup_status: expected str",
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the runtime state into plain data."""
@@ -110,6 +115,8 @@ class RuntimeState:
             payload["runtime_handle"] = self.runtime_handle
         if self.setup_status is not None:
             payload["setup_status"] = self.setup_status
+        if self.gateway_setup_status is not None:
+            payload["gateway_setup_status"] = self.gateway_setup_status
         return payload
 
     @classmethod
@@ -133,6 +140,7 @@ class RuntimeState:
             runtime_status=_parse_runtime_status(data["runtime_status"]),
             runtime_handle=data.get("runtime_handle"),
             setup_status=data.get("setup_status"),
+            gateway_setup_status=data.get("gateway_setup_status"),
         )
 
 

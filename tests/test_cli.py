@@ -55,6 +55,7 @@ from maia.collaboration_storage import CollaborationStorage
 from maia.handoff_model import HandoffKind, HandoffRecord
 from maia.message_model import MessageKind, MessageRecord, ThreadRecord
 from maia.runtime_state_storage import RuntimeStateStorage
+from maia.storage import JsonRegistryStorage
 
 README_PATH = REPO_ROOT / "README.md"
 PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
@@ -70,6 +71,13 @@ def _parse_fields(line: str) -> dict[str, str]:
     if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id", "thread", "workspace"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
+
+
+def _line_with_prefix(text: str, prefix: str) -> str:
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"Missing line starting with {prefix!r}: {text!r}")
 
 
 class FakeMessageBroker:
@@ -127,7 +135,7 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "maia agent stop planner" in text
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
-    assert "persona + call-sign defaults" in text
+    assert "interactively create an agent identity" in text.lower()
     assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
@@ -275,8 +283,7 @@ def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixtu
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Create an agent identity" in captured.out
-    assert "Agent name" in captured.out
+    assert "Interactively create an agent identity" in captured.out
     assert "provider" not in captured.out
     assert "model" not in captured.out
     assert "runtime image" not in captured.out
@@ -542,8 +549,68 @@ def test_setup_command_prints_bootstrap_summary_from_infra_runtime(
     assert "Created Maia network maia." in captured.out
     assert "Started shared queue maia-rabbitmq." in captured.out
     assert "SQLite state is ready at" in captured.out
-    assert "Shared infra is ready. Next: run maia agent new <name>." in captured.out
+    assert "Shared infra is ready." in captured.out
+    assert "Next: run maia agent new" in captured.out
     assert captured.err == ""
+
+
+def test_agent_new_prompts_for_identity_fields_and_points_to_agent_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answers = iter(["econ", "Ash", "Calm macro researcher"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert main(["agent", "new"]) == 0
+    captured = capsys.readouterr()
+    assert "How should this agent address you" in captured.out
+    assert "Persona" in captured.out
+    assert "created agent_id=" in captured.out
+    assert "name=econ" in captured.out
+    assert "call_sign=Ash" in captured.out
+    assert "Next: run maia agent setup econ" in captured.out
+
+    registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    record = registry.list()[0]
+    assert record.name == "econ"
+    assert record.call_sign == "Ash"
+    assert record.persona == "Calm macro researcher"
+
+
+def test_agent_setup_gateway_command_runs_gateway_section_and_records_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+
+    monkeypatch.setattr(
+        cli_module.agent_setup_session,
+        "run_agent_setup_session",
+        lambda *, agent_id, agent_name, setup_target=None: cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+            gateway_setup_status="complete",
+        ),
+    )
+
+    assert main(["agent", "setup-gateway", "planner"]) == 0
+    captured = capsys.readouterr()
+    assert "Gateway setup completed for 'planner'" in captured.out
+    assert "maia agent start planner" in captured.out
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[agent_id].to_dict() == {
+        "agent_id": agent_id,
+        "runtime_status": "stopped",
+        "gateway_setup_status": "complete",
+    }
 
 
 def test_agent_setup_command_runs_hermes_setup_and_records_complete(
@@ -564,6 +631,7 @@ def test_agent_setup_command_runs_hermes_setup_and_records_complete(
             exit_code=0,
             hermes_home=hermes_home,
             setup_status="complete",
+            gateway_setup_status="incomplete",
         ),
     )
 
@@ -580,6 +648,7 @@ def test_agent_setup_command_runs_hermes_setup_and_records_complete(
         "agent_id": agent_id,
         "runtime_status": "stopped",
         "setup_status": "complete",
+        "gateway_setup_status": "incomplete",
     }
 
 
@@ -601,6 +670,7 @@ def test_agent_setup_command_records_incomplete_on_failure(
             exit_code=7,
             hermes_home=hermes_home,
             setup_status="incomplete",
+            gateway_setup_status="incomplete",
         ),
     )
 
@@ -615,6 +685,7 @@ def test_agent_setup_command_records_incomplete_on_failure(
         "agent_id": agent_id,
         "runtime_status": "stopped",
         "setup_status": "incomplete",
+        "gateway_setup_status": "incomplete",
     }
 
 
@@ -664,6 +735,7 @@ def test_agent_setup_command_records_incomplete_when_hermes_is_missing(
         "agent_id": agent_id,
         "runtime_status": "stopped",
         "setup_status": "incomplete",
+        "gateway_setup_status": "incomplete",
     }
 
 
@@ -943,8 +1015,10 @@ def test_build_parser_logs_shape() -> None:
 
 def _create_agent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], home: Path, name: str) -> str:
     monkeypatch.setenv("HOME", str(home))
-    assert main(["agent", "new", name]) == 0
-    fields = _parse_fields(capsys.readouterr().out.strip())
+    answers = iter([name, name, name])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    assert main(["agent", "new"]) == 0
+    fields = _parse_fields(_line_with_prefix(capsys.readouterr().out, "created "))
     return fields["agent_id"]
 
 

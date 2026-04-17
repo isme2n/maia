@@ -98,11 +98,23 @@ def parse_fields(line: str) -> dict[str, str]:
     return dict(token.split("=", 1) for token in tokens)
 
 
+def line_with_prefix(text: str, prefix: str) -> str:
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"Missing line starting with {prefix!r}: {text!r}")
+
+
 def create_agent(home: Path, name: str = "demo") -> str:
-    result = run_module(home, "agent", "new", name)
+    result = run_module(
+        home,
+        "agent",
+        "new",
+        input_text=f"{name}\n{name}\n{name}\n",
+    )
     assert result.returncode == 0
     assert result.stderr == ""
-    return parse_fields(result.stdout.strip())["agent_id"]
+    return parse_fields(line_with_prefix(result.stdout, "created "))["agent_id"]
 
 
 def load_registry(home: Path) -> dict[str, object]:
@@ -133,7 +145,13 @@ def write_runtime_state(home: Path, payload: dict[str, object]) -> None:
     RuntimeStateStorage().save(get_state_db_path({"HOME": str(home)}), states)
 
 
-def mark_runtime_start_ready(home: Path, agent_id: str, *, setup_status: str = "complete") -> None:
+def mark_runtime_start_ready(
+    home: Path,
+    agent_id: str,
+    *,
+    setup_status: str = "complete",
+    gateway_setup_status: str = "complete",
+) -> None:
     SQLiteState(get_state_db_path({"HOME": str(home)})).set_infra_status(
         "bootstrap",
         status="ready",
@@ -147,6 +165,7 @@ def mark_runtime_start_ready(home: Path, agent_id: str, *, setup_status: str = "
                     "agent_id": agent_id,
                     "runtime_status": "stopped",
                     "setup_status": setup_status,
+                    "gateway_setup_status": gateway_setup_status,
                 }
             ]
         },
@@ -202,6 +221,8 @@ def _write_fake_hermes(path: Path) -> None:
         "target = Path(hermes_home)\n"
         "target.mkdir(parents=True, exist_ok=True)\n"
         "(target / 'setup-marker.txt').write_text('configured', encoding='utf-8')\n"
+        "env_path = target / '.env'\n"
+        "env_path.write_text('TELEGRAM_BOT_TOKEN=test-t...\\nTELEGRAM_HOME_CHANNEL=test-home\\n', encoding='utf-8')\n"
         "print(f'fake-hermes-setup hermes_home={hermes_home} agent_id={os.environ.get(\"MAIA_AGENT_ID\", \"\")} agent_name={os.environ.get(\"MAIA_AGENT_NAME\", \"\")}')\n"
         "if os.environ.get('MAIA_FAKE_HERMES_FAIL') == '1':\n"
         "    print('fake-hermes-setup failed', file=sys.stderr)\n"
@@ -442,26 +463,12 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[0]) == {
-        'check': 'docker_cli',
-        'status': 'missing',
-        'detail': 'Docker␠is␠not␠installed␠or␠not␠on␠PATH',
-        'remediation': 'Install␠Docker␠on␠this␠host␠to␠use␠runtime␠commands',
-    }
-    assert parse_fields(lines[2]) == {
-        'check': 'queue',
-        'status': 'blocked',
-        'detail': 'Queue␠health␠needs␠a␠working␠Docker␠daemon',
-        'remediation': 'Fix␠Docker␠first⸴␠then␠run␠maia␠doctor␠again',
-    }
-    assert parse_fields(lines[3])['check'] == 'state_db'
-    assert parse_fields(lines[3])['status'] == 'ok'
-    assert parse_fields(lines[-1]) == {
-        'kind': 'summary',
-        'status': 'fail',
-        'failed': 'docker_cli,docker_daemon,queue',
-        'next_step': 'install␠Docker⸴␠then␠run␠maia␠doctor␠again',
-    }
+    assert lines == [
+        "✗ Docker FAIL — Docker can't run because Docker is missing",
+        '✗ Queue FAIL — Queue health needs a working Docker daemon',
+        '✓ State DB OK',
+        'Next: install Docker, then run maia doctor again',
+    ]
 
 
 def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -475,34 +482,12 @@ def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: 
 
     assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[0]) == {
-        'check': 'docker_cli',
-        'status': 'ok',
-        'detail': str(fake_docker),
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[1]) == {
-        'check': 'docker_daemon',
-        'status': 'ok',
-        'detail': 'Docker␠is␠ready',
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[2]) == {
-        'check': 'queue',
-        'status': 'missing',
-        'detail': 'RabbitMQ␠container␠maia-rabbitmq␠is␠not␠running',
-        'remediation': 'Run␠maia␠setup␠to␠bootstrap␠shared␠infra',
-    }
-    state_db_fields = parse_fields(lines[3])
-    assert state_db_fields['check'] == 'state_db'
-    assert state_db_fields['status'] == 'ok'
-    assert state_db_fields['detail'] == str(get_state_db_path({'HOME': str(tmp_path)}))
-    assert parse_fields(lines[4]) == {
-        'kind': 'summary',
-        'status': 'fail',
-        'failed': 'queue',
-        'next_step': 'run␠maia␠setup␠to␠bootstrap␠shared␠infra',
-    }
+    assert lines == [
+        '✓ Docker OK',
+        '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
+        '✓ State DB OK',
+        'Next: run maia setup to bootstrap shared infra',
+    ]
 
 
 def test_doctor_accepts_reachable_external_queue_before_setup(
@@ -528,18 +513,12 @@ def test_doctor_accepts_reachable_external_queue_before_setup(
 
     assert result.returncode == 0
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[2]) == {
-        'check': 'queue',
-        'status': 'ok',
-        'detail': f'RabbitMQ␠is␠reachable␠at␠{host}:{port}',
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(lines[-1]) == {
-        'kind': 'summary',
-        'status': 'ok',
-        'failed': '-',
-        'next_step': 'shared␠infra␠is␠ready',
-    }
+    assert lines == [
+        '✓ Docker OK',
+        '✓ Queue OK',
+        '✓ State DB OK',
+        '✓ Shared infra ready',
+    ]
 
 
 def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
@@ -557,14 +536,12 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
 
     assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[2])['check'] == 'queue'
-    assert parse_fields(lines[2])['status'] == 'fail'
-    assert parse_fields(lines[-1]) == {
-        'kind': 'summary',
-        'status': 'fail',
-        'failed': 'queue',
-        'next_step': 'fix␠MAIA_BROKER_URL␠or␠the␠external␠RabbitMQ␠service⸴␠then␠run␠maia␠doctor␠again',
-    }
+    assert lines == [
+        '✓ Docker OK',
+        '✗ Queue FAIL — Connection refused',
+        '✓ State DB OK',
+        'Next: fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again',
+    ]
 
 
 def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
@@ -585,14 +562,12 @@ def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
     assert doctor.returncode == 1
     assert doctor.stderr == ''
     doctor_lines = doctor.stdout.strip().splitlines()
-    state_db_fields = parse_fields(doctor_lines[3])
-    assert state_db_fields['check'] == 'state_db'
-    assert state_db_fields['status'] == 'fail'
-    assert state_db_fields['detail'].startswith('Maia␠state␠DB␠at␠')
-    assert state_db_fields['detail'].endswith('␠is␠unreadable')
-    assert state_db_fields['remediation'] == (
-        'Repair␠or␠replace␠the␠local␠Maia␠state␠DB⸴␠then␠run␠maia␠doctor␠again'
-    )
+    assert doctor_lines == [
+        '✓ Docker OK',
+        '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
+        f"✗ State DB FAIL — Maia state DB at {state_db_path} is unreadable",
+        'Next: run maia setup to bootstrap shared infra',
+    ]
 
     setup = run_module(tmp_path, 'setup')
     assert setup.returncode == 1
@@ -620,30 +595,19 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     assert setup_lines[1] == 'Created Maia volume maia-rabbitmq-data.'
     assert setup_lines[2] == 'Started shared queue maia-rabbitmq.'
     assert setup_lines[3] == f'SQLite state is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
-    assert setup_lines[4] == 'Shared infra is ready. Next: run maia agent new <name>.'
+    assert setup_lines[4] == 'Shared infra is ready.'
+    assert setup_lines[5] == 'Next: run maia agent new'
     assert setup.stderr == ''
 
     doctor = run_module(tmp_path, 'doctor')
     assert doctor.returncode == 0
     doctor_lines = doctor.stdout.strip().splitlines()
-    assert parse_fields(doctor_lines[2]) == {
-        'check': 'queue',
-        'status': 'ok',
-        'detail': 'RabbitMQ␠container␠maia-rabbitmq␠is␠running',
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(doctor_lines[3]) == {
-        'check': 'state_db',
-        'status': 'ok',
-        'detail': str(get_state_db_path({'HOME': str(tmp_path)})),
-        'remediation': 'No␠action␠needed',
-    }
-    assert parse_fields(doctor_lines[4]) == {
-        'kind': 'summary',
-        'status': 'ok',
-        'failed': '-',
-        'next_step': 'shared␠infra␠is␠ready',
-    }
+    assert doctor_lines == [
+        '✓ Docker OK',
+        '✓ Queue OK',
+        '✓ State DB OK',
+        '✓ Shared infra ready',
+    ]
 
 
 def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -675,18 +639,12 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
 
     assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
-    assert parse_fields(lines[1]) == {
-        'check': 'docker_daemon',
-        'status': 'fail',
-        'detail': 'Docker␠is␠installed⸴␠but␠this␠user␠cannot␠talk␠to␠the␠Docker␠daemon',
-        'remediation': 'Start␠Docker␠and␠make␠sure␠your␠user␠has␠permission␠to␠use␠it',
-    }
-    assert parse_fields(lines[-1]) == {
-        'kind': 'summary',
-        'status': 'fail',
-        'failed': 'docker_daemon,queue',
-        'next_step': 'fix␠Docker␠permissions␠for␠this␠user⸴␠then␠run␠maia␠doctor␠again',
-    }
+    assert lines == [
+        "✗ Docker FAIL — Docker is installed, but this user cannot talk to the Docker daemon",
+        '✗ Queue FAIL — Queue health needs a working Docker daemon',
+        '✓ State DB OK',
+        'Next: fix Docker permissions for this user, then run maia doctor again',
+    ]
 
 
 def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None:
@@ -709,7 +667,7 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
         "status": "not-configured",
         "setup": "not-started",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "demo",
     }
 
     tuned = run_module(
@@ -808,7 +766,7 @@ def test_agent_status_reports_ready_after_runtime_configuration(tmp_path: Path) 
         "status": "ready",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "demo",
     }
 
 
@@ -852,7 +810,7 @@ def test_agent_status_reports_running_after_start(tmp_path: Path, monkeypatch: p
         "status": "running",
         "setup": "complete",
         "runtime": "running",
-        "persona": "∅",
+        "persona": "demo",
     }
 
 
@@ -912,7 +870,7 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
         "status": "not-configured",
         "setup": "not-started",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "alpha",
     }
 
     registry = load_registry(tmp_path)
@@ -921,7 +879,7 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
             "agent_id": agent_id,
             "name": "alpha",
             "status": "stopped",
-            "persona": "",
+            "persona": "alpha",
             "setup_status": "configured",
             "runtime_spec": {
                 "image": "maia-local/hermes-worker:latest",
@@ -998,7 +956,7 @@ def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) ->
         "status": "ready",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "planner",
     }
     assert (hermes_home / "setup-marker.txt").read_text(encoding="utf-8") == "configured"
     assert load_runtime_state(tmp_path) == {
@@ -1007,6 +965,7 @@ def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) ->
                 "agent_id": agent_id,
                 "runtime_status": "stopped",
                 "setup_status": "complete",
+                "gateway_setup_status": "complete",
             }
         ]
     }
@@ -1043,6 +1002,7 @@ def test_agent_setup_passthrough_records_incomplete_setup_state_on_failure(tmp_p
                 "agent_id": agent_id,
                 "runtime_status": "stopped",
                 "setup_status": "incomplete",
+                "gateway_setup_status": "incomplete",
             }
         ]
     }
@@ -1078,7 +1038,7 @@ def test_agent_status_shows_setup_and_runtime_state_after_successful_setup(tmp_p
         "status": "ready",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "planner",
     }
 
 
@@ -1493,7 +1453,7 @@ def test_agent_runtime_start_status_logs_stop_flow(
         "status": "running",
         "setup": "complete",
         "runtime": "running",
-        "persona": "∅",
+        "persona": "demo",
     }
 
     logs = run_module(tmp_path, "agent", "logs", agent_id, "--tail-lines", "1")
@@ -1589,7 +1549,7 @@ def test_runtime_operator_smoke_flow_is_independent_from_collaboration(
         "status": "stopped",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "planner",
     }
 
 
@@ -1656,7 +1616,7 @@ def test_live_host_runtime_checklist_flow_is_locked(
         "status": "stopped",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "smoke",
     }
 
 
@@ -1759,7 +1719,7 @@ def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
         "status": "running",
         "setup": "complete",
         "runtime": "running",
-        "persona": "∅",
+        "persona": "demo",
     }
 
 
@@ -1811,7 +1771,7 @@ def test_agent_status_syncs_registry_to_stopped_when_container_has_exited(
         "status": "stopped",
         "setup": "complete",
         "runtime": "stopped",
-        "persona": "∅",
+        "persona": "demo",
     }
     assert load_registry(tmp_path)["agents"][0]["status"] == "stopped"
 
@@ -1981,6 +1941,7 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
                 "agent_id": agent_id,
                 "runtime_status": "stopped",
                 "setup_status": "complete",
+                "gateway_setup_status": "complete",
             }
         ]
     }
@@ -2004,6 +1965,7 @@ def test_stale_runtime_state_is_cleared_on_status_and_logs(
                 "agent_id": agent_id,
                 "runtime_status": "stopped",
                 "setup_status": "complete",
+                "gateway_setup_status": "complete",
             }
         ]
     }
@@ -2169,7 +2131,7 @@ def test_import_prunes_dangling_runtime_state(
                 "agent_id": source_agent,
                 "name": "source-agent",
                 "status": "stopped",
-                "persona": "",
+                "persona": "source-agent",
             }
         ]
     }
@@ -2687,7 +2649,7 @@ def test_v1_golden_flow_smoke_contract(
         "status": "running",
         "setup": "complete",
         "runtime": "running",
-        "persona": "∅",
+        "persona": "planner",
     }
 
     logs = run_module(tmp_path, "agent", "logs", planner_id, "--tail-lines", "2")
@@ -3519,12 +3481,12 @@ def test_import_preview_reports_team_metadata_diffs(tmp_path: Path) -> None:
         "incoming_agents": "1",
         "added": "0",
         "removed": "0",
-        "changed": "0",
-        "unchanged": "1",
+        "changed": "1",
+        "unchanged": "0",
     }
     assert parse_fields(lines["risk"]) == {
         "level": "low-change",
-        "reasons": "changed_team_metadata",
+        "reasons": "changed_agents,changed_team_metadata",
     }
     team_line = lines["team"]
     assert "name:dest-team->source-team" in team_line

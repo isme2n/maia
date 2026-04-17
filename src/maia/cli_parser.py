@@ -34,6 +34,7 @@ PART2_VISIBILITY_FLOW = (
 AGENT_COMMANDS = (
     "new",
     "setup",
+    "setup-gateway",
     "start",
     "stop",
     "archive",
@@ -51,11 +52,11 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "archive": AgentStatus.ARCHIVED,
     "restore": AgentStatus.STOPPED,
 }
-AGENT_ID_COMMANDS = frozenset({"setup", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+AGENT_ID_COMMANDS = frozenset({"setup", "setup-gateway", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
 PART1_OPERATOR_FLOW = (
     "maia doctor",
     "maia setup",
-    "maia agent new planner",
+    "maia agent new",
     "maia agent setup planner",
     "maia agent start planner",
     "maia agent status planner",
@@ -65,6 +66,7 @@ PART1_OPERATOR_FLOW = (
 DOCTOR_EXAMPLES = ("maia doctor",)
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
+AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
 QUICKSTART_EXAMPLES = PART1_OPERATOR_FLOW
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 RUNTIME_SUPPORT_BOUNDARY = (
@@ -75,7 +77,7 @@ RUNTIME_SUPPORT_BOUNDARY = (
 V1_RELEASE_CHECKLIST = (
     "Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.",
     "`doctor` stays infra-only: Docker, queue, and DB.",
-    "`agent new` stays identity-only in the public story.",
+    "`agent new` interactively captures agent name, user call-sign, and persona.",
     "`agent setup` is the operator path to open `hermes setup` for one agent.",
 )
 KNOWN_LIMITATIONS = (
@@ -338,6 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
         command_help = {
             "new": "Create an agent identity",
             "setup": "Open hermes setup for an agent in the CLI",
+            "setup-gateway": "Reopen hermes setup gateway for an agent in the CLI",
             "start": "Start an agent runtime",
             "stop": "Stop a running agent runtime",
             "archive": "Archive an agent identity",
@@ -349,8 +352,9 @@ def build_parser() -> argparse.ArgumentParser:
             "purge": "Purge an agent identity and local state",
         }[command_name]
         command_description = {
-            "new": "Create an agent identity record.",
+            "new": "Interactively create an agent identity with name, user call-sign, and persona.",
             "setup": "Open hermes setup for an agent in the CLI and keep the shared Hermes worker defaults for first start.",
+            "setup-gateway": "Reopen `hermes setup gateway` for an agent when messaging/home-channel setup was skipped the first time.",
             "start": "Start an agent runtime after shared infra and agent setup are ready.",
             "stop": "Stop a running agent runtime without changing the stored agent identity.",
             "status": "Show the operator-facing agent status plus setup and runtime state.",
@@ -364,15 +368,15 @@ def build_parser() -> argparse.ArgumentParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         command_parser.set_defaults(parser=command_parser)
-        if command_name == "new":
-            command_parser.add_argument("name", help="Agent name")
         if command_name in AGENT_ID_COMMANDS:
-            if command_name in {"setup", "start", "stop", "status", "logs"}:
+            if command_name in {"setup", "setup-gateway", "start", "stop", "status", "logs"}:
                 command_parser.add_argument("agent_id", metavar="name", help="Agent name")
             else:
                 command_parser.add_argument("agent_id", help="Agent id")
         if command_name == "setup":
             command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_EXAMPLES)
+        if command_name == "setup-gateway":
+            command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_GATEWAY_EXAMPLES)
         if command_name == "logs":
             command_parser.add_argument(
                 "--tail-lines",

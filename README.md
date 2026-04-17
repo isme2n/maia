@@ -7,7 +7,7 @@ Install Maia, then follow the Part 1 bootstrap path in this order:
 
 1. `maia doctor`
 2. `maia setup`
-3. `maia agent new <name>`
+3. `maia agent new`
 4. `maia agent setup <name>`
 5. `maia agent start <name>`
 
@@ -19,7 +19,7 @@ Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story.
 ```bash
 maia doctor
 maia setup
-maia agent new planner
+maia agent new
 maia agent setup planner
 maia agent start planner
 maia agent status planner
@@ -30,8 +30,9 @@ maia agent stop planner
 ## What each command means
 - `maia doctor`: check shared infra readiness only: Docker, queue, and DB.
 - `maia setup`: bootstrap shared infra only.
-- `maia agent new <name>`: create an agent identity record with persona + call-sign defaults plus the shared Hermes worker runtime defaults for first start.
+- `maia agent new`: interactively create an agent identity by asking for agent name, how the agent addresses the user, and persona. New agents still carry the shared Hermes worker runtime defaults needed for first start.
 - `maia agent setup <name>`: open `hermes setup` for that agent.
+- `maia agent setup-gateway <name>`: reopen only the agent-scoped `hermes setup gateway` flow if messaging/home-channel setup was skipped the first time.
 - `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready.
 - `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
 - `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
@@ -43,6 +44,7 @@ maia agent stop planner
 - Shared infra depends on a reachable queue and DB state path.
 - `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
 - `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
+- `maia agent start` now also requires gateway/home-channel setup to be complete; rerun `maia agent setup-gateway <name>` if that step was skipped.
 - Messaging and thread commands remain available but are not the primary Part 1 operator flow.
 
 ## Secondary surfaces
@@ -99,7 +101,7 @@ This is the public operator path for checking who is pending, which thread is op
 ## V1 release checklist
 - Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.
 - `doctor` stays infra-only: Docker, queue, and DB.
-- `agent new` stays identity-only in the public story.
+- `agent new` interactively captures agent name, user call-sign, and persona.
 - `agent setup` is the operator path to open `hermes setup` for one agent.
 
 ## Development notes

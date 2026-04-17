@@ -90,6 +90,9 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             runtime_status=RuntimeStatus.RUNNING,
             runtime_handle=runtime_handle,
             setup_status=None if existing_state is None else existing_state.setup_status,
+            gateway_setup_status=(
+                None if existing_state is None else existing_state.gateway_setup_status
+            ),
         )
         self._write_state(state)
         return RuntimeStartResult(runtime=state)
@@ -106,6 +109,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             runtime_status=RuntimeStatus.STOPPED,
             runtime_handle=runtime_handle,
             setup_status=current.setup_status,
+            gateway_setup_status=current.gateway_setup_status,
         )
         self._write_state(state)
         return RuntimeStopResult(runtime=state)
@@ -125,6 +129,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             runtime_status=_parse_docker_status(result.stdout.strip()),
             runtime_handle=runtime_handle,
             setup_status=current.setup_status,
+            gateway_setup_status=current.gateway_setup_status,
         )
         self._write_state(state)
         return RuntimeStatusResult(runtime=state)
