@@ -77,9 +77,15 @@ At minimum, the active conversation surface should be able to show:
 | Event | delegation_status | Meaning |
 |---|---|---|
 | A sends delegated request to B | `pending` | waiting on B |
-| B asks follow-up question that needs user input | `needs_user_input` | A must ask the user and relay the answer |
-| B sends progress or non-blocking answer back to A | `answered` | A has a meaningful internal update/result to relay |
+| B sends a blocking question that needs user clarification | `needs_user_input` | A must ask the user and relay the answer |
+| A sends B an answer relaying the user's clarification, or B sends a progress/non-final answer back to A | `answered` | A has relayed or received a meaningful internal answer/update, but final handoff is not complete |
 | B sends final result/handoff to A | `handoff_ready` | final result is ready to return to the original conversation |
+
+### Minimum anchor and relay semantics
+- The original conversation anchor is always the user-facing conversation between the user and the currently active agent A.
+- In `user -> A -> B -> A -> user`, all A <-> B messages are internal agent-to-agent turns, and all user-visible updates remain in the original user <-> A conversation.
+- `delegation_status` is attached to that original user <-> A anchor conversation, not to a synthetic Maia relay surface and not to B's internal subthread.
+- Reviewers should reject any implementation that allows status changes or user-visible relays without a corresponding stored internal A <-> B message turn.
 
 Avoid turning this into a heavy dashboard-first product.
 

@@ -35,6 +35,20 @@
 - Visibility should be lightweight and embedded in the active conversation flow before any dashboard-first expansion.
 - Dynamic agent addition stays supported, but it is not the primary value proposition of this phase.
 
+## Minimum state contract for this phase
+- The original conversation anchor is the user-facing conversation where the request began: `user <-> A` in the canonical `user -> A -> B -> A -> user` loop.
+- Delegation metadata such as `delegated_to`, `delegation_status`, `current_thread_id`, and `latest_internal_update` belongs to that original `user <-> A` anchor conversation.
+- Internal A <-> B turns and user-facing A <-> user relays are distinct event classes and must not be collapsed into the same synthetic "relay" concept.
+- A reviewer must be able to trace every user-visible delegation update back to a real stored internal A <-> B message turn.
+
+### Locked delegation_status meanings
+| Triggering event | delegation_status | Locked meaning |
+|---|---|---|
+| A sends a real delegated request to B | `pending` | A is waiting on B |
+| B sends a blocking question that requires user clarification | `needs_user_input` | A must ask the user and relay the answer back to B |
+| A answers B's blocking question, or B sends a meaningful but non-final report/update | `answered` | the loop has a meaningful answer/update but final handoff is not complete |
+| B sends the final result/handoff to A | `handoff_ready` | A can now return the final result into the original user conversation |
+
 ## Scope
 - direct-agent delegation product contract
 - minimal metadata/state to preserve original conversation anchor
