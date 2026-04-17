@@ -26,6 +26,7 @@ from maia import cli as cli_module
 from maia.cli_parser import (
     AGENT_SETUP_EXAMPLES,
     AGENT_TUNE_EXAMPLES,
+    DIRECT_AGENT_DELEGATION_CONTRACT,
     DOCTOR_EXAMPLES,
     EXPORT_EXAMPLES,
     GOLDEN_FLOW_SMOKE_CONTRACT,
@@ -136,6 +137,10 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "Part 2 real agent conversation" in text
     assert "running agents talk to each other over the broker/message plane" in text
     assert "operator manually relays every message in a CLI messenger" in text
+    assert "Users talk directly to a specific agent" in text
+    assert "active conversation agent stays the user-facing anchor" in text
+    assert "central dispatcher or front desk" in text
+    assert "user -> economist -> tech -> economist -> user" in text
     assert "thread`, `handoff`, and `workspace`" in text
     assert "## Part 2 visibility flow" in text
     assert "public operator path for checking who is pending" in text
@@ -145,6 +150,17 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "send/reply/inbox/thread" not in text
     assert "Secondary surfaces" in text
     _assert_contains_lines(text, PART2_VISIBILITY_FLOW)
+
+
+def test_readme_locks_direct_agent_anchor_story() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+
+    assert "## Direct-agent delegation contract" in text
+    assert "user talks to one named agent" in text
+    assert "front-desk chatbot" in text
+    assert "The active conversation agent remains the user-facing anchor" in text
+    assert "Concrete public example: `user -> economist -> tech -> economist -> user`" in text
+    assert "Economist -> User: final answer in the original conversation" in text
 
 
 def test_prd_locks_part1_operator_story() -> None:
@@ -238,6 +254,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Part 1 operator flow:" in captured.out
     assert "Known limitations:" in captured.out
     assert "Part 2 conversation contract:" in captured.out
+    assert "Direct-agent delegation contract:" in captured.out
     assert "Part 2 visibility flow:" in captured.out
     assert "Quickstart (local state only):" not in captured.out
     assert "V1 smoke checklist:" not in captured.out
@@ -248,6 +265,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
+    _assert_contains_lines(captured.out, DIRECT_AGENT_DELEGATION_CONTRACT)
     _assert_contains_lines(captured.out, PART2_VISIBILITY_FLOW)
 
 

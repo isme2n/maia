@@ -84,12 +84,18 @@
 - operator-facing 에러 메시지가 평이하고 직접적이다.
 - setup/new/start/status/logs/export/import 등 핵심 흐름이 혼란 없이 보인다.
 - 제품 표면에서 불필요한 내부 용어/임시 서사/debug-like surface가 정리된다.
+- direct-agent conversation과 agent-to-agent 부탁 UX가 제품 문장으로 자연스럽게 보인다.
 
 **Includes:**
 - command naming and help cleanup
 - README golden flow rewrite
 - plain-language operator messages
 - surface simplification
+- direct-agent delegation-first conversation UX wording and closeout
+
+**Planned design input:**
+- `docs/plans/phase18-direct-agent-delegation-and-user-anchored-collaboration.md`
+- Part 4 wording must keep the public story as `user -> A -> B -> A -> user`, with agent A staying the user-facing anchor instead of Maia becoming a front desk.
 
 ---
 

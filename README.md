@@ -53,9 +53,27 @@ maia agent stop planner
 Part 2 is where running agents talk to each other over the broker/message plane.
 
 - The product story is not “the operator manually relays every message in a CLI messenger.”
+- Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.
+- If that agent delegates to another agent, the active conversation agent stays the user-facing anchor.
 - `send`, `reply`, and `inbox` remain useful for diagnostics and controlled operator checks.
 - The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` so operators can see open collaboration state, recent handoffs, and participant runtime context.
 - The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange between running agents.
+
+## Direct-agent delegation contract
+- Public story: the user talks to one named agent, that agent may ask another agent for help, and the original agent brings the result back.
+- Maia should not read like a front-desk chatbot that sits between the user and every specialist.
+- The active conversation agent remains the user-facing anchor even while internal delegation is happening.
+- Concrete public example: `user -> economist -> tech -> economist -> user`.
+
+Example shape:
+- User -> economist: “Ask tech to build a crawler.”
+- Economist -> tech: delegated request
+- Tech -> economist: question or progress report
+- Economist -> User: follow-up or status update in the original conversation
+- User -> economist: clarification
+- Economist -> tech: answer
+- Tech -> economist: final result or handoff
+- Economist -> User: final answer in the original conversation
 
 ## Part 2 visibility flow
 - `maia thread list --status open`
@@ -164,8 +182,9 @@ This is the public operator path for checking who is pending, which thread is op
   - `live_runtime_smoke=ok|fail`
 - Secondary surfaces (not Part 1 bootstrap):
   - Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`
-  - Team metadata: `maia team show`, `maia team update ...`
-  - Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`
+- Team metadata: `maia team show`, `maia team update ...`
+- Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`
+- Delegation anchor contract: `user -> A -> B -> A -> user`
 
 ## Portable state scope
 - Portable state kinds currently exported:

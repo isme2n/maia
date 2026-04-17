@@ -18,6 +18,11 @@ PART2_CONVERSATION_CONTRACT = (
     "`send`, `reply`, and `inbox` are useful for diagnostics and controlled operator checks, not the primary product identity.",
     "`thread`, `handoff`, and `workspace` are the public visibility surfaces for open collaboration state.",
 )
+DIRECT_AGENT_DELEGATION_CONTRACT = (
+    "Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.",
+    "If that agent delegates internally, the active conversation agent stays the user-facing anchor.",
+    "Public example: user -> economist -> tech -> economist -> user.",
+)
 PART2_VISIBILITY_FLOW = (
     "maia thread list --status open",
     "maia thread show <thread_id>",
@@ -162,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
         ("Part 2 conversation contract:", PART2_CONVERSATION_CONTRACT),
+        ("Direct-agent delegation contract:", DIRECT_AGENT_DELEGATION_CONTRACT),
         ("Part 2 visibility flow:", PART2_VISIBILITY_FLOW),
     )
 
