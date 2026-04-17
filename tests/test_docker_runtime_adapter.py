@@ -121,6 +121,7 @@ def test_runtime_broker_url_defaults_to_local_maia_queue(monkeypatch: pytest.Mon
     password = "guest"
     expected = f"amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
     assert runtime_broker_url() == expected
+    assert "***" not in runtime_broker_url()
 
 
 def test_runtime_broker_url_uses_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -305,18 +306,18 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     expected_home = get_agent_hermes_home("agent-001", {"HOME": str(home)})
     assert "--network" in args
     assert args[args.index("--network") + 1] == MAIA_NETWORK_NAME
-    assert "-v" in args
-    volume_value = args[args.index("-v") + 1]
-    assert volume_value == f"{expected_home}:/maia/hermes"
+    volume_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-v"]
+    assert f"{expected_home}:/maia/hermes" in volume_values
+    assert f"{state_path}:/maia/control/state.db:ro" in volume_values
     assert "-e" in args
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
     assert "HERMES_HOME=/maia/hermes" in env_values
     assert "MAIA_AGENT_ID=agent-001" in env_values
     assert "MAIA_AGENT_NAME=reviewer" in env_values
-    assert any(
-        value.startswith("MAIA_BROKER_URL=amqp://guest:") and value.endswith("@maia-rabbitmq:5672/%2F")
-        for value in env_values
-    )
+    assert "MAIA_STATE_DB_PATH=/maia/control/state.db" in env_values
+    broker_values = [value for value in env_values if value.startswith("MAIA_BROKER_URL=")]
+    assert broker_values == [f"MAIA_BROKER_URL={runtime_broker_url()}"]
+    assert "***" not in broker_values[0]
 
 
 def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tmp_path: Path) -> None:
@@ -396,7 +397,7 @@ def test_docker_runtime_adapter_start_preserves_explicit_broker_url(tmp_path: Pa
             image="ghcr.io/example/reviewer:latest",
             workspace="/workspace/reviewer",
             command=["python", "-m", "reviewer"],
-            env={"MAIA_BROKER_URL": "amqp://custom:custom@example:5672/%2F"},
+            env={"MAIA_BROKER_URL": "amqp://custom:secret@example:5672/%2F"},
         ),
     )
 
@@ -405,5 +406,5 @@ def test_docker_runtime_adapter_start_preserves_explicit_broker_url(tmp_path: Pa
 
     args = json.loads(argv_path.read_text(encoding="utf-8"))
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
-    assert f"MAIA_BROKER_URL=amqp://custom:custom@example:5672/%2F" in env_values
+    assert f"MAIA_BROKER_URL=amqp://custom:secret@example:5672/%2F" in env_values
     assert f"MAIA_BROKER_URL={runtime_broker_url()}" not in env_values

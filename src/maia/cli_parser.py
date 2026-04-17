@@ -344,8 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
         }[command_name]
         command_description = {
             "new": "Create an agent identity record.",
-            "setup": "Open hermes setup for an agent in the CLI without adding Maia-managed runtime configuration.",
-            "start": "Start an agent runtime after shared infra, agent setup, and runtime config are ready.",
+            "setup": "Open hermes setup for an agent in the CLI and keep the shared Hermes worker defaults for first start.",
+            "start": "Start an agent runtime after shared infra and agent setup are ready.",
             "stop": "Stop a running agent runtime without changing the stored agent identity.",
             "status": "Show the operator-facing agent status plus setup and runtime state.",
             "logs": "Show recent runtime logs for an agent after setup is complete and the runtime has started.",

@@ -53,6 +53,7 @@
 
 **Current working plan:**
 - `docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md`
+- Closeout note: Task 117 restored the public first-run bootstrap path so `agent start` no longer needs a hidden `agent tune` prerequisite, and fresh-home live validation covered broker-backed reply plus file handoff visibility.
 
 ---
 

@@ -240,7 +240,7 @@ def _handle_agent_setup(
         print(
             f"Agent setup completed for {requested_name!r}. "
             f"Hermes home is ready at {result.hermes_home}. "
-            f"Next: if runtime config is already set, run maia agent start {requested_name}"
+            f"Next: run maia agent start {requested_name}"
         )
         return 0
     print(
@@ -332,11 +332,11 @@ def _handle_agent_new(
         name=args.name,
         call_sign=args.name,
         status=AgentStatus.STOPPED,
-        setup_status=AgentSetupStatus.NOT_CONFIGURED,
         persona="",
         role="",
         model="",
         tags=[],
+        runtime_spec=infra_runtime.default_agent_runtime_spec(args.name),
     )
     registry.add(record)
     storage.save(registry_path, registry)

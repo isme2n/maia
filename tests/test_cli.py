@@ -131,7 +131,8 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
     assert "interactive CLI-only passthrough to `hermes setup`" in text
-    assert "operator-facing state stays `not-configured` until runtime config exists" in text
+    assert "agent setup is recorded separately from the runtime launch state" in text
+    assert "new agents carry the shared Hermes worker defaults needed for first start" in text
     assert "Part 2 real agent conversation" in text
     assert "running agents talk to each other over the broker/message plane" in text
     assert "operator manually relays every message in a CLI messenger" in text
@@ -301,7 +302,7 @@ def test_agent_start_help_describes_part1_prerequisites(capsys: pytest.CaptureFi
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Start an agent runtime after shared infra, agent setup, and runtime config are ready." in captured.out
+    assert "Start an agent runtime after shared infra and agent setup are ready." in captured.out
     assert "name" in captured.out
 
 
@@ -552,7 +553,7 @@ def test_agent_setup_command_runs_hermes_setup_and_records_complete(
     captured = capsys.readouterr()
     assert "Agent setup completed for 'planner'" in captured.out
     assert str(hermes_home) in captured.out
-    assert "if runtime config is already set" in captured.out
+    assert "run maia agent start planner" in captured.out
     assert "maia agent start planner" in captured.out
     assert captured.err == ""
 
@@ -1635,14 +1636,14 @@ def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
     assert show_fields["handoff_id"] == handoff_id
     source_workspace_fields = _parse_fields(show_lines[1])
     assert source_workspace_fields["handoff_role"] == "source"
-    assert source_workspace_fields["workspace_status"] == "runtime-spec-missing"
+    assert source_workspace_fields["workspace_status"] == "configured"
     assert source_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
-    assert source_workspace_fields["workspace"] == "-"
+    assert source_workspace_fields["workspace"] == "/opt/maia"
     target_workspace_fields = _parse_fields(show_lines[2])
     assert target_workspace_fields["handoff_role"] == "target"
-    assert target_workspace_fields["workspace_status"] == "runtime-spec-missing"
+    assert target_workspace_fields["workspace_status"] == "configured"
     assert target_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
-    assert target_workspace_fields["workspace"] == "-"
+    assert target_workspace_fields["workspace"] == "/opt/maia"
 
 
 def test_handoff_add_rejects_non_participant_agents(

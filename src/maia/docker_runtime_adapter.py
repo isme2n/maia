@@ -65,6 +65,8 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             spec.workspace,
             "-v",
             f"{hermes_home}:/maia/hermes",
+            "-v",
+            f"{self._state_path}:/maia/control/state.db:ro",
             "-e",
             "HERMES_HOME=/maia/hermes",
         ]
@@ -73,6 +75,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "MAIA_AGENT_ID": request.agent.agent_id,
             "MAIA_AGENT_NAME": request.agent.name,
             "MAIA_BROKER_URL": spec.env.get("MAIA_BROKER_URL", runtime_broker_url()),
+            "MAIA_STATE_DB_PATH": "/maia/control/state.db",
         }
         for key, value in sorted(runtime_env.items()):
             command.extend(["-e", f"{key}={value}"])

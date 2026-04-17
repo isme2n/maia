@@ -61,6 +61,8 @@
 ## Part 2 closeout status
 - Status: complete
 - Closeout summary: running agents now exchange multi-turn broker-backed messages, Maia exposes thread/handoff/workspace visibility plus runtime follow-through, and the public docs/help/tests tell the same operator story.
+- Bootstrap closeout note: Task 117 resolved the drift where public first-run docs said `doctor -> setup -> agent new -> agent setup -> agent start` but the actual runnable path still depended on `agent tune` for `runtime_spec`.
+- Live validation note: fresh-home validation now covers setup/new/setup/start without `agent tune`, a real broker-backed request/reply exchange, and a file handoff that is visible via `handoff show` and `thread show` and later referenced in a follow-up reviewer reply.
 - Reviewer bar: targeted tests + full verify + reviewer approve + clean worktree
 
 ---

@@ -339,68 +339,6 @@ def _setup_v1_golden_flow(
     reviewer_setup = run_module(tmp_path, "agent", "setup", reviewer_id)
     assert reviewer_setup.returncode == 0
 
-    planner_tuned = run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        planner_id,
-        "--role",
-        "planner",
-        "--runtime-image",
-        "ghcr.io/example/planner:latest",
-        "--runtime-workspace",
-        "/workspace/planner",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "planner",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=planner",
-    )
-    assert planner_tuned.returncode == 0
-    assert parse_fields(planner_tuned.stdout.strip()) == {
-        "agent_id": planner_id,
-        "role": "planner",
-        "runtime_image": "ghcr.io/example/planner:latest",
-        "runtime_workspace": "/workspace/planner",
-        "runtime_command": "python,-m,planner",
-        "runtime_env": "MAIA_ENV,MAIA_ROLE",
-    }
-
-    reviewer_tuned = run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        reviewer_id,
-        "--role",
-        "reviewer",
-        "--runtime-image",
-        "ghcr.io/example/reviewer:latest",
-        "--runtime-workspace",
-        "/workspace/reviewer",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "reviewer",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=reviewer",
-    )
-    assert reviewer_tuned.returncode == 0
-    assert parse_fields(reviewer_tuned.stdout.strip()) == {
-        "agent_id": reviewer_id,
-        "role": "reviewer",
-        "runtime_image": "ghcr.io/example/reviewer:latest",
-        "runtime_workspace": "/workspace/reviewer",
-        "runtime_command": "python,-m,reviewer",
-        "runtime_env": "MAIA_ENV,MAIA_ROLE",
-    }
-
     planner_started = run_module(tmp_path, "agent", "start", planner_id)
     assert planner_started.returncode == 0
     assert parse_fields(planner_started.stdout.strip()) == {
@@ -583,7 +521,7 @@ def test_doctor_accepts_reachable_external_queue_before_setup(
     listener.bind(('127.0.0.1', 0))
     listener.listen(1)
     host, port = listener.getsockname()
-    monkeypatch.setenv('MAIA_BROKER_URL', f'amqp://guest:secret@{host}:{port}/%2F')
+    monkeypatch.setenv('MAIA_BROKER_URL', f'amqp://guest:guest@{host}:{port}/%2F')
 
     result = run_module(tmp_path, 'doctor')
     listener.close()
@@ -613,7 +551,7 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
     fake_docker = fake_bin / 'docker'
     _write_fake_docker(fake_docker)
     monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:secret@127.0.0.1:6553/%2F')
+    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:guest@127.0.0.1:6553/%2F')
 
     result = run_module(tmp_path, 'doctor')
 
@@ -821,6 +759,13 @@ def test_agent_new_list_status_and_tune_profile_metadata(tmp_path: Path) -> None
                 "role": "researcher",
                 "model": "gpt-5",
                 "tags": ["runtime", "focus"],
+                "setup_status": "configured",
+                "runtime_spec": {
+                    "image": "maia-local/hermes-worker:latest",
+                    "workspace": "/opt/maia",
+                    "command": [],
+                    "env": {},
+                },
             }
         ]
     }
@@ -977,6 +922,13 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
             "name": "alpha",
             "status": "stopped",
             "persona": "",
+            "setup_status": "configured",
+            "runtime_spec": {
+                "image": "maia-local/hermes-worker:latest",
+                "workspace": "/opt/maia",
+                "command": [],
+                "env": {},
+            },
         }
     ]
 
@@ -1035,7 +987,7 @@ def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) ->
     assert f"hermes_home={hermes_home}" in result.stdout
     assert f"agent_id={agent_id}" in result.stdout
     assert "Agent setup completed for 'planner'" in result.stdout
-    assert "if runtime config is already set" in result.stdout
+    assert "run maia agent start planner" in result.stdout
     assert "maia agent start planner" in result.stdout
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 0
@@ -1043,7 +995,7 @@ def test_agent_setup_passthrough_records_complete_setup_state(tmp_path: Path) ->
         "agent_id": agent_id,
         "name": "planner",
         "call_sign": "planner",
-        "status": "not-configured",
+        "status": "ready",
         "setup": "complete",
         "runtime": "stopped",
         "persona": "∅",
@@ -1123,7 +1075,7 @@ def test_agent_status_shows_setup_and_runtime_state_after_successful_setup(tmp_p
         "agent_id": agent_id,
         "name": "planner",
         "call_sign": "planner",
-        "status": "not-configured",
+        "status": "ready",
         "setup": "complete",
         "runtime": "stopped",
         "persona": "∅",
@@ -1248,6 +1200,8 @@ def test_workspace_show_surfaces_runtime_spec_context(tmp_path: Path) -> None:
 
 def test_workspace_show_rejects_agent_without_runtime_spec(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "runtime-demo")
+    cleared = run_module(tmp_path, "agent", "tune", agent_id, "--clear-runtime")
+    assert cleared.returncode == 0
 
     shown = run_module(tmp_path, "workspace", "show", agent_id)
 
@@ -1278,6 +1232,8 @@ def test_workspace_show_rejects_agent_with_missing_runtime_workspace(tmp_path: P
 
 def test_agent_start_rejects_agent_without_runtime_spec(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "runtime-demo")
+    cleared = run_module(tmp_path, "agent", "tune", agent_id, "--clear-runtime")
+    assert cleared.returncode == 0
 
     started = run_module(tmp_path, "agent", "start", agent_id)
 
@@ -1706,6 +1662,8 @@ def test_live_host_runtime_checklist_flow_is_locked(
 
 def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")
+    cleared = run_module(tmp_path, "agent", "tune", agent_id, "--clear-runtime")
+    assert cleared.returncode == 0
 
     start_without_runtime = run_module(tmp_path, "agent", "start", agent_id)
     assert start_without_runtime.returncode == 1
@@ -2115,7 +2073,7 @@ def test_recovery_message_points_operator_back_to_doctor_when_start_cannot_run(
 
     assert started.returncode == 1
     assert started.stderr.strip() == (
-        f"error: Can't run agent {agent_id!r} yet because runtime setup is missing"
+        f"error: Can't run agent {agent_id!r} yet because shared infra setup is not complete"
     )
 
 
@@ -2676,20 +2634,20 @@ def test_v1_golden_flow_smoke_contract(
         "agent_id": reviewer_id,
         "workspace_status": "configured",
         "workspace_basis": "runtime_spec.workspace",
-        "workspace": "/workspace/reviewer",
-        "runtime_image": "ghcr.io/example/reviewer:latest",
-        "runtime_command": "python,-m,reviewer",
-        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+        "workspace": "/opt/maia",
+        "runtime_image": "maia-local/hermes-worker:latest",
+        "runtime_command": "-",
+        "runtime_env_keys": "-",
     }
     assert parse_fields(handoff_lines[2]) == {
         "handoff_role": "target",
         "agent_id": planner_id,
         "workspace_status": "configured",
         "workspace_basis": "runtime_spec.workspace",
-        "workspace": "/workspace/planner",
-        "runtime_image": "ghcr.io/example/planner:latest",
-        "runtime_command": "python,-m,planner",
-        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+        "workspace": "/opt/maia",
+        "runtime_image": "maia-local/hermes-worker:latest",
+        "runtime_command": "-",
+        "runtime_env_keys": "-",
     }
 
     workspace = run_module(tmp_path, "workspace", "show", planner_id)
@@ -2698,10 +2656,10 @@ def test_v1_golden_flow_smoke_contract(
         "agent_id": planner_id,
         "workspace_status": "configured",
         "workspace_basis": "runtime_spec.workspace",
-        "workspace": "/workspace/planner",
-        "runtime_image": "ghcr.io/example/planner:latest",
-        "runtime_command": "python,-m,planner",
-        "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
+        "workspace": "/opt/maia",
+        "runtime_image": "maia-local/hermes-worker:latest",
+        "runtime_command": "-",
+        "runtime_env_keys": "-",
     }
 
     status = run_module(tmp_path, "agent", "status", planner_id)

@@ -11,6 +11,7 @@ import sys
 import time
 import uuid
 
+from maia.agent_context import build_runtime_context, format_runtime_context_for_prompt
 from maia.broker import BrokerDeliveryStatus, BrokerMessageEnvelope, MessageBroker
 from maia.message_model import MessageKind, MessageRecord
 from maia.rabbitmq_broker import RabbitMQBroker
@@ -31,6 +32,7 @@ class WorkerConfig:
     agent_id: str
     agent_name: str
     broker_url: str = ""
+    state_db_path: str = ""
     poll_seconds: float = 2.0
     max_messages_per_poll: int = 1
     hermes_bin: str = "hermes"
@@ -48,11 +50,15 @@ def load_config_from_env(env: dict[str, str] | None = None) -> WorkerConfig:
     broker_url = source.get("MAIA_BROKER_URL", "").strip()
     if not broker_url:
         raise ValueError("MAIA_BROKER_URL is required")
+    state_db_path = source.get("MAIA_STATE_DB_PATH", "").strip()
+    if not state_db_path:
+        raise ValueError("MAIA_STATE_DB_PATH is required")
     agent_name = source.get("MAIA_AGENT_NAME", "").strip() or agent_id
     return WorkerConfig(
         agent_id=agent_id,
         agent_name=agent_name,
         broker_url=broker_url,
+        state_db_path=state_db_path,
         poll_seconds=float(source.get("MAIA_POLL_SECONDS", "2")),
         max_messages_per_poll=int(source.get("MAIA_MAX_MESSAGES_PER_POLL", "1")),
         hermes_bin=source.get("MAIA_HERMES_BIN", "hermes").strip() or "hermes",
@@ -62,8 +68,20 @@ def load_config_from_env(env: dict[str, str] | None = None) -> WorkerConfig:
 
 def build_prompt(config: WorkerConfig, envelope: BrokerMessageEnvelope) -> str:
     message = envelope.message
+    context_block = ""
+    if config.state_db_path:
+        try:
+            runtime_context = build_runtime_context(
+                config.state_db_path,
+                agent_id=config.agent_id,
+                incoming_message=message,
+            )
+        except ValueError as exc:
+            raise ValueError(f"Maia runtime context is unavailable: {exc}") from exc
+        context_block = f"{format_runtime_context_for_prompt(runtime_context)}\n\n"
     return (
-        f"You are Maia agent {config.agent_name} (agent_id={config.agent_id}).\n"
+        f"You are Maia agent {config.agent_name} (agent_id={config.agent_id}).\n\n"
+        f"{context_block}"
         "Reply as this agent to the incoming Maia thread message below.\n"
         "Keep the answer direct and useful. Return only the reply body.\n\n"
         f"thread_id: {message.thread_id}\n"
@@ -103,8 +121,8 @@ def process_once(
 
     processed_any = False
     for envelope in pull_result.messages:
-        prompt = build_prompt(config, envelope)
         try:
+            prompt = build_prompt(config, envelope)
             reply_body = hermes_runner(prompt, config=config)
         except Exception as exc:
             if hasattr(broker, "close"):

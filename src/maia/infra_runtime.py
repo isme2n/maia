@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 from urllib.parse import urlparse
 
+from maia.runtime_spec import RuntimeSpec
 from maia.sqlite_state import SQLiteState
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "MAIA_QUEUE_VOLUME_NAME",
     "bootstrap_shared_infra",
     "collect_doctor_checks",
+    "default_agent_runtime_spec",
     "runtime_broker_url",
 ]
 
@@ -26,6 +28,20 @@ MAIA_NETWORK_NAME = "maia"
 MAIA_QUEUE_CONTAINER_NAME = "maia-rabbitmq"
 MAIA_QUEUE_VOLUME_NAME = "maia-rabbitmq-data"
 MAIA_QUEUE_IMAGE = "rabbitmq:3.13-alpine"
+MAIA_HERMES_WORKER_IMAGE = "maia-local/hermes-worker:latest"
+MAIA_HERMES_WORKER_WORKSPACE = "/opt/maia"
+
+
+def default_agent_runtime_spec(agent_name: str) -> RuntimeSpec:
+    """Return the default Hermes worker runtime spec for first-run agents."""
+
+    _ = agent_name
+    return RuntimeSpec(
+        image=MAIA_HERMES_WORKER_IMAGE,
+        workspace=MAIA_HERMES_WORKER_WORKSPACE,
+        command=[],
+        env={},
+    )
 
 
 def runtime_broker_url() -> str:
@@ -202,14 +218,14 @@ def _collect_external_queue_check() -> dict[str, str] | None:
             "name": "queue",
             "status": "fail",
             "detail": "MAIA_BROKER_URL needs a numeric port",
-            "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
+            "remediation": "Use a full AMQP URL like amqp://user:password@host:5672/vhost",
         }
     if not parsed.hostname:
         return {
             "name": "queue",
             "status": "fail",
             "detail": "MAIA_BROKER_URL needs a hostname",
-            "remediation": "Use a full AMQP URL like amqp://user:***@host:5672/vhost",
+            "remediation": "Use a full AMQP URL like amqp://user:password@host:5672/vhost",
         }
     if port is None:
         port = 5671 if parsed.scheme == "amqps" else 5672
