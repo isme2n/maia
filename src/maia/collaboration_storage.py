@@ -1,4 +1,8 @@
-"""Persistence helpers for Maia collaboration state."""
+"""Legacy collaboration snapshot helpers for Maia.
+
+These helpers are retained only for transitional caches and non-active
+compatibility tests. Maia's active collaboration contract is Keryx-backed.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +26,7 @@ class CollaborationState:
 
 
 class CollaborationStorage:
-    """Persist collaboration state to local SQLite state or transitional JSON files."""
+    """Persist legacy collaboration snapshots to SQLite or transitional JSON cache files."""
 
     def save(
         self,

@@ -43,23 +43,26 @@ maia agent stop planner
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
 - Shared infra depends on a reachable queue and DB state path.
 - `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
+- The canonical Maia-owned SQLite file is `~/.maia/maia.db`.
 - `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
 - `maia agent start` now also requires gateway/home-channel setup to be complete; rerun `maia agent setup-gateway <name>` if that step was skipped.
-- Messaging and thread commands remain available but are not the primary Part 1 operator flow.
+- Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.
 
 ## Secondary surfaces
 - Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows.
-- Collaboration commands (`send`, `reply`, `inbox`, `thread`, `handoff`, `workspace`) remain available, but they are not the public Part 1 bootstrap story.
+- Keryx collaboration visibility commands (`thread`, `handoff`, `workspace`) remain available outside the Part 1 bootstrap story.
 
-## Part 2 real agent conversation
-Part 2 is where running agents talk to each other over the broker/message plane.
+## Part 2 Keryx collaboration
+Keryx is Maia's canonical collaboration root for live multi-agent work.
 
 - The product story is not “the operator manually relays every message in a CLI messenger.”
 - Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.
 - If that agent delegates to another agent, the active conversation agent stays the user-facing anchor.
-- `send`, `reply`, and `inbox` remain useful for diagnostics and controlled operator checks.
-- The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` so operators can see open collaboration state, recent handoffs, and participant runtime context.
-- The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange between running agents.
+- `thread` / `thread_id` are Maia's public names for the Keryx collaboration object.
+- Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.
+- Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract.
+- The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` as Keryx-backed operator views of open collaboration state, recent handoffs, and participant runtime context.
+- The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange rooted in Keryx collaboration state.
 
 ## Direct-agent delegation contract
 - Public story: the user talks to one named agent, that agent may ask another agent for help, and the original agent brings the result back.
@@ -85,7 +88,7 @@ Example shape:
 - `maia agent status <agent_id>`
 - `maia agent logs <agent_id> --tail-lines 20`
 
-This is the public operator path for checking who is pending, which thread is open, what the latest handoff was, and whether the source/target runtimes are still healthy.
+These are Keryx-backed operator views for checking who is pending, which thread is open, what the latest handoff was, and whether the source/target runtimes are still healthy.
 
 ## Runtime support boundary
 - Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
@@ -114,7 +117,7 @@ This is the public operator path for checking who is pending, which thread is op
 ## Registry persistence
 - `JsonRegistryStorage` saves the agent registry as a single JSON object with an `agents` array.
 - Missing registry files load as an empty `AgentRegistry`.
-- Runtime CLI commands `maia export|import|inspect` operate on Maia portable state using the default registry path `~/.maia/registry.json` as the current source/target state.
+- Runtime CLI commands `maia export|import|inspect` operate on Maia portable state while Maia keeps one canonical SQLite DB at `~/.maia/maia.db` and the default registry path `~/.maia/registry.json` as the current portable source/target state.
 - `maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`.
 - `maia export [path] --label <label> --description <text>` lets the operator override manifest metadata while keeping the same bundle/import contract.
 - `maia import <path> --preview` shows an import diff summary plus a risk classification line without mutating the current local registry.

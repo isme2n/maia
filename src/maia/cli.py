@@ -27,19 +27,22 @@ from maia.bundle_archive import (
     is_bundle_archive_path,
     write_bundle_archive,
 )
-from maia.broker import BrokerMessageEnvelope, MessageBroker
 from maia.cli_parser import (
     AGENT_ID_COMMANDS,
     LIFECYCLE_STATUS_BY_COMMAND,
     TOP_LEVEL_COLLAB_COMMANDS,
     build_parser,
 )
-from maia.collaboration_storage import CollaborationStorage
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
-from maia.handoff_model import HandoffKind, HandoffRecord
 from maia import infra_runtime
-from maia.message_model import MessageKind, MessageRecord, ThreadRecord
-from maia.rabbitmq_broker import RabbitMQBroker
+from maia.keryx_models import (
+    KeryxHandoffRecord,
+    KeryxHandoffStatus,
+    KeryxMessageRecord,
+    KeryxSessionRecord,
+    KeryxSessionStatus,
+)
+from maia.keryx_service import KeryxService
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.sqlite_state import SQLiteState
@@ -58,26 +61,15 @@ _ACTIVE_RUNTIME_STATUSES = frozenset(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
-    args = parser.parse_args(_normalize_legacy_cli_argv(argv_list))
+    args = parser.parse_args(argv_list)
     if _get_runtime_command_name(args) is None:
         args.parser.print_help()
         return 0
     return _handle_runtime_command(args)
 
 
-def _normalize_legacy_cli_argv(argv: list[str]) -> list[str]:
-    if argv and argv[0] == "artifact":
-        argv = ["handoff", *argv[1:]]
-    if len(argv) < 2 or argv[0] != "thread":
-        return argv
-    if argv[1] in {"list", "show", "-h", "--help"} or argv[1].startswith("-"):
-        return argv
-    return ["thread", "show", *argv[1:]]
-
-
 def _handle_runtime_command(args: argparse.Namespace) -> int:
     storage = JsonRegistryStorage()
-    collaboration_storage = CollaborationStorage()
     state_path = get_state_db_path()
     team_metadata_path = get_team_metadata_path()
     resource = getattr(args, "resource", None)
@@ -105,56 +97,17 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_workspace_show(args, registry)
         if resource == "handoff":
             registry = storage.load(state_path)
-            collaboration = collaboration_storage.load(state_path)
+            keryx_service = KeryxService(state_path)
             if command_name == "add":
-                return _handle_handoff_add(
-                    args,
-                    registry,
-                    collaboration_storage,
-                    state_path,
-                    collaboration,
-                )
+                return _handle_handoff_add(args, registry, keryx_service)
             if command_name == "list":
-                return _handle_handoff_list(args, collaboration)
+                return _handle_handoff_list(args, keryx_service)
             if command_name == "show":
-                return _handle_handoff_show(args, collaboration, registry)
+                return _handle_handoff_show(args, keryx_service, registry)
         if resource in TOP_LEVEL_COLLAB_COMMANDS:
-            registry = storage.load(state_path)
-            collaboration = collaboration_storage.load(state_path)
-            message_broker = _build_message_broker()
-            try:
-                if command_name == "send":
-                    return _handle_send(
-                        args,
-                        registry,
-                        collaboration_storage,
-                        state_path,
-                        collaboration,
-                        message_broker,
-                    )
-                if command_name == "inbox":
-                    return _handle_inbox(
-                        args,
-                        registry,
-                        collaboration_storage,
-                        state_path,
-                        collaboration,
-                        message_broker,
-                    )
-                if command_name == "thread":
-                    return _handle_thread(args, collaboration)
-                if command_name == "reply":
-                    return _handle_reply(
-                        args,
-                        registry,
-                        collaboration_storage,
-                        state_path,
-                        collaboration,
-                        message_broker,
-                    )
-            finally:
-                if message_broker is not None:
-                    message_broker.close()
+            keryx_service = KeryxService(state_path)
+            if command_name == "thread":
+                return _handle_thread(args, keryx_service)
 
         registry = storage.load(state_path)
         if resource == "agent" and command_name in AGENT_ID_COMMANDS:
@@ -341,6 +294,8 @@ def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) ->
         if os.environ.get("MAIA_BROKER_URL", "").strip():
             return "fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again"
         return "run maia setup to bootstrap shared infra"
+    if "keryx" in failed_checks:
+        return "run maia setup to bootstrap shared infra"
     if "state_db" in failed_checks:
         return "fix local Maia state permissions, then run maia doctor again"
     return "fix the failed checks above, then run maia doctor again"
@@ -355,6 +310,7 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
     docker_cli = _doctor_check_by_name(checks, "docker_cli")
     docker_daemon = _doctor_check_by_name(checks, "docker_daemon")
     queue = _doctor_check_by_name(checks, "queue")
+    keryx = _doctor_check_by_name(checks, "keryx")
     state_db = _doctor_check_by_name(checks, "state_db")
 
     docker_ok = bool(
@@ -373,10 +329,15 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
     elif queue:
         lines.append(f"✗ Queue FAIL — {queue['detail']}")
 
+    if keryx and keryx["status"] == "ok":
+        lines.append("✓ Keryx OK")
+    elif keryx:
+        lines.append(f"✗ Keryx FAIL — {keryx['detail']}")
+
     if state_db and state_db["status"] == "ok":
-        lines.append("✓ State DB OK")
+        lines.append("✓ Maia DB OK")
     elif state_db:
-        lines.append(f"✗ State DB FAIL — {state_db['detail']}")
+        lines.append(f"✗ Maia DB FAIL — {state_db['detail']}")
 
     next_step = _doctor_next_step(checks, failed_checks)
     if failed_checks:
@@ -399,16 +360,11 @@ def _format_setup_step_line(step: dict[str, str]) -> str:
         return f"{action} Maia volume {step['detail']}."
     if step["step"] == "queue":
         return f"{action} shared queue {step['detail']}."
+    if step["step"] == "keryx":
+        return f"{action} shared Keryx endpoint {step['detail']}."
     if step["step"] == "db":
-        return f"SQLite state is ready at {step['detail']}."
+        return f"Maia SQLite DB is ready at {step['detail']}."
     return f"{action} {step['step']} {step['detail']}."
-
-
-def _build_message_broker() -> MessageBroker | None:
-    broker_url = os.environ.get("MAIA_BROKER_URL", "").strip()
-    if not broker_url:
-        return None
-    return RabbitMQBroker(broker_url=broker_url)
 
 
 def _build_runtime_adapter() -> DockerRuntimeAdapter:
@@ -474,179 +430,37 @@ def _handle_agent_list(registry) -> int:
     return 0
 
 
-def _handle_send(
-    args,
-    registry,
-    collaboration_storage,
-    collaboration_path: Path,
-    collaboration,
-    message_broker: MessageBroker | None,
-) -> int:
-    registry.get(args.from_agent)
-    registry.get(args.to_agent)
-    kind = MessageKind(args.kind)
-    threads = list(collaboration.threads)
-    messages = list(collaboration.messages)
-    now = _timestamp_now()
-
-    if args.thread_id is None:
-        thread = ThreadRecord(
-            thread_id=_new_id(),
-            topic=args.topic,
-            participants=[args.from_agent, args.to_agent],
-            created_by=args.from_agent,
-            status="open",
-            created_at=now,
-            updated_at=now,
-        )
-        threads.append(thread)
-    else:
-        thread = _require_thread(collaboration, args.thread_id)
-        participants = list(thread.participants)
-        if args.from_agent not in participants:
-            participants.append(args.from_agent)
-        if args.to_agent not in participants:
-            participants.append(args.to_agent)
-        thread = ThreadRecord(
-            thread_id=thread.thread_id,
-            topic=thread.topic,
-            participants=participants,
-            created_by=thread.created_by,
-            status=thread.status,
-            created_at=thread.created_at,
-            updated_at=now,
-        )
-        _replace_thread(threads, thread)
-
-    message = MessageRecord(
-        message_id=_new_id(),
-        thread_id=thread.thread_id,
-        from_agent=args.from_agent,
-        to_agent=args.to_agent,
-        kind=kind,
-        body=args.body,
-        created_at=now,
-    )
-    messages.append(message)
-    if message_broker is not None:
-        if isinstance(message_broker, RabbitMQBroker):
-            message_broker.publish_with_metadata(message, thread_topic=thread.topic)
-        else:
-            message_broker.publish(message)
-    collaboration_storage.save(
-        collaboration_path,
-        threads=threads,
-        messages=messages,
-    )
-    thread_messages = [
-        saved_message for saved_message in messages if saved_message.thread_id == thread.thread_id
-    ]
-    thread_handoffs = [
-        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
-    ]
-    delegation_fields = _format_delegation_status_fields(thread, thread_messages, thread_handoffs)
-    print(
-        f"sent thread_id={thread.thread_id} message_id={message.message_id} "
-        f"from_agent={message.from_agent} to_agent={message.to_agent} kind={message.kind.value} "
-        f"{delegation_fields}"
-    )
-    return 0
-
-
-def _handle_inbox(
-    args,
-    registry,
-    collaboration_storage,
-    collaboration_path: Path,
-    collaboration,
-    message_broker: MessageBroker | None,
-) -> int:
-    registry.get(args.agent_id)
-    limit = _validate_positive_limit(args.limit, field_name="Inbox limit")
-    if message_broker is not None:
-        if isinstance(message_broker, RabbitMQBroker):
-            pulled_messages = message_broker.pull_with_metadata(agent_id=args.agent_id, limit=limit)
-            collaboration = _merge_broker_inbox_messages(
-                collaboration_storage,
-                collaboration_path,
-                collaboration,
-                pulled_messages,
-            )
-            if pulled_messages:
-                print(
-                    f"inbox agent_id={args.agent_id} messages={len(pulled_messages)} "
-                    "source=broker ack=after-print"
-                )
-                for envelope, _metadata in pulled_messages:
-                    print(_format_envelope_line(envelope))
-                _ack_broker_messages(
-                    message_broker,
-                    [envelope for envelope, _metadata in pulled_messages],
-                    agent_id=args.agent_id,
-                )
-                return 0
-            print(
-                f"inbox agent_id={args.agent_id} messages=0 "
-                "source=broker ack=complete"
-            )
-            return 0
-        pull_result = message_broker.pull(agent_id=args.agent_id, limit=limit)
-        collaboration = _merge_broker_inbox_messages(
-            collaboration_storage,
-            collaboration_path,
-            collaboration,
-            [(envelope, {}) for envelope in pull_result.messages],
-        )
-        inbox_messages = [envelope.message for envelope in pull_result.messages]
-        if inbox_messages:
-            print(
-                f"inbox agent_id={args.agent_id} messages={len(inbox_messages)} "
-                "source=broker ack=after-print"
-            )
-            for envelope in pull_result.messages:
-                print(_format_envelope_line(envelope))
-            _ack_broker_messages(
-                message_broker,
-                pull_result.messages,
-                agent_id=args.agent_id,
-            )
-            return 0
-        print(
-            f"inbox agent_id={args.agent_id} messages=0 "
-            "source=broker ack=complete"
-        )
-        return 0
-    inbox_messages = [
-        message for message in collaboration.messages if message.to_agent == args.agent_id
-    ]
-    inbox_messages = list(reversed(inbox_messages))[:limit]
-    print(f"inbox agent_id={args.agent_id} messages={len(inbox_messages)}")
-    for message in inbox_messages:
-        print(_format_message_line(message))
-    return 0
-
-
-def _handle_thread(args, collaboration) -> int:
+def _handle_thread(args, keryx_service: KeryxService) -> int:
     if args.thread_command == "list":
-        return _handle_thread_list(args, collaboration)
+        return _handle_thread_list(args, keryx_service)
     if args.thread_command == "show":
-        return _handle_thread_show(args, collaboration)
+        return _handle_thread_show(args, keryx_service)
     raise ValueError(f"Unsupported thread command: {args.thread_command!r}")
 
 
-def _handle_thread_list(args, collaboration) -> int:
-    messages_by_thread = _group_messages_by_thread(collaboration.messages)
-    handoffs_by_thread = _group_handoffs_by_thread(collaboration.handoffs)
+def _handle_thread_list(args, keryx_service: KeryxService) -> int:
     runtime_states = _load_thread_runtime_states()
     threads = sorted(
-        collaboration.threads,
+        keryx_service.list_threads(),
         key=lambda thread: (thread.updated_at, thread.thread_id),
         reverse=True,
     )
     if args.agent is not None:
         threads = [thread for thread in threads if args.agent in thread.participants]
     if args.status is not None:
-        threads = [thread for thread in threads if thread.status == args.status]
+        threads = [
+            thread
+            for thread in threads
+            if _thread_visibility_status(thread) == args.status
+        ]
+    messages_by_thread = {
+        thread.thread_id: keryx_service.list_thread_messages(thread.thread_id)
+        for thread in threads
+    }
+    handoffs_by_thread = {
+        thread.thread_id: keryx_service.list_thread_handoffs(thread.thread_id)
+        for thread in threads
+    }
     for thread in threads:
         overview = _format_thread_overview_fields(
             thread,
@@ -658,15 +472,11 @@ def _handle_thread_list(args, collaboration) -> int:
     return 0
 
 
-def _handle_thread_show(args, collaboration) -> int:
+def _handle_thread_show(args, keryx_service: KeryxService) -> int:
     limit = _validate_positive_limit(args.limit, field_name="Thread limit")
-    thread = _require_thread(collaboration, args.thread_id)
-    thread_messages = _sorted_thread_messages(
-        message for message in collaboration.messages if message.thread_id == thread.thread_id
-    )
-    thread_handoffs = [
-        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
-    ]
+    thread = keryx_service.get_thread(args.thread_id)
+    thread_messages = keryx_service.list_thread_messages(thread.thread_id)
+    thread_handoffs = keryx_service.list_thread_handoffs(thread.thread_id)
     runtime_states = _load_thread_runtime_states()
     print(
         f"thread {_format_thread_overview_fields(thread, thread_messages, thread_handoffs, runtime_states)} "
@@ -681,11 +491,9 @@ def _handle_thread_show(args, collaboration) -> int:
 def _handle_handoff_add(
     args,
     registry,
-    collaboration_storage,
-    collaboration_path: Path,
-    collaboration,
+    keryx_service: KeryxService,
 ) -> int:
-    thread = _require_thread(collaboration, args.thread_id)
+    thread = keryx_service.get_thread(args.thread_id)
     registry.get(args.from_agent)
     registry.get(args.to_agent)
     _require_thread_participant(
@@ -699,42 +507,37 @@ def _handle_handoff_add(
         error="Handoff recipient must be a participant in the thread",
     )
 
-    handoff = HandoffRecord(
+    timestamp = _timestamp_now()
+    handoff = KeryxHandoffRecord(
         handoff_id=_new_id(),
-        thread_id=thread.thread_id,
+        session_id=thread.thread_id,
         from_agent=args.from_agent,
         to_agent=args.to_agent,
-        kind=HandoffKind(args.type),
+        kind=args.type,
+        status=KeryxHandoffStatus.OPEN,
         location=args.location,
         summary=args.summary,
-        created_at=_timestamp_now(),
+        created_at=timestamp,
+        updated_at=timestamp,
     )
-    collaboration_storage.save(
-        collaboration_path,
-        threads=list(collaboration.threads),
-        messages=list(collaboration.messages),
-        handoffs=[*collaboration.handoffs, handoff],
-    )
+    keryx_service.create_thread_handoff(thread.thread_id, handoff)
     print(f"added {_format_handoff_line(handoff)}")
     return 0
 
 
-def _handle_handoff_list(args, collaboration) -> int:
+def _handle_handoff_list(args, keryx_service: KeryxService) -> int:
     if args.thread_id is not None:
-        _require_thread(collaboration, args.thread_id)
-        handoffs = [
-            handoff for handoff in collaboration.handoffs if handoff.thread_id == args.thread_id
-        ]
+        handoffs = keryx_service.list_thread_handoffs(args.thread_id)
     else:
-        handoffs = list(collaboration.handoffs)
+        handoffs = keryx_service.list_handoffs()
 
     for handoff in handoffs:
         print(_format_handoff_line(handoff))
     return 0
 
 
-def _handle_handoff_show(args, collaboration, registry) -> int:
-    handoff = _require_handoff(collaboration, args.handoff_id)
+def _handle_handoff_show(args, keryx_service: KeryxService, registry) -> int:
+    handoff = keryx_service.get_handoff(args.handoff_id)
     print(_format_handoff_line(handoff))
     print(
         _format_handoff_workspace_context_line(
@@ -753,74 +556,6 @@ def _handle_handoff_show(args, collaboration, registry) -> int:
     return 0
 
 
-def _handle_reply(
-    args,
-    registry,
-    collaboration_storage,
-    collaboration_path: Path,
-    collaboration,
-    message_broker: MessageBroker | None,
-) -> int:
-    registry.get(args.from_agent)
-    source_message = _require_message(collaboration, args.message_id)
-    registry.get(source_message.from_agent)
-    thread = _require_thread(collaboration, source_message.thread_id)
-    if args.from_agent != source_message.to_agent:
-        raise ValueError(
-            "Reply sender must match the original message recipient"
-        )
-    if args.from_agent not in thread.participants:
-        raise ValueError("Reply sender must be a participant in the thread")
-
-    now = _timestamp_now()
-    threads = list(collaboration.threads)
-    messages = list(collaboration.messages)
-    thread = ThreadRecord(
-        thread_id=thread.thread_id,
-        topic=thread.topic,
-        participants=list(thread.participants),
-        created_by=thread.created_by,
-        status=thread.status,
-        created_at=thread.created_at,
-        updated_at=now,
-    )
-    _replace_thread(threads, thread)
-    message = MessageRecord(
-        message_id=_new_id(),
-        thread_id=thread.thread_id,
-        from_agent=args.from_agent,
-        to_agent=source_message.from_agent,
-        kind=MessageKind(args.kind),
-        body=args.body,
-        created_at=now,
-        reply_to_message_id=source_message.message_id,
-    )
-    messages.append(message)
-    if message_broker is not None:
-        if isinstance(message_broker, RabbitMQBroker):
-            message_broker.publish_with_metadata(message, thread_topic=thread.topic)
-        else:
-            message_broker.publish(message)
-    collaboration_storage.save(
-        collaboration_path,
-        threads=threads,
-        messages=messages,
-    )
-    thread_messages = [
-        saved_message for saved_message in messages if saved_message.thread_id == thread.thread_id
-    ]
-    thread_handoffs = [
-        handoff for handoff in collaboration.handoffs if handoff.thread_id == thread.thread_id
-    ]
-    delegation_fields = _format_delegation_status_fields(thread, thread_messages, thread_handoffs)
-    print(
-        f"replied thread_id={thread.thread_id} message_id={message.message_id} "
-        f"reply_to_message_id={source_message.message_id} from_agent={message.from_agent} "
-        f"to_agent={message.to_agent} kind={message.kind.value} {delegation_fields}"
-    )
-    return 0
-
-
 def _new_id() -> str:
     return uuid.uuid4().hex[:8]
 
@@ -835,39 +570,45 @@ def _validate_positive_limit(value: int, *, field_name: str) -> int:
     return value
 
 
-def _message_sort_key(message: MessageRecord) -> str:
+def _message_sort_key(message: KeryxMessageRecord) -> str:
     return message.created_at
 
 
-def _sorted_thread_messages(messages: Sequence[MessageRecord]) -> list[MessageRecord]:
+def _sorted_thread_messages(messages: Sequence[KeryxMessageRecord]) -> list[KeryxMessageRecord]:
     return sorted(messages, key=_message_sort_key)
 
 
-def _group_messages_by_thread(messages: Sequence[MessageRecord]) -> dict[str, list[MessageRecord]]:
-    grouped: dict[str, list[MessageRecord]] = {}
+def _group_messages_by_thread(
+    messages: Sequence[KeryxMessageRecord],
+) -> dict[str, list[KeryxMessageRecord]]:
+    grouped: dict[str, list[KeryxMessageRecord]] = {}
     for message in messages:
         grouped.setdefault(message.thread_id, []).append(message)
     return grouped
 
 
-def _group_handoffs_by_thread(handoffs: Sequence[HandoffRecord]) -> dict[str, list[HandoffRecord]]:
-    grouped: dict[str, list[HandoffRecord]] = {}
+def _group_handoffs_by_thread(
+    handoffs: Sequence[KeryxHandoffRecord],
+) -> dict[str, list[KeryxHandoffRecord]]:
+    grouped: dict[str, list[KeryxHandoffRecord]] = {}
     for handoff in handoffs:
         grouped.setdefault(handoff.thread_id, []).append(handoff)
     return grouped
 
 
-def _handoff_sort_key(handoff: HandoffRecord) -> tuple[str, str]:
+def _handoff_sort_key(handoff: KeryxHandoffRecord) -> tuple[str, str]:
     return (handoff.created_at, handoff.handoff_id)
 
 
-def _select_recent_handoff(thread_handoffs: Sequence[HandoffRecord]) -> HandoffRecord | None:
+def _select_recent_handoff(
+    thread_handoffs: Sequence[KeryxHandoffRecord],
+) -> KeryxHandoffRecord | None:
     if not thread_handoffs:
         return None
     return max(thread_handoffs, key=_handoff_sort_key)
 
 
-def _derive_thread_pending_on(thread_messages: Sequence[MessageRecord]) -> str:
+def _derive_thread_pending_on(thread_messages: Sequence[KeryxMessageRecord]) -> str:
     sorted_messages = _sorted_thread_messages(thread_messages)
     if not sorted_messages:
         return "-"
@@ -904,9 +645,9 @@ def _format_thread_participant_runtime(
 
 
 def _format_thread_overview_fields(
-    thread: ThreadRecord,
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
+    thread: KeryxSessionRecord,
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
     runtime_states: dict[str, RuntimeState],
 ) -> str:
     recent_handoff = _select_recent_handoff(thread_handoffs)
@@ -920,21 +661,26 @@ def _format_thread_overview_fields(
         f"topic={_format_preview_value(thread.topic)} "
         f"participants={_format_encoded_list_or_dash(thread.participants)} "
         f"participant_runtime={_format_thread_participant_runtime(thread.participants, runtime_states)} "
-        f"status={thread.status} updated_at={thread.updated_at} "
+        f"status={_thread_visibility_status(thread)} updated_at={thread.updated_at} "
         f"pending_on={_format_preview_value(_derive_thread_pending_on(thread_messages))} "
         f"{delegation_fields} "
         f"handoffs={len(thread_handoffs)} messages={len(thread_messages)} "
         f"recent_handoff_id={recent_handoff.handoff_id if recent_handoff is not None else '-'} "
         f"recent_handoff_to={recent_handoff.to_agent if recent_handoff is not None else '-'} "
-        f"recent_handoff_type={recent_handoff.kind.value if recent_handoff is not None else '-'} "
+        f"recent_handoff_type={recent_handoff.kind if recent_handoff is not None else '-'} "
         f"recent_handoff_summary={_format_preview_value(recent_handoff.summary) if recent_handoff is not None else '-'}"
     )
 
 
+def _thread_visibility_status(thread: KeryxSessionRecord) -> str:
+    raw_status = thread.status.value if hasattr(thread.status, "value") else thread.status
+    return "closed" if raw_status == KeryxSessionStatus.CLOSED.value else "open"
+
+
 def _format_delegation_status_fields(
-    thread: ThreadRecord,
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
+    thread: KeryxSessionRecord,
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
 ) -> str:
     delegated_to = _derive_delegated_to(thread, thread_messages, thread_handoffs)
     delegation_status = _derive_delegation_status(thread, thread_messages, thread_handoffs)
@@ -952,9 +698,9 @@ def _format_delegation_status_fields(
 
 
 def _derive_delegated_to(
-    thread: ThreadRecord,
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
+    thread: KeryxSessionRecord,
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
 ) -> str:
     anchor_agent = thread.created_by
     latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
@@ -977,9 +723,9 @@ def _derive_delegated_counterparty(anchor_agent: str, from_agent: str, to_agent:
 
 
 def _derive_delegation_status(
-    thread: ThreadRecord,
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
+    thread: KeryxSessionRecord,
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
 ) -> str:
     anchor_agent = thread.created_by
     latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
@@ -988,21 +734,21 @@ def _derive_delegation_status(
     event_kind, payload = latest_event
     if event_kind == "handoff":
         return "handoff_ready" if payload.to_agent == anchor_agent else "answered"
-    if payload.kind is MessageKind.REQUEST:
+    if payload.kind == "request":
         return "pending"
-    if payload.kind is MessageKind.QUESTION and payload.to_agent == anchor_agent:
+    if payload.kind == "question" and payload.to_agent == anchor_agent:
         return "needs_user_input"
-    if payload.kind in {MessageKind.ANSWER, MessageKind.REPORT}:
+    if payload.kind in {"answer", "report"}:
         return "answered"
-    if payload.kind is MessageKind.HANDOFF:
+    if payload.kind == "handoff":
         return "handoff_ready" if payload.to_agent == anchor_agent else "answered"
     return "-"
 
 
 def _derive_latest_internal_update(
-    thread: ThreadRecord,
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
+    thread: KeryxSessionRecord,
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
 ) -> str:
     latest_event = _select_latest_internal_event(thread_messages, thread_handoffs)
     if latest_event is None:
@@ -1010,8 +756,8 @@ def _derive_latest_internal_update(
     event_kind, payload = latest_event
     if event_kind == "handoff":
         summary = payload.summary if payload.summary else payload.location
-        return f"{payload.from_agent} {payload.kind.value}: {_summarize_internal_update_text(summary)}"
-    return f"{payload.from_agent} {payload.kind.value}: {_summarize_internal_update_text(payload.body)}"
+        return f"{payload.from_agent} {payload.kind}: {_summarize_internal_update_text(summary)}"
+    return f"{payload.from_agent} {payload.kind}: {_summarize_internal_update_text(payload.body)}"
 
 
 def _summarize_internal_update_text(value: str, *, max_length: int = 48) -> str:
@@ -1022,9 +768,9 @@ def _summarize_internal_update_text(value: str, *, max_length: int = 48) -> str:
 
 
 def _select_latest_internal_event(
-    thread_messages: Sequence[MessageRecord],
-    thread_handoffs: Sequence[HandoffRecord],
-) -> tuple[str, MessageRecord | HandoffRecord] | None:
+    thread_messages: Sequence[KeryxMessageRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
+) -> tuple[str, KeryxMessageRecord | KeryxHandoffRecord] | None:
     latest_message = _sorted_thread_messages(thread_messages)[-1] if thread_messages else None
     latest_handoff = _select_recent_handoff(thread_handoffs)
     if latest_message is None and latest_handoff is None:
@@ -1039,142 +785,19 @@ def _select_latest_internal_event(
 
 
 def _select_latest_handoff_to_anchor(
-    thread_handoffs: Sequence[HandoffRecord],
+    thread_handoffs: Sequence[KeryxHandoffRecord],
     anchor_agent: str,
-) -> HandoffRecord | None:
+) -> KeryxHandoffRecord | None:
     anchor_handoffs = [handoff for handoff in thread_handoffs if handoff.to_agent == anchor_agent]
     return max(anchor_handoffs, key=_handoff_sort_key, default=None)
 
 
-def _require_thread(collaboration, thread_id: str) -> ThreadRecord:
-    for thread in collaboration.threads:
-        if thread.thread_id == thread_id:
-            return thread
-    raise LookupError(f"Thread with id {thread_id!r} not found")
-
-
-def _require_thread_participant(thread: ThreadRecord, agent_id: str, *, error: str) -> None:
+def _require_thread_participant(thread: KeryxSessionRecord, agent_id: str, *, error: str) -> None:
     if agent_id not in thread.participants:
         raise ValueError(error)
 
 
-def _require_message(collaboration, message_id: str) -> MessageRecord:
-    for message in collaboration.messages:
-        if message.message_id == message_id:
-            return message
-    raise LookupError(f"Message with id {message_id!r} not found")
-
-
-def _require_handoff(collaboration, handoff_id: str) -> HandoffRecord:
-    for handoff in collaboration.handoffs:
-        if handoff.handoff_id == handoff_id:
-            return handoff
-    raise LookupError(f"Handoff with id {handoff_id!r} not found")
-
-
-def _replace_thread(threads: list[ThreadRecord], updated: ThreadRecord) -> None:
-    for index, thread in enumerate(threads):
-        if thread.thread_id == updated.thread_id:
-            threads[index] = updated
-            return
-    raise LookupError(f"Thread with id {updated.thread_id!r} not found")
-
-
-def _merge_broker_inbox_messages(
-    collaboration_storage,
-    collaboration_path: Path,
-    collaboration,
-    envelopes: list[tuple[BrokerMessageEnvelope, dict[str, str]]],
-):
-    if not envelopes:
-        return collaboration
-    threads = list(collaboration.threads)
-    messages = list(collaboration.messages)
-    known_message_ids = {message.message_id for message in messages}
-    changed = False
-    for envelope, metadata in envelopes:
-        message = envelope.message
-        thread_topic = metadata.get("thread_topic", "")
-        existing_thread = next(
-            (thread for thread in threads if thread.thread_id == message.thread_id),
-            None,
-        )
-        if existing_thread is None:
-            threads.append(
-                ThreadRecord(
-                    thread_id=message.thread_id,
-                    topic=thread_topic,
-                    participants=[message.from_agent, message.to_agent],
-                    created_by=message.from_agent,
-                    status="open",
-                    created_at=message.created_at,
-                    updated_at=message.created_at,
-                )
-            )
-            changed = True
-        else:
-            participants = list(existing_thread.participants)
-            if message.from_agent not in participants:
-                participants.append(message.from_agent)
-            if message.to_agent not in participants:
-                participants.append(message.to_agent)
-            next_topic = existing_thread.topic or thread_topic
-            if (
-                participants != existing_thread.participants
-                or message.created_at > existing_thread.updated_at
-                or next_topic != existing_thread.topic
-            ):
-                _replace_thread(
-                    threads,
-                    ThreadRecord(
-                        thread_id=existing_thread.thread_id,
-                        topic=next_topic,
-                        participants=participants,
-                        created_by=existing_thread.created_by,
-                        status=existing_thread.status,
-                        created_at=existing_thread.created_at,
-                        updated_at=max(existing_thread.updated_at, message.created_at),
-                    ),
-                )
-                changed = True
-        if message.message_id not in known_message_ids:
-            messages.append(message)
-            known_message_ids.add(message.message_id)
-            changed = True
-    if changed:
-        collaboration_storage.save(
-            collaboration_path,
-            threads=threads,
-            messages=messages,
-        )
-        return collaboration_storage.load(collaboration_path)
-    return collaboration
-
-
-def _format_envelope_line(envelope: BrokerMessageEnvelope) -> str:
-    return (
-        _format_message_line(envelope.message)
-        + f" receipt_handle={envelope.receipt_handle}"
-        + f" delivery_attempt={envelope.delivery_attempt}"
-    )
-
-
-def _ack_broker_messages(
-    message_broker: MessageBroker,
-    envelopes: list[BrokerMessageEnvelope],
-    *,
-    agent_id: str,
-) -> None:
-    for envelope in envelopes:
-        try:
-            message_broker.ack(envelope)
-        except Exception as exc:
-            raise ValueError(
-                f"Broker inbox ack failed for agent {agent_id!r}: {exc}"
-            ) from exc
-
-
-def _format_message_line(message: MessageRecord) -> str:
+def _format_message_line(message: KeryxMessageRecord) -> str:
     reply_to = (
         _format_preview_value(message.reply_to_message_id)
         if message.reply_to_message_id is not None
@@ -1183,21 +806,21 @@ def _format_message_line(message: MessageRecord) -> str:
     return (
         f"message_id={message.message_id} thread_id={message.thread_id} "
         f"from_agent={message.from_agent} to_agent={message.to_agent} "
-        f"kind={message.kind.value} body={_format_preview_value(message.body)} "
+        f"kind={message.kind} body={_format_preview_value(message.body)} "
         f"created_at={message.created_at} reply_to_message_id={reply_to}"
     )
 
 
-def _format_handoff_line(handoff: HandoffRecord) -> str:
+def _format_handoff_line(handoff: KeryxHandoffRecord) -> str:
     return (
         f"handoff_id={handoff.handoff_id} thread_id={handoff.thread_id} "
         f"from_agent={handoff.from_agent} to_agent={handoff.to_agent} "
-        f"type={handoff.kind.value} location={_format_preview_value(handoff.location)} "
+        f"type={handoff.kind} location={_format_preview_value(handoff.location)} "
         f"summary={_format_preview_value(handoff.summary)} created_at={handoff.created_at}"
     )
 
 
-def _format_recent_handoff_fields(handoff: HandoffRecord | None) -> str:
+def _format_recent_handoff_fields(handoff: KeryxHandoffRecord | None) -> str:
     if handoff is None:
         return (
             "recent_handoff_id=- recent_handoff_from=- recent_handoff_to=- "
@@ -1208,7 +831,7 @@ def _format_recent_handoff_fields(handoff: HandoffRecord | None) -> str:
         f"recent_handoff_id={handoff.handoff_id} "
         f"recent_handoff_from={handoff.from_agent} "
         f"recent_handoff_to={handoff.to_agent} "
-        f"recent_handoff_type={handoff.kind.value} "
+        f"recent_handoff_type={handoff.kind} "
         f"recent_handoff_location={_format_preview_value(handoff.location)} "
         f"recent_handoff_summary={_format_preview_value(handoff.summary)} "
         f"recent_handoff_created_at={handoff.created_at}"

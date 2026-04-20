@@ -1,4 +1,9 @@
-"""Thread and message domain model primitives for Maia."""
+"""Legacy thread/message domain primitives for Maia.
+
+These records are kept only for broker-era compatibility paths and transitional
+state helpers. Maia's active collaboration contract is the Keryx-backed thread
+surface.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +45,7 @@ class MessageKind(str, Enum):
 
 @dataclass(slots=True)
 class ThreadRecord:
-    """Serializable collaboration thread metadata."""
+    """Legacy collaboration thread metadata kept outside the active Keryx path."""
 
     thread_id: str
     topic: str
@@ -113,7 +118,7 @@ class ThreadRecord:
 
 @dataclass(slots=True)
 class MessageRecord:
-    """Serializable message envelope stored within a thread."""
+    """Legacy message envelope kept outside Maia's active Keryx thread contract."""
 
     message_id: str
     thread_id: str

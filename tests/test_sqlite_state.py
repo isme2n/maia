@@ -60,14 +60,14 @@ def test_sqlite_backed_storages_write_labeled_transitional_json_caches(tmp_path:
 def test_app_state_exposes_sqlite_db_path(tmp_path: Path) -> None:
     env = {"HOME": str(tmp_path)}
 
-    assert get_state_db_path(env) == tmp_path / ".maia" / "state.db"
+    assert get_state_db_path(env) == tmp_path / ".maia" / "maia.db"
     assert get_registry_path(env) == tmp_path / ".maia" / "registry.json"
     assert get_runtime_state_path(env) == tmp_path / ".maia" / "runtime" / "runtime-state.json"
     assert get_collaboration_path(env) == tmp_path / ".maia" / "collaboration.json"
 
 
 def test_sqlite_state_initializes_control_plane_schema(tmp_path: Path) -> None:
-    path = tmp_path / "state.db"
+    path = tmp_path / "maia.db"
 
     SQLiteState(path).initialize()
 
@@ -89,12 +89,16 @@ def test_sqlite_state_initializes_control_plane_schema(tmp_path: Path) -> None:
         "collaboration_threads",
         "collaboration_messages",
         "collaboration_handoffs",
+        "keryx_sessions",
+        "keryx_session_participants",
+        "keryx_messages",
+        "keryx_handoffs",
     } <= tables
     assert bootstrap_row == ("pending", "shared infra not bootstrapped yet")
 
 
 def test_sqlite_backed_storages_round_trip_control_plane_state(tmp_path: Path) -> None:
-    db_path = tmp_path / "state.db"
+    db_path = tmp_path / "maia.db"
     registry = AgentRegistry()
     registry.add(
         AgentRecord(
@@ -220,7 +224,7 @@ def test_sqlite_backed_storages_round_trip_control_plane_state(tmp_path: Path) -
 
 
 def test_sqlite_state_tracks_infra_status(tmp_path: Path) -> None:
-    path = tmp_path / "state.db"
+    path = tmp_path / "maia.db"
     state = SQLiteState(path)
 
     state.set_infra_status("bootstrap", status="ready", detail="sqlite initialized")

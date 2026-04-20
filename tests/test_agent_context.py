@@ -18,15 +18,20 @@ from maia.agent_context import (
     load_thread_context,
 )
 from maia.agent_model import AgentRecord, AgentStatus
-from maia.handoff_model import HandoffKind, HandoffRecord
-from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+from maia.keryx_models import (
+    KeryxHandoffRecord,
+    KeryxHandoffStatus,
+    KeryxMessageRecord,
+    KeryxSessionRecord,
+    KeryxSessionStatus,
+)
 from maia.runtime_adapter import RuntimeState, RuntimeStatus
 from maia.runtime_spec import RuntimeSpec
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
 from maia.registry import AgentRegistry
-from maia.collaboration_storage import CollaborationStorage
+from maia.keryx_service import KeryxService
 
 
 def _seed_state(db_path: Path) -> None:
@@ -80,42 +85,44 @@ def _seed_state(db_path: Path) -> None:
             ),
         },
     )
-    CollaborationStorage().save(
-        db_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-001",
-                topic="runtime review",
-                participants=["planner", "reviewer"],
-                created_by="planner",
-                status="open",
-                created_at="2026-04-17T02:00:00Z",
-                updated_at="2026-04-17T02:02:00Z",
-            )
-        ],
-        messages=[
-            MessageRecord(
-                message_id="msg-001",
-                thread_id="thread-001",
-                from_agent="planner",
-                to_agent="reviewer",
-                kind=MessageKind.REQUEST,
-                body="Please review the patch.",
-                created_at="2026-04-17T02:01:00Z",
-            )
-        ],
-        handoffs=[
-            HandoffRecord(
-                handoff_id="handoff-001",
-                thread_id="thread-001",
-                from_agent="planner",
-                to_agent="reviewer",
-                kind=HandoffKind.FILE,
-                location="/tmp/review.md",
-                summary="Patch review note",
-                created_at="2026-04-17T02:02:00Z",
-            )
-        ],
+    service = KeryxService(db_path)
+    service.create_session(
+        KeryxSessionRecord(
+            session_id="thread-001",
+            topic="runtime review",
+            participants=["planner", "reviewer"],
+            created_by="planner",
+            status=KeryxSessionStatus.ACTIVE,
+            created_at="2026-04-17T02:00:00Z",
+            updated_at="2026-04-17T02:02:00Z",
+        )
+    )
+    service.create_session_message(
+        "thread-001",
+        KeryxMessageRecord(
+            message_id="msg-001",
+            session_id="thread-001",
+            from_agent="planner",
+            to_agent="reviewer",
+            kind="request",
+            body="Please review the patch.",
+            created_at="2026-04-17T02:01:00Z",
+        ),
+    )
+    service.create_thread_handoff(
+        "thread-001",
+        KeryxHandoffRecord(
+            handoff_id="handoff-001",
+            session_id="thread-001",
+            from_agent="planner",
+            to_agent="reviewer",
+            kind="file",
+            status=KeryxHandoffStatus.OPEN,
+            location="/tmp/review.md",
+            summary="Patch review note",
+            created_at="2026-04-17T02:02:00Z",
+            updated_at="2026-04-17T02:02:00Z",
+        ),
     )
 
 
@@ -149,24 +156,21 @@ def test_load_thread_context_includes_pending_on_and_recent_message_ids(tmp_path
 def test_load_recent_handoffs_returns_newest_first(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     _seed_state(db_path)
-    state = SQLiteState(db_path)
-    collaboration = state.load_collaboration()
-    collaboration["handoffs"].append(
-        HandoffRecord(
+    service = KeryxService(db_path)
+    service.create_thread_handoff(
+        "thread-001",
+        KeryxHandoffRecord(
             handoff_id="handoff-002",
-            thread_id="thread-001",
+            session_id="thread-001",
             from_agent="reviewer",
             to_agent="planner",
-            kind=HandoffKind.REPORT,
+            kind="report",
+            status=KeryxHandoffStatus.OPEN,
             location="/tmp/report.md",
             summary="Follow-up report",
             created_at="2026-04-17T02:03:00Z",
-        ).to_dict()
-    )
-    state.save_collaboration(
-        threads=collaboration["threads"],
-        messages=collaboration["messages"],
-        handoffs=collaboration["handoffs"],
+            updated_at="2026-04-17T02:03:00Z",
+        ),
     )
 
     handoffs = load_recent_handoffs(db_path, thread_id="thread-001", limit=2)
@@ -177,12 +181,12 @@ def test_load_recent_handoffs_returns_newest_first(tmp_path: Path) -> None:
 def test_build_runtime_context_and_format_for_prompt_include_roster_thread_and_handoffs(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     _seed_state(db_path)
-    incoming = MessageRecord(
+    incoming = KeryxMessageRecord(
         message_id="msg-002",
-        thread_id="thread-001",
+        session_id="thread-001",
         from_agent="planner",
         to_agent="reviewer",
-        kind=MessageKind.REQUEST,
+        kind="request",
         body="Check current team context.",
         created_at="2026-04-17T02:04:00Z",
     )
@@ -246,12 +250,12 @@ def test_build_runtime_context_sees_newly_added_agent_without_message_changes(tm
         )
     )
     JsonRegistryStorage().save(db_path, registry)
-    incoming = MessageRecord(
+    incoming = KeryxMessageRecord(
         message_id="msg-002",
-        thread_id="thread-001",
+        session_id="thread-001",
         from_agent="planner",
         to_agent="reviewer",
-        kind=MessageKind.REQUEST,
+        kind="request",
         body="Check current team context.",
         created_at="2026-04-17T02:04:00Z",
     )

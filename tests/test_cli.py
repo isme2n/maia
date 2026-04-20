@@ -16,11 +16,9 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maia.app_state import (
     get_agent_hermes_home,
-    get_collaboration_path,
     get_runtime_state_path,
     get_state_db_path,
 )
-from maia.broker import BrokerAckResult, BrokerDeliveryStatus, BrokerMessageEnvelope, BrokerPullResult, BrokerPublishResult
 from maia.cli import main
 from maia import cli as cli_module
 from maia.cli_parser import (
@@ -51,9 +49,14 @@ from maia.cli_parser import (
     WORKSPACE_EXAMPLES,
     build_parser,
 )
-from maia.collaboration_storage import CollaborationStorage
-from maia.handoff_model import HandoffKind, HandoffRecord
-from maia.message_model import MessageKind, MessageRecord, ThreadRecord
+from maia.keryx_models import (
+    KeryxHandoffRecord,
+    KeryxHandoffStatus,
+    KeryxMessageRecord,
+    KeryxSessionRecord,
+    KeryxSessionStatus,
+)
+from maia.keryx_service import KeryxService
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 
@@ -68,7 +71,7 @@ PHASE16_PLAN_PATH = REPO_ROOT / "docs/plans/phase16-real-agent-conversation-and-
 
 def _parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"added", "created", "sent", "replied", "inbox", "message_id", "thread", "workspace"}:
+    if tokens and tokens[0] in {"added", "created", "message_id", "thread", "workspace"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -78,44 +81,6 @@ def _line_with_prefix(text: str, prefix: str) -> str:
         if line.startswith(prefix):
             return line
     raise AssertionError(f"Missing line starting with {prefix!r}: {text!r}")
-
-
-class FakeMessageBroker:
-    def __init__(self) -> None:
-        self.published: list[MessageRecord] = []
-        self.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
-        self.publish_error: Exception | None = None
-        self.acked: list[BrokerMessageEnvelope] = []
-        self.ack_error: Exception | None = None
-        self.closed = False
-
-    def publish(self, message: MessageRecord) -> BrokerPublishResult:
-        if self.publish_error is not None:
-            raise self.publish_error
-        self.published.append(message)
-        return BrokerPublishResult(
-            status=BrokerDeliveryStatus.QUEUED,
-            message_id=message.message_id,
-        )
-
-    def pull(self, *, agent_id: str, limit: int = 1) -> BrokerPullResult:
-        assert isinstance(agent_id, str)
-        assert isinstance(limit, int)
-        return self.pull_result
-
-    def ack(self, envelope: BrokerMessageEnvelope) -> BrokerAckResult:
-        if self.ack_error is not None:
-            raise self.ack_error
-        self.acked.append(envelope)
-        return BrokerAckResult(
-            status=BrokerDeliveryStatus.ACKNOWLEDGED,
-            message_id=envelope.message.message_id,
-            receipt_handle=envelope.receipt_handle,
-        )
-
-    def close(self) -> None:
-        self.closed = True
-
 
 def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
     for line in lines:
@@ -142,8 +107,10 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "interactive CLI-only passthrough to `hermes setup`" in text
     assert "agent setup is recorded separately from the runtime launch state" in text
     assert "new agents carry the shared Hermes worker defaults needed for first start" in text
-    assert "Part 2 real agent conversation" in text
-    assert "running agents talk to each other over the broker/message plane" in text
+    assert "Part 2 Keryx collaboration" in text
+    assert "Keryx is Maia's canonical collaboration root for live multi-agent work." in text
+    assert "`thread` / `thread_id` are Maia's public names for the Keryx collaboration object." in text
+    assert "a Maia thread is not a Hermes session" in text
     assert "operator manually relays every message in a CLI messenger" in text
     assert "Users talk directly to a specific agent" in text
     assert "active conversation agent stays the user-facing anchor" in text
@@ -151,7 +118,7 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "user -> economist -> tech -> economist -> user" in text
     assert "thread`, `handoff`, and `workspace`" in text
     assert "## Part 2 visibility flow" in text
-    assert "public operator path for checking who is pending" in text
+    assert "Keryx-backed operator views" in text
     assert "still lands in the next task" not in text
     assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
@@ -179,7 +146,8 @@ def test_prd_locks_part1_operator_story() -> None:
     assert "hermes setup" in text
     assert "interactive CLI-only" in text
     assert "Part 2 direction" in text
-    assert "running agents가 broker 위에서 multi-turn으로 대화" in text
+    assert "Keryx를 canonical collaboration root로 삼아 running agents가 multi-turn으로 협업" in text
+    assert "Keryx collaboration object를 `thread` / `thread_id`로 부르고" in text
     assert "thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs" in text
     assert "## Part 2 completion criteria" in text
     assert "pending thread" in text
@@ -230,7 +198,7 @@ def test_roadmap_points_part2_to_phase16_plan() -> None:
 
 
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
-    assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "state.db"
+    assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "maia.db"
     assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
         tmp_path / ".maia" / "agents" / "planner1234" / "hermes"
     )
@@ -247,10 +215,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "team" in captured.out
     assert "doctor" in captured.out
     assert "setup" in captured.out
-    assert "send" in captured.out
-    assert "inbox" in captured.out
     assert "thread" in captured.out
-    assert "reply" in captured.out
     assert "handoff" in captured.out
     assert "workspace" in captured.out
     assert "artifact" not in captured.out
@@ -261,9 +226,9 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Bootstrap shared Maia infra" in captured.out
     assert "Part 1 operator flow:" in captured.out
     assert "Known limitations:" in captured.out
-    assert "Part 2 conversation contract:" in captured.out
+    assert "Keryx collaboration contract:" in captured.out
     assert "Direct-agent delegation contract:" in captured.out
-    assert "Part 2 visibility flow:" in captured.out
+    assert "Keryx operator visibility flow:" in captured.out
     assert "Quickstart (local state only):" not in captured.out
     assert "V1 smoke checklist:" not in captured.out
     assert "send <" not in captured.out
@@ -342,33 +307,6 @@ def test_team_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "update" in captured.out
     assert "agent" not in captured.out
 
-
-def test_build_parser_send_shape() -> None:
-    args = build_parser().parse_args(
-        ["send", "planner", "reviewer", "--body", "hello", "--topic", "review handoff"]
-    )
-
-    assert args.resource == "send"
-    assert args.from_agent == "planner"
-    assert args.to_agent == "reviewer"
-    assert args.body == "hello"
-    assert args.topic == "review handoff"
-    assert args.thread_id is None
-    assert args.kind == "request"
-
-
-def test_build_parser_reply_shape() -> None:
-    args = build_parser().parse_args(
-        ["reply", "msg1234", "--from-agent", "reviewer", "--body", "done"]
-    )
-
-    assert args.resource == "reply"
-    assert args.message_id == "msg1234"
-    assert args.from_agent == "reviewer"
-    assert args.body == "done"
-    assert args.kind == "answer"
-
-
 def test_build_parser_thread_list_shape() -> None:
     args = build_parser().parse_args(["thread", "list", "--agent", "reviewer", "--status", "open"])
 
@@ -416,29 +354,23 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia thread" in captured.out
-    assert "recent handoff pointers" in captured.out
+    assert "Keryx-backed collaboration threads" in captured.out
     assert "participant runtime summaries" in captured.out
+    assert "public name for this Keryx collaboration object" in captured.out
+    assert "distinct from a Hermes session" in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, THREAD_EXAMPLES)
 
 
-def test_collaboration_help_is_positioned_as_visibility_or_diagnostic_surface(capsys: pytest.CaptureFixture[str]) -> None:
+def test_collaboration_help_centers_keryx_visibility_surface(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
-        main(["send", "--help"])
-    send_out = capsys.readouterr().out
-    assert "diagnostic/operator check" in send_out
-    assert "primary Maia product story" in send_out
-
-    with pytest.raises(SystemExit):
-        main(["inbox", "--help"])
-    inbox_out = capsys.readouterr().out
-    assert "live agent inbox" in inbox_out
-    assert "diagnostics and controlled operator checks" in inbox_out
-
-    with pytest.raises(SystemExit):
-        main(["reply", "--help"])
-    reply_out = capsys.readouterr().out
-    assert "running-agent conversation" in reply_out
+        main(["thread", "--help"])
+    thread_out = capsys.readouterr().out
+    assert "Keryx-backed collaboration threads" in thread_out
+    assert "participant runtime summaries" in thread_out
+    assert "send" not in thread_out
+    assert "reply" not in thread_out
+    assert "inbox" not in thread_out
 
 
 def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> None:
@@ -448,7 +380,7 @@ def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) ->
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia workspace" in captured.out
-    assert "handoff participant" in captured.out
+    assert "Keryx-backed operator workspace context" in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, WORKSPACE_EXAMPLES)
@@ -548,7 +480,7 @@ def test_setup_command_prints_bootstrap_summary_from_infra_runtime(
     captured = capsys.readouterr()
     assert "Created Maia network maia." in captured.out
     assert "Started shared queue maia-rabbitmq." in captured.out
-    assert "SQLite state is ready at" in captured.out
+    assert "Maia SQLite DB is ready at" in captured.out
     assert "Shared infra is ready." in captured.out
     assert "Next: run maia agent new" in captured.out
     assert captured.err == ""
@@ -812,7 +744,7 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage: maia handoff" in captured.out
-    assert "thread-linked handoff pointers" in captured.out
+    assert "Keryx-backed handoff pointers" in captured.out
     assert "workspace/runtime checks" in captured.out
     assert "add" in captured.out
     assert "list" in captured.out
@@ -820,21 +752,6 @@ def test_handoff_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, HANDOFF_EXAMPLES)
     assert "Phase 7" not in captured.out
-
-
-def test_legacy_artifact_alias_maps_to_hidden_handoff_surface(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        main(["artifact", "--help"])
-
-    assert exc_info.value.code == 0
-    captured = capsys.readouterr()
-    assert "usage: maia handoff" in captured.out
-    assert HANDOFF_EXAMPLES[0] in captured.out
-    assert "Review notes ready" in captured.out
-    assert "maia artifact" not in captured.out
-
 
 def test_readme_examples_align_with_public_help() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
@@ -857,9 +774,9 @@ def test_readme_examples_align_with_public_help() -> None:
         assert line in readme
     for line in KNOWN_LIMITATIONS:
         assert line in readme
-    assert "running agents talk to each other over the broker/message plane" in readme
-    assert "diagnostics and controlled operator checks" in readme
-    assert "public Part 2 visibility story centers on `thread`, `handoff`, and `workspace`" in readme
+    assert "Keryx is Maia's canonical collaboration root for live multi-agent work." in readme
+    assert "Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract." in readme
+    assert "Keryx-backed operator views of open collaboration state" in readme
     for line in PART2_VISIBILITY_FLOW:
         assert line in readme
     for line in RUNTIME_SUPPORT_BOUNDARY:
@@ -1050,527 +967,85 @@ def _configure_runtime_spec(
     capsys.readouterr()
 
 
-def test_send_and_reply_publish_to_broker_and_persist_metadata(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    sent_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert len(fake_broker.published) == 1
-    assert fake_broker.published[0].from_agent == planner_id
-    assert fake_broker.published[0].to_agent == reviewer_id
-    assert fake_broker.closed is True
-
-    first_message_id = sent_fields["message_id"]
-    fake_broker.closed = False
-    assert main([
-        "reply",
-        first_message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "looks good",
-    ]) == 0
-    reply_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert len(fake_broker.published) == 2
-    assert fake_broker.published[1].from_agent == reviewer_id
-    assert fake_broker.published[1].to_agent == planner_id
-    assert reply_fields["reply_to_message_id"] == first_message_id
-    assert fake_broker.closed is True
-
-    payload = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
-    assert "review handoff" in payload
-    assert "please review the latest patch" in payload
-    assert "looks good" in payload
+def _keryx_service(home: Path) -> KeryxService:
+    return KeryxService(get_state_db_path({"HOME": str(home)}))
 
 
-def test_inbox_uses_broker_pull_when_configured(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    fake_broker.pull_result = BrokerPullResult(
-        status=BrokerDeliveryStatus.DELIVERED,
-        messages=[
-            BrokerMessageEnvelope(
-                message=MessageRecord(
-                    message_id="msg-001",
-                    thread_id="thread-001",
-                    from_agent="planner",
-                    to_agent=reviewer_id,
-                    kind=MessageKind.REQUEST,
-                    body="broker delivery",
-                    created_at="2026-04-15T12:00:00Z",
-                ),
-                receipt_handle="42",
-                delivery_attempt=2,
-            )
-        ],
+def _seed_keryx_thread(
+    home: Path,
+    *,
+    thread_id: str,
+    topic: str,
+    participants: list[str],
+    created_by: str,
+    status: KeryxSessionStatus = KeryxSessionStatus.ACTIVE,
+    created_at: str,
+    updated_at: str,
+) -> KeryxSessionRecord:
+    thread = KeryxSessionRecord(
+        session_id=thread_id,
+        topic=topic,
+        participants=participants,
+        created_by=created_by,
+        status=status,
+        created_at=created_at,
+        updated_at=updated_at,
     )
-
-    assert main(["inbox", reviewer_id]) == 0
-    lines = capsys.readouterr().out.strip().splitlines()
-    assert _parse_fields(lines[0]) == {
-        "agent_id": reviewer_id,
-        "messages": "1",
-        "source": "broker",
-        "ack": "after-print",
-    }
-    assert len(fake_broker.acked) == 1
-    assert fake_broker.acked[0].receipt_handle == "42"
-    message_fields = _parse_fields(lines[1])
-    assert message_fields["message_id"] == "msg-001"
-    assert message_fields["body"] == "broker␠delivery"
-    assert message_fields["receipt_handle"] == "42"
-    assert message_fields["delivery_attempt"] == "2"
-    payload = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
-    assert '"thread_id": "thread-001"' in payload
-    assert '"message_id": "msg-001"' in payload
-    assert fake_broker.closed is True
+    return _keryx_service(home).create_session(thread)
 
 
-def test_inbox_surfaces_broker_ack_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    fake_broker.ack_error = ValueError("ack failed")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    fake_broker.pull_result = BrokerPullResult(
-        status=BrokerDeliveryStatus.DELIVERED,
-        messages=[
-            BrokerMessageEnvelope(
-                message=MessageRecord(
-                    message_id="msg-001",
-                    thread_id="thread-001",
-                    from_agent="planner",
-                    to_agent=reviewer_id,
-                    kind=MessageKind.REQUEST,
-                    body="broker delivery",
-                    created_at="2026-04-15T12:00:00Z",
-                ),
-                receipt_handle="42",
-                delivery_attempt=1,
-            )
-        ],
+def _seed_keryx_message(
+    home: Path,
+    *,
+    message_id: str,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    kind: str,
+    body: str,
+    created_at: str,
+    reply_to_message_id: str | None = None,
+) -> KeryxMessageRecord:
+    message = KeryxMessageRecord(
+        message_id=message_id,
+        session_id=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        kind=kind,
+        body=body,
+        created_at=created_at,
+        reply_to_message_id=reply_to_message_id,
     )
-
-    assert main(["inbox", reviewer_id]) == 1
-    captured = capsys.readouterr()
-    assert captured.err.strip() == f"error: Broker inbox ack failed for agent {reviewer_id!r}: ack failed"
+    return _keryx_service(home).create_session_message(thread_id, message)
 
 
-def test_broker_inbox_message_can_be_replied_to_after_local_merge(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    fake_broker.pull_result = BrokerPullResult(
-        status=BrokerDeliveryStatus.DELIVERED,
-        messages=[
-            BrokerMessageEnvelope(
-                message=MessageRecord(
-                    message_id="msg-001",
-                    thread_id="thread-001",
-                    from_agent=planner_id,
-                    to_agent=reviewer_id,
-                    kind=MessageKind.REQUEST,
-                    body="broker delivery",
-                    created_at="2026-04-15T12:00:00Z",
-                ),
-                receipt_handle="42",
-                delivery_attempt=1,
-            )
-        ],
+def _seed_keryx_handoff(
+    home: Path,
+    *,
+    handoff_id: str,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    kind: str,
+    summary: str,
+    location: str,
+    created_at: str,
+    updated_at: str | None = None,
+    status: KeryxHandoffStatus = KeryxHandoffStatus.OPEN,
+) -> KeryxHandoffRecord:
+    handoff = KeryxHandoffRecord(
+        handoff_id=handoff_id,
+        session_id=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        kind=kind,
+        status=status,
+        summary=summary,
+        location=location,
+        created_at=created_at,
+        updated_at=created_at if updated_at is None else updated_at,
     )
-
-    assert main(["inbox", reviewer_id]) == 0
-    capsys.readouterr()
-    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
-    fake_broker.closed = False
-
-    assert main([
-        "reply",
-        "msg-001",
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "copied and replied",
-    ]) == 0
-    reply_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert reply_fields["reply_to_message_id"] == "msg-001"
-    assert len(fake_broker.published) == 1
-    assert fake_broker.published[0].body == "copied and replied"
-    assert fake_broker.closed is True
-
-
-def test_broker_inbox_empty_pull_does_not_replay_local_cache(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    fake_broker.pull_result = BrokerPullResult(
-        status=BrokerDeliveryStatus.DELIVERED,
-        messages=[
-            BrokerMessageEnvelope(
-                message=MessageRecord(
-                    message_id="msg-001",
-                    thread_id="thread-001",
-                    from_agent=planner_id,
-                    to_agent=reviewer_id,
-                    kind=MessageKind.REQUEST,
-                    body="broker delivery",
-                    created_at="2026-04-15T12:00:00Z",
-                ),
-                receipt_handle="42",
-                delivery_attempt=1,
-            )
-        ],
-    )
-    assert main(["inbox", reviewer_id]) == 0
-    capsys.readouterr()
-
-    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
-    fake_broker.closed = False
-    fake_broker.acked.clear()
-    assert main(["inbox", reviewer_id]) == 0
-    lines = capsys.readouterr().out.strip().splitlines()
-    assert _parse_fields(lines[0]) == {
-        "agent_id": reviewer_id,
-        "messages": "0",
-        "source": "broker",
-        "ack": "complete",
-    }
-    assert len(lines) == 1
-    assert fake_broker.acked == []
-    assert fake_broker.closed is True
-
-
-def test_merge_broker_inbox_messages_preserves_thread_topic(tmp_path: Path) -> None:
-    storage = CollaborationStorage()
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
-    collaboration = storage.load(collaboration_path)
-    merged = cli_module._merge_broker_inbox_messages(
-        storage,
-        collaboration_path,
-        collaboration,
-        [
-            (
-                BrokerMessageEnvelope(
-                    message=MessageRecord(
-                        message_id="msg-001",
-                        thread_id="thread-001",
-                        from_agent="planner-id",
-                        to_agent="reviewer-id",
-                        kind=MessageKind.REQUEST,
-                        body="broker delivery",
-                        created_at="2026-04-15T12:00:00Z",
-                    ),
-                    receipt_handle="42",
-                    delivery_attempt=1,
-                ),
-                {"thread_topic": "review handoff"},
-            )
-        ],
-    )
-
-    assert merged.threads[0].topic == "review handoff"
-
-
-def test_merge_broker_inbox_messages_updates_existing_thread_metadata(tmp_path: Path) -> None:
-    storage = CollaborationStorage()
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
-    storage.save(
-        collaboration_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-001",
-                topic="",
-                participants=["planner-id"],
-                created_by="planner-id",
-                status="open",
-                created_at="2026-04-15T11:00:00Z",
-                updated_at="2026-04-15T11:00:00Z",
-            )
-        ],
-        messages=[],
-    )
-    collaboration = storage.load(collaboration_path)
-
-    merged = cli_module._merge_broker_inbox_messages(
-        storage,
-        collaboration_path,
-        collaboration,
-        [
-            (
-                BrokerMessageEnvelope(
-                    message=MessageRecord(
-                        message_id="msg-001",
-                        thread_id="thread-001",
-                        from_agent="planner-id",
-                        to_agent="reviewer-id",
-                        kind=MessageKind.REQUEST,
-                        body="broker delivery",
-                        created_at="2026-04-15T12:00:00Z",
-                    ),
-                    receipt_handle="42",
-                    delivery_attempt=1,
-                ),
-                {"thread_topic": "review handoff"},
-            )
-        ],
-    )
-
-    assert merged.threads[0].topic == "review handoff"
-    assert merged.threads[0].participants == ["planner-id", "reviewer-id"]
-    assert merged.threads[0].updated_at == "2026-04-15T12:00:00Z"
-
-
-def test_merge_broker_inbox_messages_dedupes_existing_message(tmp_path: Path) -> None:
-    storage = CollaborationStorage()
-    collaboration_path = get_collaboration_path({"HOME": str(tmp_path)})
-    storage.save(
-        collaboration_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-001",
-                topic="review handoff",
-                participants=["planner-id", "reviewer-id"],
-                created_by="planner-id",
-                status="open",
-                created_at="2026-04-15T11:00:00Z",
-                updated_at="2026-04-15T12:00:00Z",
-            )
-        ],
-        messages=[
-            MessageRecord(
-                message_id="msg-001",
-                thread_id="thread-001",
-                from_agent="planner-id",
-                to_agent="reviewer-id",
-                kind=MessageKind.REQUEST,
-                body="broker delivery",
-                created_at="2026-04-15T12:00:00Z",
-            )
-        ],
-    )
-    collaboration = storage.load(collaboration_path)
-
-    merged = cli_module._merge_broker_inbox_messages(
-        storage,
-        collaboration_path,
-        collaboration,
-        [
-            (
-                BrokerMessageEnvelope(
-                    message=MessageRecord(
-                        message_id="msg-001",
-                        thread_id="thread-001",
-                        from_agent="planner-id",
-                        to_agent="reviewer-id",
-                        kind=MessageKind.REQUEST,
-                        body="broker delivery",
-                        created_at="2026-04-15T12:00:00Z",
-                    ),
-                    receipt_handle="42",
-                    delivery_attempt=2,
-                ),
-                {"thread_topic": "review handoff"},
-            )
-        ],
-    )
-
-    assert len(merged.messages) == 1
-    assert merged.messages[0].message_id == "msg-001"
-
-
-def test_send_does_not_persist_metadata_when_broker_publish_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    fake_broker.publish_error = ValueError("broker publish failed")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "should fail",
-        "--topic",
-        "review handoff",
-    ]) == 1
-    captured = capsys.readouterr()
-    assert "broker publish failed" in captured.err
-    assert not get_collaboration_path({"HOME": str(tmp_path)}).exists()
-    assert fake_broker.closed is True
-
-
-def test_reply_does_not_persist_metadata_when_broker_publish_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    sent_fields = _parse_fields(capsys.readouterr().out.strip())
-    payload_before = get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8")
-
-    fake_broker.closed = False
-    fake_broker.publish_error = ValueError("broker publish failed")
-    assert main([
-        "reply",
-        sent_fields["message_id"],
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "should not persist",
-    ]) == 1
-    captured = capsys.readouterr()
-    assert "broker publish failed" in captured.err
-    assert get_collaboration_path({"HOME": str(tmp_path)}).read_text(encoding="utf-8") == payload_before
-    assert fake_broker.closed is True
-
-
-def test_broker_inbox_merge_adds_new_participant_to_existing_thread(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    fake_broker = FakeMessageBroker()
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    analyst_id = _create_agent(monkeypatch, capsys, tmp_path, "analyst")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "initial",
-        "--topic",
-        "review thread",
-    ]) == 0
-    sent_fields = _parse_fields(capsys.readouterr().out.strip())
-    thread_id = sent_fields["thread_id"]
-
-    monkeypatch.setenv("MAIA_BROKER_URL", "amqp://broker")
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: fake_broker)
-    fake_broker.pull_result = BrokerPullResult(
-        status=BrokerDeliveryStatus.DELIVERED,
-        messages=[
-            BrokerMessageEnvelope(
-                message=MessageRecord(
-                    message_id="msg-002",
-                    thread_id=thread_id,
-                    from_agent=planner_id,
-                    to_agent=analyst_id,
-                    kind=MessageKind.NOTE,
-                    body="loop analyst in",
-                    created_at="2099-04-15T12:01:00Z",
-                ),
-                receipt_handle="43",
-                delivery_attempt=1,
-            )
-        ],
-    )
-
-    assert main(["inbox", analyst_id]) == 0
-    capsys.readouterr()
-    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
-    merged_thread = next(thread for thread in collaboration.threads if thread.thread_id == thread_id)
-    assert merged_thread.participants == [planner_id, reviewer_id, analyst_id]
-    assert merged_thread.updated_at == "2099-04-15T12:01:00Z"
-
-    assert main(["thread", "show", thread_id]) == 0
-    show_lines = capsys.readouterr().out.strip().splitlines()
-    show_fields = _parse_fields(show_lines[0])
-    assert show_fields["participants"] == f"{planner_id},{reviewer_id},{analyst_id}"
-    assert show_fields["pending_on"] == analyst_id
-
-    fake_broker.pull_result = BrokerPullResult(status=BrokerDeliveryStatus.EMPTY)
-    fake_broker.closed = False
-
-    assert main([
-        "reply",
-        "msg-002",
-        "--from-agent",
-        analyst_id,
-        "--body",
-        "joined",
-    ]) == 0
-    reply_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert reply_fields["reply_to_message_id"] == "msg-002"
-    assert fake_broker.published[-1].from_agent == analyst_id
-    assert fake_broker.closed is True
-
+    return _keryx_service(home).create_thread_handoff(thread_id, handoff)
 
 def test_handoff_add_list_and_show_round_trip(
     tmp_path: Path,
@@ -1578,7 +1053,6 @@ def test_handoff_add_list_and_show_round_trip(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
@@ -1594,17 +1068,16 @@ def test_handoff_add_list_and_show_round_trip(
         role_name="reviewer",
         workspace_path="/workspace/reviewer",
     )
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "review package ready",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
+    thread_id = "sess-seeded"
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id=thread_id,
+        topic="review handoff",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at="2026-04-15T12:00:00Z",
+        updated_at="2026-04-15T12:00:00Z",
+    )
 
     assert main([
         "handoff",
@@ -1631,10 +1104,10 @@ def test_handoff_add_list_and_show_round_trip(
     assert add_fields["location"] == "reports/review.md"
     assert add_fields["summary"] == "Review␠notes␠ready"
 
-    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
-    assert len(collaboration.handoffs) == 1
-    assert collaboration.handoffs[0].handoff_id == handoff_id
-    assert collaboration.handoffs[0].thread_id == thread_id
+    handoffs = _keryx_service(tmp_path).list_thread_handoffs(thread_id)
+    assert len(handoffs) == 1
+    assert handoffs[0].handoff_id == handoff_id
+    assert handoffs[0].thread_id == thread_id
 
     assert main(["handoff", "list"]) == 0
     list_lines = capsys.readouterr().out.strip().splitlines()
@@ -1679,87 +1152,26 @@ def test_handoff_add_list_and_show_round_trip(
         "runtime_env_keys": "MAIA_ENV,MAIA_ROLE",
     }
 
-
-def test_legacy_artifact_alias_still_adds_lists_and_shows_handoffs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "review package ready",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
-
-    assert main([
-        "artifact",
-        "add",
-        "--thread-id",
-        thread_id,
-        "--from-agent",
-        planner_id,
-        "--to-agent",
-        reviewer_id,
-        "--type",
-        "report",
-        "--location",
-        "reports/review.md",
-        "--summary",
-        "Review notes ready",
-    ]) == 0
-    add_fields = _parse_fields(capsys.readouterr().out.strip())
-    handoff_id = add_fields["handoff_id"]
-
-    assert main(["artifact", "show", handoff_id]) == 0
-    show_lines = capsys.readouterr().out.strip().splitlines()
-    assert len(show_lines) == 3
-    show_fields = _parse_fields(show_lines[0])
-    assert show_fields["handoff_id"] == handoff_id
-    source_workspace_fields = _parse_fields(show_lines[1])
-    assert source_workspace_fields["handoff_role"] == "source"
-    assert source_workspace_fields["workspace_status"] == "configured"
-    assert source_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
-    assert source_workspace_fields["workspace"] == "/opt/maia"
-    target_workspace_fields = _parse_fields(show_lines[2])
-    assert target_workspace_fields["handoff_role"] == "target"
-    assert target_workspace_fields["workspace_status"] == "configured"
-    assert target_workspace_fields["workspace_basis"] == "runtime_spec.workspace"
-    assert target_workspace_fields["workspace"] == "/opt/maia"
-
-
 def test_handoff_add_rejects_non_participant_agents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
     analyst_id = _create_agent(monkeypatch, capsys, tmp_path, "analyst")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "review package ready",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    thread_id = _parse_fields(capsys.readouterr().out.strip())["thread_id"]
+    thread_id = "sess-seeded"
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id=thread_id,
+        topic="review handoff",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at="2026-04-15T12:00:00Z",
+        updated_at="2026-04-15T12:00:00Z",
+    )
 
     assert main([
         "handoff",
@@ -1780,9 +1192,9 @@ def test_handoff_add_rejects_non_participant_agents(
     captured = capsys.readouterr()
     assert "Handoff recipient must be a participant in the thread" in captured.err
 
-    collaboration = CollaborationStorage().load(get_collaboration_path({"HOME": str(tmp_path)}))
-    assert collaboration.handoffs == []
-    assert collaboration.threads[0].participants == [planner_id, reviewer_id]
+    service = _keryx_service(tmp_path)
+    assert service.list_thread_handoffs(thread_id) == []
+    assert service.get_thread(thread_id).participants == [planner_id, reviewer_id]
 
 
 def test_handoff_list_rejects_unknown_thread_filter(
@@ -1794,7 +1206,7 @@ def test_handoff_list_rejects_unknown_thread_filter(
 
     assert main(["handoff", "list", "--thread-id", "missing-thread"]) == 1
     captured = capsys.readouterr()
-    assert "Thread with id 'missing-thread' not found" in captured.err
+    assert "Keryx thread with id 'missing-thread' not found" in captured.err
 
 
 def test_thread_list_and_show_surface_control_plane_summary(
@@ -1803,82 +1215,77 @@ def test_thread_list_and_show_surface_control_plane_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     state_db_path = get_state_db_path({"HOME": str(tmp_path)})
-    CollaborationStorage().save(
-        state_db_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-001",
-                topic="review handoff",
-                participants=["planner", "reviewer"],
-                created_by="planner",
-                status="open",
-                created_at="2026-04-15T12:00:00Z",
-                updated_at="2026-04-15T12:02:00Z",
-            ),
-            ThreadRecord(
-                thread_id="thread-002",
-                topic="retro wrap-up",
-                participants=["planner", "analyst"],
-                created_by="planner",
-                status="closed",
-                created_at="2026-04-15T10:30:00Z",
-                updated_at="2026-04-15T11:00:00Z",
-            ),
-            ThreadRecord(
-                thread_id="thread-003",
-                topic="colon identity",
-                participants=["agent:1"],
-                created_by="agent:1",
-                status="open",
-                created_at="2026-04-15T09:00:00Z",
-                updated_at="2026-04-15T09:00:00Z",
-            ),
-        ],
-        messages=[
-            MessageRecord(
-                message_id="msg-002",
-                thread_id="thread-001",
-                from_agent="reviewer",
-                to_agent="planner",
-                kind=MessageKind.ANSWER,
-                body="latest update",
-                created_at="2026-04-15T12:02:00Z",
-                reply_to_message_id="msg-001",
-            ),
-            MessageRecord(
-                message_id="msg-001",
-                thread_id="thread-001",
-                from_agent="planner",
-                to_agent="reviewer",
-                kind=MessageKind.REQUEST,
-                body="first ask",
-                created_at="2026-04-15T12:00:00Z",
-            ),
-            MessageRecord(
-                message_id="msg-003",
-                thread_id="thread-002",
-                from_agent="planner",
-                to_agent="analyst",
-                kind=MessageKind.NOTE,
-                body="closed context",
-                created_at="2026-04-15T11:00:00Z",
-            ),
-        ],
-        handoffs=[
-            HandoffRecord(
-                handoff_id="artifact-001",
-                thread_id="thread-001",
-                from_agent="planner",
-                to_agent="reviewer",
-                kind=HandoffKind.REPORT,
-                location="reports/review.md",
-                summary="Review notes ready",
-                created_at="2026-04-15T12:01:00Z",
-            )
-        ],
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-001",
+        topic="review handoff",
+        participants=["planner", "reviewer"],
+        created_by="planner",
+        created_at="2026-04-15T12:00:00Z",
+        updated_at="2026-04-15T12:02:00Z",
+    )
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-002",
+        topic="retro wrap-up",
+        participants=["planner", "analyst"],
+        created_by="planner",
+        status=KeryxSessionStatus.CLOSED,
+        created_at="2026-04-15T10:30:00Z",
+        updated_at="2026-04-15T11:00:00Z",
+    )
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-003",
+        topic="colon identity",
+        participants=["agent:1"],
+        created_by="agent:1",
+        created_at="2026-04-15T09:00:00Z",
+        updated_at="2026-04-15T09:00:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id="msg-002",
+        thread_id="sess-001",
+        from_agent="reviewer",
+        to_agent="planner",
+        kind="answer",
+        body="latest update",
+        created_at="2026-04-15T12:02:00Z",
+        reply_to_message_id="msg-001",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id="msg-001",
+        thread_id="sess-001",
+        from_agent="planner",
+        to_agent="reviewer",
+        kind="request",
+        body="first ask",
+        created_at="2026-04-15T12:00:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id="msg-003",
+        thread_id="sess-002",
+        from_agent="planner",
+        to_agent="analyst",
+        kind="note",
+        body="closed context",
+        created_at="2026-04-15T11:00:00Z",
+    )
+    _seed_keryx_handoff(
+        tmp_path,
+        handoff_id="artifact-001",
+        thread_id="sess-001",
+        from_agent="planner",
+        to_agent="reviewer",
+        kind="report",
+        location="reports/review.md",
+        summary="Review notes ready",
+        created_at="2026-04-15T12:01:00Z",
     )
     RuntimeStateStorage().save(
         state_db_path,
@@ -1900,7 +1307,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
     list_lines = capsys.readouterr().out.strip().splitlines()
     assert len(list_lines) == 3
     open_fields = _parse_fields(list_lines[0])
-    assert open_fields["thread_id"] == "thread-001"
+    assert open_fields["thread_id"] == "sess-001"
     assert open_fields["topic"] == "review␠handoff"
     assert open_fields["participants"] == "planner,reviewer"
     assert open_fields["participant_runtime"] == "planner:running,reviewer:stopped"
@@ -1909,7 +1316,7 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert open_fields["pending_on"] == "planner"
     assert open_fields["delegated_to"] == "reviewer"
     assert open_fields["delegation_status"] == "answered"
-    assert open_fields["current_thread_id"] == "thread-001"
+    assert open_fields["current_thread_id"] == "sess-001"
     assert open_fields["latest_internal_update"] == "reviewer␠answer:␠latest␠update"
     assert open_fields["handoffs"] == "1"
     assert open_fields["messages"] == "2"
@@ -1918,14 +1325,14 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert open_fields["recent_handoff_type"] == "report"
     assert open_fields["recent_handoff_summary"] == "Review␠notes␠ready"
     closed_fields = _parse_fields(list_lines[1])
-    assert closed_fields["thread_id"] == "thread-002"
+    assert closed_fields["thread_id"] == "sess-002"
     assert closed_fields["participant_runtime"] == "planner:running,analyst:failed"
     assert closed_fields["recent_handoff_id"] == "-"
     assert closed_fields["recent_handoff_to"] == "-"
     assert closed_fields["recent_handoff_type"] == "-"
     assert closed_fields["recent_handoff_summary"] == "-"
     colon_fields = _parse_fields(list_lines[2])
-    assert colon_fields["thread_id"] == "thread-003"
+    assert colon_fields["thread_id"] == "sess-003"
     assert colon_fields["participant_runtime"] == "agent%3A1:stopped"
     assert colon_fields["pending_on"] == "-"
     assert colon_fields["delegated_to"] == "-"
@@ -1935,23 +1342,23 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert main(["thread", "list", "--agent", "reviewer"]) == 0
     reviewer_lines = capsys.readouterr().out.strip().splitlines()
     assert len(reviewer_lines) == 1
-    assert _parse_fields(reviewer_lines[0])["thread_id"] == "thread-001"
+    assert _parse_fields(reviewer_lines[0])["thread_id"] == "sess-001"
 
     assert main(["thread", "list", "--status", "closed"]) == 0
     closed_lines = capsys.readouterr().out.strip().splitlines()
     assert len(closed_lines) == 1
-    assert _parse_fields(closed_lines[0])["thread_id"] == "thread-002"
+    assert _parse_fields(closed_lines[0])["thread_id"] == "sess-002"
 
-    assert main(["thread", "show", "thread-001"]) == 0
+    assert main(["thread", "show", "sess-001"]) == 0
     show_lines = capsys.readouterr().out.strip().splitlines()
     assert len(show_lines) == 3
     show_fields = _parse_fields(show_lines[0])
-    assert show_fields["thread_id"] == "thread-001"
+    assert show_fields["thread_id"] == "sess-001"
     assert show_fields["participant_runtime"] == "planner:running,reviewer:stopped"
     assert show_fields["pending_on"] == "planner"
     assert show_fields["delegated_to"] == "reviewer"
     assert show_fields["delegation_status"] == "answered"
-    assert show_fields["current_thread_id"] == "thread-001"
+    assert show_fields["current_thread_id"] == "sess-001"
     assert show_fields["latest_internal_update"] == "reviewer␠answer:␠latest␠update"
     assert show_fields["handoffs"] == "1"
     assert show_fields["messages"] == "2"
@@ -1969,10 +1376,9 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert first_message_fields["message_id"] == "msg-001"
     assert second_message_fields["message_id"] == "msg-002"
 
-    assert main(["thread", "thread-001", "--limit", "1"]) == 0
-    legacy_lines = capsys.readouterr().out.strip().splitlines()
-    assert len(legacy_lines) == 2
-    assert _parse_fields(legacy_lines[0])["thread_id"] == "thread-001"
+    with pytest.raises(SystemExit) as exc_info:
+        main(["thread", "sess-001", "--limit", "1"])
+    assert exc_info.value.code == 2
 
 
 def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_invalid(
@@ -1981,32 +1387,24 @@ def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_inval
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     state_db_path = get_state_db_path({"HOME": str(tmp_path)})
     runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
-    CollaborationStorage().save(
-        state_db_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-invalid-runtime",
-                topic="runtime fallback",
-                participants=["planner"],
-                created_by="planner",
-                status="open",
-                created_at="2026-04-15T08:00:00Z",
-                updated_at="2026-04-15T08:00:00Z",
-            )
-        ],
-        messages=[],
-        handoffs=[],
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-invalid-runtime",
+        topic="runtime fallback",
+        participants=["planner"],
+        created_by="planner",
+        created_at="2026-04-15T08:00:00Z",
+        updated_at="2026-04-15T08:00:00Z",
     )
     runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
     runtime_state_path.write_text("{bad json\n", encoding="utf-8")
 
     assert main(["thread", "list"]) == 0
     fields = _parse_fields(capsys.readouterr().out.strip())
-    assert fields["thread_id"] == "thread-invalid-runtime"
+    assert fields["thread_id"] == "sess-invalid-runtime"
     assert fields["participant_runtime"] == "planner:stopped"
     assert fields["pending_on"] == "-"
     assert fields["delegated_to"] == "-"
@@ -2019,35 +1417,44 @@ def test_thread_show_preserves_message_order_when_timestamps_tie(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-    timestamps = iter(["2026-04-15T12:00:00Z", "2026-04-15T12:00:00Z"])
-    monkeypatch.setattr(cli_module, "_timestamp_now", lambda: next(timestamps))
+    thread_id = "sess-tie"
+    first_message_id = "msg-1"
+    reply_message_id = "msg-2"
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id=thread_id,
+        topic="review handoff",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at="2026-04-15T12:00:00Z",
+        updated_at="2026-04-15T12:00:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id=first_message_id,
+        thread_id=thread_id,
+        from_agent=planner_id,
+        to_agent=reviewer_id,
+        kind="request",
+        body="please review the latest patch",
+        created_at="2026-04-15T12:00:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id=reply_message_id,
+        thread_id=thread_id,
+        from_agent=reviewer_id,
+        to_agent=planner_id,
+        kind="answer",
+        body="review complete",
+        created_at="2026-04-15T12:00:00Z",
+        reply_to_message_id=first_message_id,
+    )
 
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
-    ]) == 0
-    sent_fields = _parse_fields(capsys.readouterr().out.strip())
-
-    assert main([
-        "reply",
-        sent_fields["message_id"],
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "review complete",
-    ]) == 0
-    reply_fields = _parse_fields(capsys.readouterr().out.strip())
-
-    assert main(["thread", "show", sent_fields["thread_id"]]) == 0
+    assert main(["thread", "show", thread_id]) == 0
     thread_lines = capsys.readouterr().out.strip().splitlines()
     thread_fields = _parse_fields(thread_lines[0])
     first_message_fields = _parse_fields(thread_lines[1])
@@ -2056,72 +1463,11 @@ def test_thread_show_preserves_message_order_when_timestamps_tie(
     assert thread_fields["pending_on"] == planner_id
     assert thread_fields["delegated_to"] == reviewer_id
     assert thread_fields["delegation_status"] == "answered"
-    assert thread_fields["current_thread_id"] == sent_fields["thread_id"]
+    assert thread_fields["current_thread_id"] == thread_id
     assert thread_fields["latest_internal_update"] == f"{reviewer_id}␠answer:␠review␠complete"
-    assert first_message_fields["message_id"] == sent_fields["message_id"]
-    assert second_message_fields["message_id"] == reply_fields["message_id"]
-    assert second_message_fields["reply_to_message_id"] == sent_fields["message_id"]
-
-
-def test_send_and_reply_surface_delegation_status_fields(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
-
-    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
-    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
-
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please inspect the patch",
-        "--topic",
-        "delegation status",
-    ]) == 0
-    sent_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert sent_fields["delegated_to"] == reviewer_id
-    assert sent_fields["delegation_status"] == "pending"
-    assert sent_fields["current_thread_id"] == sent_fields["thread_id"]
-    assert sent_fields["latest_internal_update"] == f"{planner_id}␠request:␠please␠inspect␠the␠patch"
-
-    assert main([
-        "send",
-        reviewer_id,
-        planner_id,
-        "--thread-id",
-        sent_fields["thread_id"],
-        "--kind",
-        "question",
-        "--body",
-        "Which repo should I use?",
-    ]) == 0
-    question_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert question_fields["delegated_to"] == reviewer_id
-    assert question_fields["delegation_status"] == "needs_user_input"
-    assert question_fields["current_thread_id"] == sent_fields["thread_id"]
-    assert question_fields["latest_internal_update"] == f"{reviewer_id}␠question:␠Which␠repo␠should␠I␠use?"
-
-    assert main([
-        "reply",
-        question_fields["message_id"],
-        "--from-agent",
-        planner_id,
-        "--kind",
-        "answer",
-        "--body",
-        "Use the maia repo.",
-    ]) == 0
-    answer_fields = _parse_fields(capsys.readouterr().out.strip())
-    assert answer_fields["delegated_to"] == reviewer_id
-    assert answer_fields["delegation_status"] == "answered"
-    assert answer_fields["current_thread_id"] == sent_fields["thread_id"]
-    assert answer_fields["latest_internal_update"] == f"{planner_id}␠answer:␠Use␠the␠maia␠repo."
-
+    assert first_message_fields["message_id"] == first_message_id
+    assert second_message_fields["message_id"] == reply_message_id
+    assert second_message_fields["reply_to_message_id"] == first_message_id
 
 def test_thread_delegation_status_prefers_newer_message_over_older_handoff(
     tmp_path: Path,
@@ -2129,51 +1475,43 @@ def test_thread_delegation_status_prefers_newer_message_over_older_handoff(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
 
     state_db_path = get_state_db_path({"HOME": str(tmp_path)})
-    CollaborationStorage().save(
-        state_db_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-stale-handoff",
-                topic="delegation freshness",
-                participants=[planner_id, reviewer_id],
-                created_by=planner_id,
-                status="open",
-                created_at="2026-04-17T12:00:00Z",
-                updated_at="2026-04-17T12:04:00Z",
-            )
-        ],
-        messages=[
-            MessageRecord(
-                message_id="msg-new-request",
-                thread_id="thread-stale-handoff",
-                from_agent=planner_id,
-                to_agent=reviewer_id,
-                kind=MessageKind.REQUEST,
-                body="Please continue with v2.",
-                created_at="2026-04-17T12:04:00Z",
-            )
-        ],
-        handoffs=[
-            HandoffRecord(
-                handoff_id="handoff-old",
-                thread_id="thread-stale-handoff",
-                from_agent=reviewer_id,
-                to_agent=planner_id,
-                kind=HandoffKind.REPORT,
-                location="reports/v1.md",
-                summary="V1 ready",
-                created_at="2026-04-17T12:03:00Z",
-            )
-        ],
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-stale-handoff",
+        topic="delegation freshness",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at="2026-04-17T12:00:00Z",
+        updated_at="2026-04-17T12:04:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id="msg-new-request",
+        thread_id="sess-stale-handoff",
+        from_agent=planner_id,
+        to_agent=reviewer_id,
+        kind="request",
+        body="Please continue with v2.",
+        created_at="2026-04-17T12:04:00Z",
+    )
+    _seed_keryx_handoff(
+        tmp_path,
+        handoff_id="handoff-old",
+        thread_id="sess-stale-handoff",
+        from_agent=reviewer_id,
+        to_agent=planner_id,
+        kind="report",
+        location="reports/v1.md",
+        summary="V1 ready",
+        created_at="2026-04-17T12:03:00Z",
     )
 
-    assert main(["thread", "show", "thread-stale-handoff"]) == 0
+    assert main(["thread", "show", "sess-stale-handoff"]) == 0
     fields = _parse_fields(capsys.readouterr().out.strip().splitlines()[0])
     assert fields["delegated_to"] == reviewer_id
     assert fields["delegation_status"] == "pending"
@@ -2186,27 +1524,19 @@ def test_thread_without_internal_events_does_not_fabricate_delegation_target(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     state_db_path = get_state_db_path({"HOME": str(tmp_path)})
-    CollaborationStorage().save(
-        state_db_path,
-        threads=[
-            ThreadRecord(
-                thread_id="thread-no-events",
-                topic="empty delegation",
-                participants=["planner", "reviewer"],
-                created_by="planner",
-                status="open",
-                created_at="2026-04-17T12:00:00Z",
-                updated_at="2026-04-17T12:00:00Z",
-            )
-        ],
-        messages=[],
-        handoffs=[],
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-no-events",
+        topic="empty delegation",
+        participants=["planner", "reviewer"],
+        created_by="planner",
+        created_at="2026-04-17T12:00:00Z",
+        updated_at="2026-04-17T12:00:00Z",
     )
 
-    assert main(["thread", "show", "thread-no-events"]) == 0
+    assert main(["thread", "show", "sess-no-events"]) == 0
     fields = _parse_fields(capsys.readouterr().out.strip().splitlines()[0])
     assert fields["delegated_to"] == "-"
     assert fields["delegation_status"] == "-"
@@ -2219,22 +1549,32 @@ def test_latest_internal_update_truncates_long_internal_body(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(cli_module, "_build_message_broker", lambda: None)
 
     planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
     reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
     long_body = "This is a very long internal update that should be summarized before it reaches lightweight delegation status output."
+    _seed_keryx_thread(
+        tmp_path,
+        thread_id="sess-long",
+        topic="delegation truncation",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at="2026-04-15T12:00:00Z",
+        updated_at="2026-04-15T12:00:00Z",
+    )
+    _seed_keryx_message(
+        tmp_path,
+        message_id="msg-long",
+        thread_id="sess-long",
+        from_agent=planner_id,
+        to_agent=reviewer_id,
+        kind="request",
+        body=long_body,
+        created_at="2026-04-15T12:00:00Z",
+    )
 
-    assert main([
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        long_body,
-        "--topic",
-        "delegation truncation",
-    ]) == 0
-    fields = _parse_fields(capsys.readouterr().out.strip())
+    assert main(["thread", "show", "sess-long"]) == 0
+    fields = _parse_fields(capsys.readouterr().out.strip().splitlines()[0])
     assert fields["delegation_status"] == "pending"
     assert fields["latest_internal_update"].startswith(f"{planner_id}␠request:␠This␠is␠a␠very␠long␠internal␠update")
     assert fields["latest_internal_update"].endswith("…")

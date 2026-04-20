@@ -19,14 +19,21 @@ from maia.agent_model import AgentRecord
 from maia import cli as cli_module
 from maia.app_state import (
     get_agent_hermes_home,
-    get_collaboration_path,
     get_default_export_path,
     get_registry_path,
     get_runtime_state_path,
     get_state_db_path,
     get_team_metadata_path,
 )
-from maia.collaboration_storage import CollaborationStorage
+from maia.keryx_models import (
+    KeryxHandoffRecord,
+    KeryxHandoffStatus,
+    KeryxMessageRecord,
+    KeryxSessionRecord,
+    KeryxSessionStatus,
+)
+from maia.keryx_service import KeryxService
+from maia.message_model import MessageKind
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
@@ -67,10 +74,7 @@ def parse_fields(line: str) -> dict[str, str]:
         "exported",
         "imported",
         "inspected",
-        "sent",
-        "inbox",
         "thread",
-        "replied",
         "preview",
         "risk",
         "added",
@@ -127,13 +131,85 @@ def load_runtime_state(home: Path) -> dict[str, object]:
     return {"runtimes": [states[agent_id].to_dict() for agent_id in sorted(states)]}
 
 
-def load_collaboration(home: Path) -> dict[str, object]:
-    state = CollaborationStorage().load(get_state_db_path({"HOME": str(home)}))
-    return {
-        "threads": [thread.to_dict() for thread in state.threads],
-        "messages": [message.to_dict() for message in state.messages],
-        "handoffs": [handoff.to_dict() for handoff in state.handoffs],
-    }
+def _keryx_service(home: Path) -> KeryxService:
+    return KeryxService(get_state_db_path({"HOME": str(home)}))
+
+
+def _seed_keryx_thread(
+    home: Path,
+    *,
+    thread_id: str,
+    topic: str,
+    participants: list[str],
+    created_by: str,
+    status: KeryxSessionStatus = KeryxSessionStatus.ACTIVE,
+    created_at: str,
+    updated_at: str,
+) -> KeryxSessionRecord:
+    thread = KeryxSessionRecord(
+        session_id=thread_id,
+        topic=topic,
+        participants=participants,
+        created_by=created_by,
+        status=status,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+    return _keryx_service(home).create_session(thread)
+
+
+def _seed_keryx_message(
+    home: Path,
+    *,
+    message_id: str,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    kind: str,
+    body: str,
+    created_at: str,
+    reply_to_message_id: str | None = None,
+) -> KeryxMessageRecord:
+    message = KeryxMessageRecord(
+        message_id=message_id,
+        session_id=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        kind=kind,
+        body=body,
+        created_at=created_at,
+        reply_to_message_id=reply_to_message_id,
+    )
+    return _keryx_service(home).create_session_message(thread_id, message)
+
+
+def _seed_keryx_handoff(
+    home: Path,
+    *,
+    handoff_id: str,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    kind: str,
+    summary: str,
+    location: str,
+    created_at: str,
+    updated_at: str | None = None,
+    status: KeryxHandoffStatus = KeryxHandoffStatus.OPEN,
+) -> KeryxHandoffRecord:
+    handoff = KeryxHandoffRecord(
+        handoff_id=handoff_id,
+        session_id=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        kind=kind,
+        status=status,
+        summary=summary,
+        location=location,
+        created_at=created_at,
+        updated_at=created_at if updated_at is None else updated_at,
+    )
+    return _keryx_service(home).create_thread_handoff(thread_id, handoff).to_handoff_record()
 
 
 def write_runtime_state(home: Path, payload: dict[str, object]) -> None:
@@ -378,78 +454,66 @@ def _setup_v1_golden_flow(
         "runtime_handle": "runtime-002",
     }
 
-    sent = run_module(
+    thread_id = "thread0001"
+    first_message_id = "msg00001"
+    reply_message_id = "msg00002"
+    handoff_id = "handoff1"
+    thread_created_at = "2026-04-17T02:00:00Z"
+    thread_updated_at = "2026-04-17T02:05:00Z"
+    handoff_created_at = "2026-04-17T02:06:00Z"
+    collaboration_path = get_state_db_path({"HOME": str(tmp_path)})
+    _seed_keryx_thread(
         tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
+        thread_id=thread_id,
+        topic="review handoff",
+        participants=[planner_id, reviewer_id],
+        created_by=planner_id,
+        created_at=thread_created_at,
+        updated_at=thread_updated_at,
     )
-    assert sent.returncode == 0
-    sent_fields = parse_fields(sent.stdout.strip())
-    assert sent_fields["from_agent"] == planner_id
-    assert sent_fields["to_agent"] == reviewer_id
-    assert sent_fields["kind"] == "request"
-    thread_id = sent_fields["thread_id"]
-    first_message_id = sent_fields["message_id"]
-
-    replied = run_module(
+    _seed_keryx_message(
         tmp_path,
-        "reply",
-        first_message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "review complete",
+        message_id=first_message_id,
+        thread_id=thread_id,
+        from_agent=planner_id,
+        to_agent=reviewer_id,
+        kind=MessageKind.REQUEST.value,
+        body="please review the latest patch",
+        created_at=thread_created_at,
     )
-    assert replied.returncode == 0
-    reply_fields = parse_fields(replied.stdout.strip())
-    assert reply_fields["thread_id"] == thread_id
-    assert reply_fields["reply_to_message_id"] == first_message_id
-    assert reply_fields["from_agent"] == reviewer_id
-    assert reply_fields["to_agent"] == planner_id
-    assert reply_fields["kind"] == "answer"
-
-    added = run_module(
+    _seed_keryx_message(
         tmp_path,
-        "handoff",
-        "add",
-        "--thread-id",
-        thread_id,
-        "--from-agent",
-        reviewer_id,
-        "--to-agent",
-        planner_id,
-        "--type",
-        "report",
-        "--location",
-        "reports/review.md",
-        "--summary",
-        "Review notes ready",
+        message_id=reply_message_id,
+        thread_id=thread_id,
+        from_agent=reviewer_id,
+        to_agent=planner_id,
+        kind=MessageKind.ANSWER.value,
+        body="review complete",
+        created_at=thread_updated_at,
+        reply_to_message_id=first_message_id,
     )
-    assert added.returncode == 0
-    add_fields = parse_fields(added.stdout.strip())
-    assert add_fields["thread_id"] == thread_id
-    assert add_fields["from_agent"] == reviewer_id
-    assert add_fields["to_agent"] == planner_id
-    assert add_fields["type"] == "report"
-    assert add_fields["location"] == "reports/review.md"
-    assert add_fields["summary"] == "Review␠notes␠ready"
+    _seed_keryx_handoff(
+        tmp_path,
+        handoff_id=handoff_id,
+        thread_id=thread_id,
+        from_agent=reviewer_id,
+        to_agent=planner_id,
+        kind="report",
+        location="reports/review.md",
+        summary="Review notes ready",
+        created_at=handoff_created_at,
+    )
 
-    collaboration = load_collaboration(tmp_path)
     return {
         "planner_id": planner_id,
         "reviewer_id": reviewer_id,
         "thread_id": thread_id,
         "first_message_id": first_message_id,
-        "reply_message_id": reply_fields["message_id"],
-        "handoff_id": add_fields["handoff_id"],
-        "thread_created_at": collaboration["threads"][0]["created_at"],
-        "thread_updated_at": collaboration["threads"][0]["updated_at"],
-        "handoff_created_at": collaboration["handoffs"][0]["created_at"],
+        "reply_message_id": reply_message_id,
+        "handoff_id": handoff_id,
+        "thread_created_at": thread_created_at,
+        "thread_updated_at": thread_updated_at,
+        "handoff_created_at": handoff_created_at,
         "fake_docker_state_path": str(fake_bin / "fake-docker-state.json"),
     }
 
@@ -466,7 +530,8 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     assert lines == [
         "✗ Docker FAIL — Docker can't run because Docker is missing",
         '✗ Queue FAIL — Queue health needs a working Docker daemon',
-        '✓ State DB OK',
+        '✗ Keryx FAIL — Keryx health needs a working Docker daemon',
+        '✓ Maia DB OK',
         'Next: install Docker, then run maia doctor again',
     ]
 
@@ -485,7 +550,8 @@ def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: 
     assert lines == [
         '✓ Docker OK',
         '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
-        '✓ State DB OK',
+        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
+        '✓ Maia DB OK',
         'Next: run maia setup to bootstrap shared infra',
     ]
 
@@ -511,13 +577,14 @@ def test_doctor_accepts_reachable_external_queue_before_setup(
     result = run_module(tmp_path, 'doctor')
     listener.close()
 
-    assert result.returncode == 0
+    assert result.returncode == 1
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
         '✓ Queue OK',
-        '✓ State DB OK',
-        '✓ Shared infra ready',
+        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
+        '✓ Maia DB OK',
+        'Next: run maia setup to bootstrap shared infra',
     ]
 
 
@@ -539,7 +606,8 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
     assert lines == [
         '✓ Docker OK',
         '✗ Queue FAIL — Connection refused',
-        '✓ State DB OK',
+        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
+        '✓ Maia DB OK',
         'Next: fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again',
     ]
 
@@ -565,7 +633,8 @@ def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
     assert doctor_lines == [
         '✓ Docker OK',
         '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
-        f"✗ State DB FAIL — Maia state DB at {state_db_path} is unreadable",
+        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
+        f"✗ Maia DB FAIL — Maia state DB at {state_db_path} is unreadable",
         'Next: run maia setup to bootstrap shared infra',
     ]
 
@@ -594,10 +663,14 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     assert setup_lines[0] == 'Created Maia network maia.'
     assert setup_lines[1] == 'Created Maia volume maia-rabbitmq-data.'
     assert setup_lines[2] == 'Started shared queue maia-rabbitmq.'
-    assert setup_lines[3] == f'SQLite state is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
-    assert setup_lines[4] == 'Shared infra is ready.'
-    assert setup_lines[5] == 'Next: run maia agent new'
+    assert setup_lines[3] == 'Started shared Keryx endpoint http://maia-keryx:8765.'
+    assert setup_lines[4] == f'Maia SQLite DB is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
+    assert setup_lines[5] == 'Shared infra is ready.'
+    assert setup_lines[6] == 'Next: run maia agent new'
     assert setup.stderr == ''
+
+    fake_state = json.loads((fake_bin / 'fake-docker-state.json').read_text(encoding='utf-8'))
+    assert 'maia-keryx' in fake_state['containers']
 
     doctor = run_module(tmp_path, 'doctor')
     assert doctor.returncode == 0
@@ -605,7 +678,8 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     assert doctor_lines == [
         '✓ Docker OK',
         '✓ Queue OK',
-        '✓ State DB OK',
+        '✓ Keryx OK',
+        '✓ Maia DB OK',
         '✓ Shared infra ready',
     ]
 
@@ -642,7 +716,8 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
     assert lines == [
         "✗ Docker FAIL — Docker is installed, but this user cannot talk to the Docker daemon",
         '✗ Queue FAIL — Queue health needs a working Docker daemon',
-        '✓ State DB OK',
+        '✗ Keryx FAIL — Keryx health needs a working Docker daemon',
+        '✓ Maia DB OK',
         'Next: fix Docker permissions for this user, then run maia doctor again',
     ]
 
@@ -2198,322 +2273,6 @@ def test_import_clears_runtime_state_even_for_surviving_agent_ids(
     assert imported.returncode == 0
     assert load_runtime_state(home) == {"runtimes": []}
 
-
-
-def test_send_inbox_thread_and_reply_flow(tmp_path: Path) -> None:
-    planner_id = create_agent(tmp_path, "planner")
-    reviewer_id = create_agent(tmp_path, "reviewer")
-
-    sent = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
-        "--kind",
-        "request",
-    )
-    assert sent.returncode == 0
-    assert sent.stderr == ""
-    sent_fields = parse_fields(sent.stdout.strip())
-    assert sent_fields["from_agent"] == planner_id
-    assert sent_fields["to_agent"] == reviewer_id
-    assert sent_fields["kind"] == "request"
-    thread_id = sent_fields["thread_id"]
-    first_message_id = sent_fields["message_id"]
-
-    inbox = run_module(tmp_path, "inbox", reviewer_id)
-    assert inbox.returncode == 0
-    lines = line_map(inbox.stdout)
-    assert parse_fields(lines["inbox"]) == {
-        "agent_id": reviewer_id,
-        "messages": "1",
-    }
-    inbox_message = parse_fields(inbox.stdout.strip().splitlines()[1])
-    assert inbox_message["thread_id"] == thread_id
-    assert inbox_message["from_agent"] == planner_id
-    assert inbox_message["to_agent"] == reviewer_id
-    assert inbox_message["kind"] == "request"
-    assert inbox_message["body"] == "please␠review␠the␠latest␠patch"
-    assert inbox_message["reply_to_message_id"] == "-"
-
-    thread_created_at = load_collaboration(tmp_path)["threads"][0]["created_at"]
-    thread = run_module(tmp_path, "thread", thread_id)
-    assert thread.returncode == 0
-    thread_lines = thread.stdout.strip().splitlines()
-    assert parse_fields(thread_lines[0]) == {
-        "thread_id": thread_id,
-        "topic": "review␠handoff",
-        "participants": f"{planner_id},{reviewer_id}",
-        "participant_runtime": f"{planner_id}:stopped,{reviewer_id}:stopped",
-        "created_by": planner_id,
-        "status": "open",
-        "updated_at": thread_created_at,
-        "pending_on": reviewer_id,
-        "delegated_to": reviewer_id,
-        "delegation_status": "pending",
-        "current_thread_id": thread_id,
-        "latest_internal_update": f"{planner_id}␠request:␠please␠review␠the␠latest␠patch",
-        "handoffs": "0",
-        "messages": "1",
-        "created_at": thread_created_at,
-        "recent_handoff_id": "-",
-        "recent_handoff_from": "-",
-        "recent_handoff_to": "-",
-        "recent_handoff_type": "-",
-        "recent_handoff_location": "-",
-        "recent_handoff_summary": "-",
-        "recent_handoff_created_at": "-",
-    }
-    thread_message = parse_fields(thread_lines[1])
-    assert thread_message["message_id"] == first_message_id
-
-    replied = run_module(
-        tmp_path,
-        "reply",
-        first_message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "looks good",
-    )
-    assert replied.returncode == 0
-    reply_fields = parse_fields(replied.stdout.strip())
-    assert reply_fields["thread_id"] == thread_id
-    assert reply_fields["reply_to_message_id"] == first_message_id
-    assert reply_fields["from_agent"] == reviewer_id
-    assert reply_fields["to_agent"] == planner_id
-    assert reply_fields["kind"] == "answer"
-
-    planner_inbox = run_module(tmp_path, "inbox", planner_id)
-    assert planner_inbox.returncode == 0
-    planner_lines = planner_inbox.stdout.strip().splitlines()
-    assert parse_fields(planner_lines[0]) == {
-        "agent_id": planner_id,
-        "messages": "1",
-    }
-    planner_message = parse_fields(planner_lines[1])
-    assert planner_message["reply_to_message_id"] == first_message_id
-    assert planner_message["body"] == "looks␠good"
-
-    collaboration = load_collaboration(tmp_path)
-    assert len(collaboration["threads"]) == 1
-    assert len(collaboration["messages"]) == 2
-
-
-def test_running_agent_multi_turn_conversation_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_docker = fake_bin / "docker"
-    _write_fake_docker(fake_docker)
-    fake_hermes = fake_bin / "hermes"
-    _write_fake_hermes(fake_hermes)
-    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-
-    assert run_module(tmp_path, "setup").returncode == 0
-    assert run_module(tmp_path, "doctor").returncode == 0
-
-    planner_id = create_agent(tmp_path, "planner")
-    reviewer_id = create_agent(tmp_path, "reviewer")
-    assert run_module(tmp_path, "agent", "setup", planner_id).returncode == 0
-    assert run_module(tmp_path, "agent", "setup", reviewer_id).returncode == 0
-
-    assert run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        planner_id,
-        "--role",
-        "planner",
-        "--runtime-image",
-        "ghcr.io/example/planner:latest",
-        "--runtime-workspace",
-        "/workspace/planner",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "planner",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=planner",
-    ).returncode == 0
-    assert run_module(
-        tmp_path,
-        "agent",
-        "tune",
-        reviewer_id,
-        "--role",
-        "reviewer",
-        "--runtime-image",
-        "ghcr.io/example/reviewer:latest",
-        "--runtime-workspace",
-        "/workspace/reviewer",
-        "--runtime-command",
-        "python",
-        "--runtime-command=-m",
-        "--runtime-command",
-        "reviewer",
-        "--runtime-env",
-        "MAIA_ENV=test",
-        "--runtime-env",
-        "MAIA_ROLE=reviewer",
-    ).returncode == 0
-
-    assert run_module(tmp_path, "agent", "start", planner_id).returncode == 0
-    assert run_module(tmp_path, "agent", "start", reviewer_id).returncode == 0
-
-    sent = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please review the latest patch",
-        "--topic",
-        "review handoff",
-        "--kind",
-        "request",
-    )
-    assert sent.returncode == 0
-    sent_fields = parse_fields(sent.stdout.strip())
-    thread_id = sent_fields["thread_id"]
-    first_message_id = sent_fields["message_id"]
-    sent_created_at = load_collaboration(tmp_path)["messages"][0]["created_at"]
-
-    reviewer_inbox = run_module(tmp_path, "inbox", reviewer_id)
-    assert reviewer_inbox.returncode == 0
-    reviewer_lines = reviewer_inbox.stdout.strip().splitlines()
-    assert parse_fields(reviewer_lines[0]) == {
-        "agent_id": reviewer_id,
-        "messages": "1",
-    }
-    assert parse_fields(reviewer_lines[1]) == {
-        "message_id": first_message_id,
-        "thread_id": thread_id,
-        "from_agent": planner_id,
-        "to_agent": reviewer_id,
-        "kind": "request",
-        "body": "please␠review␠the␠latest␠patch",
-        "created_at": sent_created_at,
-        "reply_to_message_id": "-",
-    }
-
-    replied = run_module(
-        tmp_path,
-        "reply",
-        first_message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "review complete",
-        "--kind",
-        "answer",
-    )
-    assert replied.returncode == 0
-    reply_fields = parse_fields(replied.stdout.strip())
-    assert reply_fields["kind"] == "answer"
-    reply_message_id = reply_fields["message_id"]
-    collaboration = load_collaboration(tmp_path)
-    sent_created_at = collaboration["messages"][0]["created_at"]
-    reply_created_at = collaboration["messages"][1]["created_at"]
-
-    planner_inbox = run_module(tmp_path, "inbox", planner_id)
-    assert planner_inbox.returncode == 0
-    planner_lines = planner_inbox.stdout.strip().splitlines()
-    assert parse_fields(planner_lines[0]) == {
-        "agent_id": planner_id,
-        "messages": "1",
-    }
-    assert parse_fields(planner_lines[1]) == {
-        "message_id": reply_message_id,
-        "thread_id": thread_id,
-        "from_agent": reviewer_id,
-        "to_agent": planner_id,
-        "kind": "answer",
-        "body": "review␠complete",
-        "created_at": reply_created_at,
-        "reply_to_message_id": first_message_id,
-    }
-
-    added = run_module(
-        tmp_path,
-        "handoff",
-        "add",
-        "--thread-id",
-        thread_id,
-        "--from-agent",
-        reviewer_id,
-        "--to-agent",
-        planner_id,
-        "--type",
-        "report",
-        "--location",
-        "reports/review.md",
-        "--summary",
-        "Review notes ready",
-    )
-    assert added.returncode == 0
-    added_fields = parse_fields(added.stdout.strip())
-    handoff_id = added_fields["handoff_id"]
-
-    thread_show = run_module(tmp_path, "thread", "show", thread_id)
-    assert thread_show.returncode == 0
-    thread_lines = thread_show.stdout.strip().splitlines()
-    assert parse_fields(thread_lines[0]) == {
-        "thread_id": thread_id,
-        "topic": "review␠handoff",
-        "participants": f"{planner_id},{reviewer_id}",
-        "participant_runtime": f"{planner_id}:running,{reviewer_id}:running",
-        "status": "open",
-        "updated_at": reply_created_at,
-        "pending_on": planner_id,
-        "delegated_to": reviewer_id,
-        "delegation_status": "handoff_ready",
-        "current_thread_id": thread_id,
-        "latest_internal_update": f"{reviewer_id}␠report:␠Review␠notes␠ready",
-        "handoffs": "1",
-        "messages": "2",
-        "created_by": planner_id,
-        "created_at": sent_created_at,
-        "recent_handoff_id": handoff_id,
-        "recent_handoff_from": reviewer_id,
-        "recent_handoff_to": planner_id,
-        "recent_handoff_type": "report",
-        "recent_handoff_location": "reports/review.md",
-        "recent_handoff_summary": "Review␠notes␠ready",
-        "recent_handoff_created_at": added_fields["created_at"],
-    }
-
-    planner_status = run_module(tmp_path, "agent", "status", planner_id)
-    reviewer_status = run_module(tmp_path, "agent", "status", reviewer_id)
-    assert planner_status.returncode == 0
-    assert reviewer_status.returncode == 0
-    assert parse_fields(planner_status.stdout.strip())["runtime"] == "running"
-    assert parse_fields(reviewer_status.stdout.strip())["runtime"] == "running"
-
-    planner_logs = run_module(tmp_path, "agent", "logs", planner_id, "--tail-lines", "2")
-    reviewer_logs = run_module(tmp_path, "agent", "logs", reviewer_id, "--tail-lines", "2")
-    assert planner_logs.returncode == 0
-    assert reviewer_logs.returncode == 0
-    assert parse_fields(planner_logs.stdout.strip().splitlines()[0]) == {
-        "agent_id": planner_id,
-        "runtime_status": "running",
-        "runtime_handle": "runtime-001",
-        "lines": "2",
-    }
-    assert parse_fields(reviewer_logs.stdout.strip().splitlines()[0]) == {
-        "agent_id": reviewer_id,
-        "runtime_status": "running",
-        "runtime_handle": "runtime-002",
-        "lines": "2",
-    }
-
-
 def test_v1_golden_flow_smoke_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2664,226 +2423,6 @@ def test_v1_golden_flow_smoke_contract(
     assert parse_fields(log_lines[1]) == {"line": "line␠1"}
     assert parse_fields(log_lines[2]) == {"line": "line␠2"}
 
-
-def test_live_runtime_delegation_loop_stays_on_anchor_thread_in_current_maia_model(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_docker = fake_bin / "docker"
-    _write_fake_docker(fake_docker)
-    fake_hermes = fake_bin / "hermes"
-    _write_fake_hermes(fake_hermes)
-    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-
-    assert run_module(tmp_path, "setup").returncode == 0
-    assert run_module(tmp_path, "doctor").returncode == 0
-
-    anchor_id = create_agent(tmp_path, "economist")
-    delegate_id = create_agent(tmp_path, "tech")
-    assert run_module(tmp_path, "agent", "setup", anchor_id).returncode == 0
-    assert run_module(tmp_path, "agent", "setup", delegate_id).returncode == 0
-    assert run_module(tmp_path, "agent", "start", anchor_id).returncode == 0
-    assert run_module(tmp_path, "agent", "start", delegate_id).returncode == 0
-
-    delegated_request = run_module(
-        tmp_path,
-        "send",
-        anchor_id,
-        delegate_id,
-        "--body",
-        "Please build the crawler and tell me what input format you still need.",
-        "--topic",
-        "crawler delegation",
-    )
-    assert delegated_request.returncode == 0
-    delegated_request_fields = parse_fields(delegated_request.stdout.strip())
-    thread_id = delegated_request_fields["thread_id"]
-    delegated_request_id = delegated_request_fields["message_id"]
-
-    delegate_question = run_module(
-        tmp_path,
-        "send",
-        delegate_id,
-        anchor_id,
-        "--body",
-        "Which site should I target and what output schema do you want?",
-        "--thread-id",
-        thread_id,
-        "--kind",
-        "question",
-    )
-    assert delegate_question.returncode == 0
-    delegate_question_fields = parse_fields(delegate_question.stdout.strip())
-    delegate_question_id = delegate_question_fields["message_id"]
-
-    thread_after_question = run_module(tmp_path, "thread", "show", thread_id)
-    assert thread_after_question.returncode == 0
-    question_lines = thread_after_question.stdout.strip().splitlines()
-    assert parse_fields(question_lines[0])["created_by"] == anchor_id
-    assert parse_fields(question_lines[0])["current_thread_id"] == thread_id
-    assert parse_fields(question_lines[0])["delegated_to"] == delegate_id
-    assert parse_fields(question_lines[0])["delegation_status"] == "needs_user_input"
-    assert parse_fields(question_lines[0])["latest_internal_update"] == (
-        f"{delegate_id}␠question:␠Which␠site␠should␠I␠target␠and␠what␠output␠sche…"
-    )
-    assert parse_fields(question_lines[2]) == {
-        "message_id": delegate_question_id,
-        "thread_id": thread_id,
-        "from_agent": delegate_id,
-        "to_agent": anchor_id,
-        "kind": "question",
-        "body": "Which␠site␠should␠I␠target␠and␠what␠output␠schema␠do␠you␠want?",
-        "created_at": parse_fields(question_lines[2])["created_at"],
-        "reply_to_message_id": "-",
-    }
-
-    anchor_answer = run_module(
-        tmp_path,
-        "reply",
-        delegate_question_id,
-        "--from-agent",
-        anchor_id,
-        "--body",
-        "Target example.com and emit JSONL with title,url,summary.",
-    )
-    assert anchor_answer.returncode == 0
-    anchor_answer_fields = parse_fields(anchor_answer.stdout.strip())
-    anchor_answer_id = anchor_answer_fields["message_id"]
-    assert anchor_answer_fields["thread_id"] == thread_id
-    assert anchor_answer_fields["reply_to_message_id"] == delegate_question_id
-    assert anchor_answer_fields["delegation_status"] == "answered"
-    assert anchor_answer_fields["current_thread_id"] == thread_id
-
-    delegate_report = run_module(
-        tmp_path,
-        "reply",
-        anchor_answer_id,
-        "--from-agent",
-        delegate_id,
-        "--body",
-        "Crawler is running; initial scrape looks clean.",
-        "--kind",
-        "report",
-    )
-    assert delegate_report.returncode == 0
-    delegate_report_fields = parse_fields(delegate_report.stdout.strip())
-    delegate_report_id = delegate_report_fields["message_id"]
-    assert delegate_report_fields["thread_id"] == thread_id
-    assert delegate_report_fields["reply_to_message_id"] == anchor_answer_id
-    assert delegate_report_fields["delegation_status"] == "answered"
-    assert delegate_report_fields["current_thread_id"] == thread_id
-
-    final_handoff = run_module(
-        tmp_path,
-        "handoff",
-        "add",
-        "--thread-id",
-        thread_id,
-        "--from-agent",
-        delegate_id,
-        "--to-agent",
-        anchor_id,
-        "--type",
-        "report",
-        "--location",
-        "artifacts/crawler.jsonl",
-        "--summary",
-        "Crawler output ready for the anchor reply",
-    )
-    assert final_handoff.returncode == 0
-    final_handoff_fields = parse_fields(final_handoff.stdout.strip())
-
-    collaboration = load_collaboration(tmp_path)
-    message_created_at = {
-        message["message_id"]: message["created_at"]
-        for message in collaboration["messages"]
-    }
-
-    thread_show = run_module(tmp_path, "thread", "show", thread_id)
-    assert thread_show.returncode == 0
-    thread_lines = thread_show.stdout.strip().splitlines()
-    assert parse_fields(thread_lines[0]) == {
-        "thread_id": thread_id,
-        "topic": "crawler␠delegation",
-        "participants": f"{anchor_id},{delegate_id}",
-        "participant_runtime": f"{anchor_id}:running,{delegate_id}:running",
-        "status": "open",
-        "updated_at": message_created_at[delegate_report_id],
-        "pending_on": anchor_id,
-        "delegated_to": delegate_id,
-        "delegation_status": "handoff_ready",
-        "current_thread_id": thread_id,
-        "latest_internal_update": f"{delegate_id}␠report:␠Crawler␠output␠ready␠for␠the␠anchor␠reply",
-        "handoffs": "1",
-        "messages": "4",
-        "created_by": anchor_id,
-        "created_at": message_created_at[delegated_request_id],
-        "recent_handoff_id": final_handoff_fields["handoff_id"],
-        "recent_handoff_from": delegate_id,
-        "recent_handoff_to": anchor_id,
-        "recent_handoff_type": "report",
-        "recent_handoff_location": "artifacts/crawler.jsonl",
-        "recent_handoff_summary": "Crawler␠output␠ready␠for␠the␠anchor␠reply",
-        "recent_handoff_created_at": final_handoff_fields["created_at"],
-    }
-    assert parse_fields(thread_lines[1]) == {
-        "message_id": delegated_request_id,
-        "thread_id": thread_id,
-        "from_agent": anchor_id,
-        "to_agent": delegate_id,
-        "kind": "request",
-        "body": "Please␠build␠the␠crawler␠and␠tell␠me␠what␠input␠format␠you␠still␠need.",
-        "created_at": message_created_at[delegated_request_id],
-        "reply_to_message_id": "-",
-    }
-    assert parse_fields(thread_lines[2]) == {
-        "message_id": delegate_question_id,
-        "thread_id": thread_id,
-        "from_agent": delegate_id,
-        "to_agent": anchor_id,
-        "kind": "question",
-        "body": "Which␠site␠should␠I␠target␠and␠what␠output␠schema␠do␠you␠want?",
-        "created_at": message_created_at[delegate_question_id],
-        "reply_to_message_id": "-",
-    }
-    assert parse_fields(thread_lines[3]) == {
-        "message_id": anchor_answer_id,
-        "thread_id": thread_id,
-        "from_agent": anchor_id,
-        "to_agent": delegate_id,
-        "kind": "answer",
-        "body": "Target␠example.com␠and␠emit␠JSONL␠with␠title⸴url⸴summary.",
-        "created_at": message_created_at[anchor_answer_id],
-        "reply_to_message_id": delegate_question_id,
-    }
-    assert parse_fields(thread_lines[4]) == {
-        "message_id": delegate_report_id,
-        "thread_id": thread_id,
-        "from_agent": delegate_id,
-        "to_agent": anchor_id,
-        "kind": "report",
-        "body": "Crawler␠is␠running;␠initial␠scrape␠looks␠clean.",
-        "created_at": message_created_at[delegate_report_id],
-        "reply_to_message_id": anchor_answer_id,
-    }
-
-    handoff_show = run_module(tmp_path, "handoff", "show", final_handoff_fields["handoff_id"])
-    assert handoff_show.returncode == 0
-    handoff_lines = handoff_show.stdout.strip().splitlines()
-    assert parse_fields(handoff_lines[0]) == {
-        "handoff_id": final_handoff_fields["handoff_id"],
-        "thread_id": thread_id,
-        "from_agent": delegate_id,
-        "to_agent": anchor_id,
-        "type": "report",
-        "location": "artifacts/crawler.jsonl",
-        "summary": "Crawler␠output␠ready␠for␠the␠anchor␠reply",
-        "created_at": final_handoff_fields["created_at"],
-    }
-
-
 def test_v1_golden_flow_visibility_path_closes_part2_operator_story(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2976,7 +2515,7 @@ def test_v1_golden_flow_reports_stale_runtime_state_at_status_and_logs_steps(
     }
 
 
-def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
+def test_v1_golden_flow_reports_malformed_keryx_thread_state_at_thread_step(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2984,13 +2523,13 @@ def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
     collaboration_path = get_state_db_path({"HOME": str(tmp_path)})
     corrupt_sqlite_payload(
         collaboration_path,
-        "collaboration_threads",
-        "thread_id",
+        "keryx_sessions",
+        "session_id",
         flow["thread_id"],
         "{bad json\n",
     )
     expected_error = (
-        f"error: Invalid collaboration SQLite in {collaboration_path}: "
+        f"error: Invalid Keryx session SQLite in {collaboration_path}: "
         "Expecting property name enclosed in double quotes"
     )
 
@@ -3003,118 +2542,6 @@ def test_v1_golden_flow_reports_malformed_collaboration_state_at_thread_step(
 
     status = run_module(tmp_path, "agent", "status", flow["planner_id"])
     assert status.returncode == 0
-
-
-def test_send_to_existing_thread_and_validation(tmp_path: Path) -> None:
-    planner_id = create_agent(tmp_path, "planner")
-    reviewer_id = create_agent(tmp_path, "reviewer")
-    analyst_id = create_agent(tmp_path, "analyst")
-
-    first = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "first",
-        "--topic",
-        "review handoff",
-    )
-    thread_id = parse_fields(first.stdout.strip())["thread_id"]
-
-    second = run_module(
-        tmp_path,
-        "send",
-        reviewer_id,
-        analyst_id,
-        "--body",
-        "loop analyst in",
-        "--thread-id",
-        thread_id,
-        "--kind",
-        "note",
-    )
-    assert second.returncode == 0
-
-    thread = run_module(tmp_path, "thread", thread_id)
-    assert thread.returncode == 0
-    thread_fields = parse_fields(thread.stdout.strip().splitlines()[0])
-    assert thread_fields["participants"] == f"{planner_id},{reviewer_id},{analyst_id}"
-    assert thread_fields["messages"] == "2"
-
-    missing_topic = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "oops",
-    )
-    assert missing_topic.returncode == 2
-
-    bad_limit = run_module(tmp_path, "inbox", reviewer_id, "--limit", "0")
-    assert bad_limit.returncode == 1
-    assert "Inbox limit must be >= 1" in bad_limit.stderr
-
-
-def test_reply_validation_errors(tmp_path: Path) -> None:
-    planner_id = create_agent(tmp_path, "planner")
-    reviewer_id = create_agent(tmp_path, "reviewer")
-    outsider_id = create_agent(tmp_path, "outsider")
-
-    sent = run_module(
-        tmp_path,
-        "send",
-        planner_id,
-        reviewer_id,
-        "--body",
-        "please answer",
-        "--topic",
-        "reply validation",
-    )
-    message_id = parse_fields(sent.stdout.strip())["message_id"]
-
-    outsider_reply = run_module(
-        tmp_path,
-        "reply",
-        message_id,
-        "--from-agent",
-        outsider_id,
-        "--body",
-        "hi",
-    )
-    assert outsider_reply.returncode == 1
-    assert "Reply sender must match the original message recipient" in outsider_reply.stderr
-
-    missing_message = run_module(
-        tmp_path,
-        "reply",
-        "missing123",
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "hi",
-    )
-    assert missing_message.returncode == 1
-    assert "Message with id 'missing123' not found" in missing_message.stderr
-
-    archived = run_module(tmp_path, "agent", "archive", planner_id)
-    assert archived.returncode == 0
-    purged = run_module(tmp_path, "agent", "purge", planner_id)
-    assert purged.returncode == 0
-
-    purged_target_reply = run_module(
-        tmp_path,
-        "reply",
-        message_id,
-        "--from-agent",
-        reviewer_id,
-        "--body",
-        "cannot deliver",
-    )
-    assert purged_target_reply.returncode == 1
-    assert f"Agent with id '{planner_id}' not found" in purged_target_reply.stderr
-
 
 def test_team_show_update_export_and_inspect_scope_v3_bundle(tmp_path: Path) -> None:
     agent_id = create_agent(tmp_path, "demo")

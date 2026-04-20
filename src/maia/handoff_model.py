@@ -1,4 +1,8 @@
-"""Handoff domain model primitives for Maia."""
+"""Legacy handoff domain primitives for Maia.
+
+These records remain only for non-active compatibility paths alongside the
+Keryx-backed collaboration contract.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ class HandoffKind(str, Enum):
 
 @dataclass(slots=True)
 class HandoffRecord:
-    """Serializable handoff metadata for thread-linked deliverables."""
+    """Legacy handoff metadata kept outside Maia's active Keryx thread contract."""
 
     handoff_id: str
     thread_id: str

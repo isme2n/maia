@@ -32,7 +32,8 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 
 ## Part 1 operator story
 1. 운영자는 `maia doctor`로 Docker, queue, DB readiness를 확인한다.
-2. 운영자는 `maia setup`으로 shared infra를 bootstrap한다.
+- 운영자는 `maia setup`으로 shared infra를 bootstrap한다.
+- canonical Maia SQLite DB filename is `~/.maia/maia.db`, and Keryx collaboration data remains stored as tables inside that same DB.
 3. 운영자는 `maia agent new planner`로 agent identity를 만든다.
 4. 운영자는 `maia agent setup planner`로 그 agent의 `hermes setup`을 연다.
 5. 운영자는 `maia agent start planner`로 agent runtime을 시작한다.
@@ -55,7 +56,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - `maia export [path]`
 - `maia import <path>`
 - `maia inspect <path>`
-- collaboration commands are secondary/internal for now
+- Keryx collaboration visibility commands (`thread`, `handoff`, `workspace`) are secondary/operator-facing
 
 ## UX / DX rules
 - help text는 현재 구현 상태를 과장하지 않는다.
@@ -66,10 +67,11 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - public examples는 `doctor → setup → agent new → agent setup → agent start`를 먼저 보여준다.
 
 ## Part 2 direction
-- Part 2의 제품 목표는 running agents가 broker 위에서 multi-turn으로 대화하는 것이다.
-- Maia는 control plane과 visibility surface를 제공하고, live delivery는 broker/message plane이 담당한다.
-- `send` / `reply` / `inbox`는 Part 2에서 debug/diagnostic/operator check surface로 남을 수 있지만 제품 정체성이 되면 안 된다.
-- `thread` / `handoff` / `workspace`는 open collaboration visibility surface로 남는다.
+- Part 2의 제품 목표는 Keryx를 canonical collaboration root로 삼아 running agents가 multi-turn으로 협업하는 것이다.
+- Maia는 control plane과 Keryx-backed visibility surface를 제공하고, live delivery 세부 구현은 public collaboration identity가 아니다.
+- legacy broker/call-era `send` / `reply` / `inbox` CLI contract는 제거 대상이며 유지 계약이 아니다.
+- Maia public surface에서는 Keryx collaboration object를 `thread` / `thread_id`로 부르고, Hermes의 `session` 개념과 섞지 않는다.
+- `thread` / `handoff` / `workspace`는 Keryx-backed open collaboration visibility surface로 남는다.
 - public operator visibility flow는 `thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs` 순서로 닫는다.
 
 ## Success criteria for this contract lock
@@ -78,10 +80,10 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - `setup` 설명에 team/model defaults wizard 서사가 없다.
 - messaging commands are removed from public golden flow examples.
 - `agent setup` is described as an interactive CLI-only passthrough to `hermes setup`.
-- Part 2 is described as real broker-backed agent conversation, not a CLI messenger product.
+- Part 2 is described as Keryx-rooted real agent collaboration, not a CLI messenger product.
 
 ## Part 2 completion criteria
-- running agent 두 개 이상이 broker를 통해 multi-turn message exchange를 한다.
+- running agent 두 개 이상이 Keryx-rooted collaboration state를 통해 multi-turn message exchange를 한다.
 - Maia는 `thread`, `handoff`, `workspace`, `agent status`, `agent logs`를 하나의 operator visibility story로 보여준다.
 - operator는 `thread list`와 `thread show`에서 pending thread, recent handoff, participant runtime 상태를 직접 볼 수 있다.
 - README/help/tests/roadmap/phase plan이 같은 Part 2 closeout story를 말한다.

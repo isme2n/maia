@@ -1,4 +1,8 @@
-"""SQLite-backed local control-plane state for Maia."""
+"""SQLite-backed local control-plane state for Maia.
+
+`keryx_*` tables are the active collaboration storage. The older
+`collaboration_*` tables remain only for transitional snapshot helpers.
+"""
 
 from __future__ import annotations
 
@@ -57,6 +61,42 @@ class SQLiteState:
                     position INTEGER NOT NULL UNIQUE,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS keryx_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS keryx_session_participants (
+                    session_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    participant_agent_id TEXT NOT NULL,
+                    PRIMARY KEY (session_id, position),
+                    FOREIGN KEY(session_id) REFERENCES keryx_sessions(session_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS keryx_messages (
+                    message_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES keryx_sessions(session_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS keryx_handoffs (
+                    handoff_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES keryx_sessions(session_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_keryx_messages_session_created_at
+                ON keryx_messages(session_id, created_at, message_id);
+                CREATE INDEX IF NOT EXISTS idx_keryx_handoffs_session_created_at
+                ON keryx_handoffs(session_id, created_at, handoff_id);
                 """
             )
             connection.execute(
@@ -120,6 +160,7 @@ class SQLiteState:
             )
 
     def load_collaboration(self) -> dict[str, list[dict[str, Any]]]:
+        """Load the legacy collaboration snapshot stored in `collaboration_*` tables."""
         self.initialize()
         with self._connect() as connection:
             threads = [
@@ -153,6 +194,7 @@ class SQLiteState:
         messages: list[dict[str, Any]],
         handoffs: list[dict[str, Any]],
     ) -> None:
+        """Write the legacy collaboration snapshot into `collaboration_*` tables."""
         self.initialize()
         with self._connect() as connection:
             connection.execute("DELETE FROM collaboration_threads")

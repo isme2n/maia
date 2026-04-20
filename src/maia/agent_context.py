@@ -1,4 +1,8 @@
-"""Read-only runtime context helpers for Maia agents."""
+"""Read-only runtime context helpers for Maia agents.
+
+Active collaboration context comes from Keryx-backed thread data. Legacy
+collaboration tables remain only as compatibility input for stale helpers/tests.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +13,13 @@ import sqlite3
 from typing import Any
 
 from maia.agent_model import AgentRecord
-from maia.handoff_model import HandoffRecord
-from maia.message_model import MessageRecord, ThreadRecord
+from maia.keryx_models import (
+    KeryxHandoffRecord,
+    KeryxMessageRecord,
+    KeryxSessionRecord,
+    KeryxThreadMessageView,
+)
+from maia.message_model import MessageRecord
 from maia.runtime_adapter import RuntimeState, RuntimeStatus
 
 __all__ = [
@@ -91,25 +100,17 @@ def load_team_roster(state_db_path: str | Path) -> list[AgentRosterEntry]:
 
 def load_thread_context(state_db_path: str | Path, thread_id: str) -> ThreadContext | None:
     path = _validate_state_db_path(state_db_path)
-    threads = [
-        ThreadRecord.from_dict(payload)
-        for payload in _load_payload_rows(path, table="collaboration_threads", order_by="position ASC")
-    ]
-    thread = next((item for item in threads if item.thread_id == thread_id), None)
-    if thread is None:
+    keryx_thread = _load_keryx_thread(path, thread_id)
+    if keryx_thread is None:
         return None
-    messages = [
-        MessageRecord.from_dict(payload)
-        for payload in _load_payload_rows(path, table="collaboration_messages", order_by="position ASC")
-        if payload.get("thread_id") == thread_id
-    ]
+    messages = _load_keryx_messages(path, thread_id)
     sorted_messages = sorted(messages, key=lambda item: (item.created_at, item.message_id))
     pending_on = sorted_messages[-1].to_agent if sorted_messages else "-"
     recent_message_ids = [item.message_id for item in sorted_messages[-5:]]
     return ThreadContext(
-        thread_id=thread.thread_id,
-        topic=thread.topic,
-        participants=list(thread.participants),
+        thread_id=keryx_thread.thread_id,
+        topic=keryx_thread.topic,
+        participants=list(keryx_thread.participants),
         pending_on=pending_on,
         recent_message_ids=recent_message_ids,
     )
@@ -122,18 +123,16 @@ def load_recent_handoffs(
     limit: int = 3,
 ) -> list[HandoffContext]:
     path = _validate_state_db_path(state_db_path)
-    handoffs = [
-        HandoffRecord.from_dict(payload)
-        for payload in _load_payload_rows(path, table="collaboration_handoffs", order_by="position ASC")
-        if payload.get("thread_id") == thread_id
-    ]
+    if _load_keryx_thread(path, thread_id) is None:
+        return []
+    handoffs = _load_keryx_handoffs(path, thread_id)
     ordered = sorted(handoffs, key=lambda item: (item.created_at, item.handoff_id), reverse=True)
     return [
         HandoffContext(
             handoff_id=item.handoff_id,
             from_agent=item.from_agent,
             to_agent=item.to_agent,
-            kind=item.kind.value,
+            kind=item.kind,
             summary=item.summary,
             location=item.location,
             created_at=item.created_at,
@@ -146,7 +145,7 @@ def build_runtime_context(
     state_db_path: str | Path,
     *,
     agent_id: str,
-    incoming_message: MessageRecord,
+    incoming_message: MessageRecord | KeryxMessageRecord | KeryxThreadMessageView,
 ) -> RuntimeContext:
     roster = load_team_roster(state_db_path)
     try:
@@ -222,12 +221,69 @@ def _load_runtime_states(path: Path) -> list[RuntimeState]:
     ]
 
 
+def _load_keryx_thread(path: Path, thread_id: str) -> KeryxSessionRecord | None:
+    payloads = _load_json_payload_rows(
+        path,
+        query="SELECT payload FROM keryx_sessions WHERE session_id = ?",
+        parameters=(thread_id,),
+    )
+    if not payloads:
+        return None
+    participants = _load_text_rows(
+        path,
+        query=(
+            "SELECT participant_agent_id FROM keryx_session_participants "
+            "WHERE session_id = ? ORDER BY position ASC"
+        ),
+        parameters=(thread_id,),
+    )
+    return KeryxSessionRecord.from_dict({**payloads[0], "participants": participants})
+
+
+def _load_keryx_messages(path: Path, thread_id: str) -> list[KeryxMessageRecord]:
+    return [
+        KeryxMessageRecord.from_dict(payload)
+        for payload in _load_json_payload_rows(
+            path,
+            query=(
+                "SELECT payload FROM keryx_messages "
+                "WHERE session_id = ? ORDER BY created_at ASC, message_id ASC"
+            ),
+            parameters=(thread_id,),
+        )
+    ]
+
+
+def _load_keryx_handoffs(path: Path, thread_id: str) -> list[KeryxHandoffRecord]:
+    return [
+        KeryxHandoffRecord.from_dict(payload)
+        for payload in _load_json_payload_rows(
+            path,
+            query=(
+                "SELECT payload FROM keryx_handoffs "
+                "WHERE session_id = ? ORDER BY created_at ASC, handoff_id ASC"
+            ),
+            parameters=(thread_id,),
+        )
+    ]
+
+
 def _load_payload_rows(path: Path, *, table: str, order_by: str) -> list[dict[str, Any]]:
+    return _load_json_payload_rows(
+        path,
+        query=f"SELECT payload FROM {table} ORDER BY {order_by}",
+    )
+
+
+def _load_json_payload_rows(
+    path: Path,
+    *,
+    query: str,
+    parameters: tuple[object, ...] = (),
+) -> list[dict[str, Any]]:
     try:
         with _connect_read_only(path) as connection:
-            rows = connection.execute(
-                f"SELECT payload FROM {table} ORDER BY {order_by}"
-            ).fetchall()
+            rows = connection.execute(query, parameters).fetchall()
         payloads: list[dict[str, Any]] = []
         for row in rows:
             payload = json.loads(row[0])
@@ -237,6 +293,25 @@ def _load_payload_rows(path: Path, *, table: str, order_by: str) -> list[dict[st
     except (sqlite3.Error, OSError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"state DB at {path} is unreadable") from exc
     return payloads
+
+
+def _load_text_rows(
+    path: Path,
+    *,
+    query: str,
+    parameters: tuple[object, ...] = (),
+) -> list[str]:
+    try:
+        with _connect_read_only(path) as connection:
+            rows = connection.execute(query, parameters).fetchall()
+    except (sqlite3.Error, OSError) as exc:
+        raise ValueError(f"state DB at {path} is unreadable") from exc
+    values: list[str] = []
+    for row in rows:
+        if not isinstance(row[0], str):
+            raise ValueError(f"state DB at {path} is unreadable")
+        values.append(row[0])
+    return values
 
 
 def _connect_read_only(path: Path) -> sqlite3.Connection:

@@ -9,14 +9,16 @@ from maia.handoff_model import HandoffKind
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor", "setup")
-TOP_LEVEL_COLLAB_COMMANDS = ("send", "inbox", "thread", "reply")
+TOP_LEVEL_COLLAB_COMMANDS = ("thread",)
 THREAD_COMMANDS = ("list", "show")
 HANDOFF_COMMANDS = ("add", "list", "show")
 WORKSPACE_COMMANDS = ("show",)
 PART2_CONVERSATION_CONTRACT = (
-    "Running agents talk to each other over the broker/message plane.",
-    "`send`, `reply`, and `inbox` are useful for diagnostics and controlled operator checks, not the primary product identity.",
-    "`thread`, `handoff`, and `workspace` are the public visibility surfaces for open collaboration state.",
+    "Keryx is Maia's canonical collaboration root for live multi-agent work.",
+    "`thread` / `thread_id` are Maia's public names for the Keryx collaboration object.",
+    "Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.",
+    "Legacy broker-style send/reply/inbox CLI entrypoints are removed from the active product contract.",
+    "`thread`, `handoff`, and `workspace` are Keryx-backed operator views of open collaboration state.",
 )
 DIRECT_AGENT_DELEGATION_CONTRACT = (
     "Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.",
@@ -85,7 +87,7 @@ KNOWN_LIMITATIONS = (
     "Shared infra depends on a reachable queue and DB state path.",
     "`maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.",
     "`maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.",
-    "Messaging and thread commands remain available but are not the primary Part 1 operator flow.",
+    "Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.",
 )
 GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW
 HOST_VALIDATION_CHECKLIST = PART1_OPERATOR_FLOW
@@ -168,9 +170,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.epilog = _format_epilog_sections(
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
-        ("Part 2 conversation contract:", PART2_CONVERSATION_CONTRACT),
+        ("Keryx collaboration contract:", PART2_CONVERSATION_CONTRACT),
         ("Direct-agent delegation contract:", DIRECT_AGENT_DELEGATION_CONTRACT),
-        ("Part 2 visibility flow:", PART2_VISIBILITY_FLOW),
+        ("Keryx operator visibility flow:", PART2_VISIBILITY_FLOW),
     )
 
     top_level = parser.add_subparsers(dest="resource")
@@ -251,59 +253,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_COLLAB_COMMANDS:
         help_text = {
-            "send": "Send a collaboration message (diagnostic/operator check)",
-            "inbox": "Inspect a live agent inbox (diagnostic/operator check)",
-            "thread": "Inspect open collaboration state",
-            "reply": "Reply to an existing collaboration message",
+            "thread": "Inspect Keryx-backed collaboration threads",
         }[command_name]
         parser_kwargs: dict[str, object] = {"help": help_text}
-        if command_name == "send":
-            parser_kwargs["description"] = (
-                "Send a collaboration message as a diagnostic/operator check path, "
-                "not as the primary Maia product story."
-            )
-            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
-        if command_name == "inbox":
-            parser_kwargs["description"] = (
-                "Inspect a live agent inbox for diagnostics and controlled operator checks."
-            )
-            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
         if command_name == "thread":
             parser_kwargs["description"] = (
-                "Inspect collaboration threads with recent handoff pointers "
-                "and participant runtime summaries."
-            )
-            parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
-        if command_name == "reply":
-            parser_kwargs["description"] = (
-                "Reply to an existing collaboration message while keeping the public product story centered on running-agent conversation."
+                "Inspect Keryx-backed collaboration threads with recent handoff pointers "
+                "and participant runtime summaries. "
+                "Maia uses `thread` / `thread_id` as the public name for this Keryx "
+                "collaboration object, and that thread is distinct from a Hermes session."
             )
             parser_kwargs["formatter_class"] = argparse.RawDescriptionHelpFormatter
         command_parser = top_level.add_parser(command_name, **parser_kwargs)
         command_parser.set_defaults(parser=command_parser)
-        if command_name == "send":
-            command_parser.add_argument("from_agent", help="Sender agent id")
-            command_parser.add_argument("to_agent", help="Recipient agent id")
-            command_parser.add_argument("--body", required=True, help="Message body")
-            route_group = command_parser.add_mutually_exclusive_group(required=True)
-            route_group.add_argument("--topic", help="Topic for creating a new thread")
-            route_group.add_argument("--thread-id", help="Existing thread id")
-            command_parser.add_argument(
-                "--kind",
-                choices=("request", "question", "answer", "report", "handoff", "note"),
-                default="request",
-                help="Message kind",
-            )
-        if command_name == "inbox":
-            command_parser.add_argument("agent_id", help="Agent id")
-            command_parser.add_argument("--limit", type=int, default=20, help="Max messages to show")
         if command_name == "thread":
             command_parser.epilog = _format_epilog("Examples:", THREAD_EXAMPLES)
             thread_commands = command_parser.add_subparsers(
                 dest="thread_command",
                 metavar="{" + ",".join(THREAD_COMMANDS) + "}",
             )
-            list_parser = thread_commands.add_parser("list", help="List collaboration threads")
+            list_parser = thread_commands.add_parser(
+                "list",
+                help="List Maia thread views backed by Keryx collaboration data",
+            )
             list_parser.set_defaults(parser=list_parser)
             list_parser.add_argument(
                 "--agent",
@@ -314,20 +286,13 @@ def build_parser() -> argparse.ArgumentParser:
                 choices=("open", "closed"),
                 help="Only show threads with the given status",
             )
-            show_parser = thread_commands.add_parser("show", help="Show a collaboration thread")
+            show_parser = thread_commands.add_parser(
+                "show",
+                help="Show one Maia thread backed by Keryx collaboration data",
+            )
             show_parser.set_defaults(parser=show_parser)
             show_parser.add_argument("thread_id", help="Thread id")
             show_parser.add_argument("--limit", type=int, default=50, help="Max messages to show")
-        if command_name == "reply":
-            command_parser.add_argument("message_id", help="Message id to reply to")
-            command_parser.add_argument("--from-agent", required=True, help="Reply sender agent id")
-            command_parser.add_argument("--body", required=True, help="Reply body")
-            command_parser.add_argument(
-                "--kind",
-                choices=("answer", "report", "note"),
-                default="answer",
-                help="Reply message kind",
-            )
 
     agent_parser = top_level.add_parser("agent", help="Manage agents")
     agent_parser.set_defaults(parser=agent_parser)
@@ -501,9 +466,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     workspace_parser = top_level.add_parser(
         "workspace",
-        help="Show stored agent workspace context",
+        help="Show Keryx-backed agent workspace context",
         description=(
-            "Show operator-visible workspace context for a handoff participant "
+            "Show Keryx-backed operator workspace context for a collaboration participant "
             "from the stored agent runtime spec."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -514,16 +479,16 @@ def build_parser() -> argparse.ArgumentParser:
         dest="workspace_command",
         metavar="{" + ",".join(WORKSPACE_COMMANDS) + "}",
     )
-    show_parser = workspace_commands.add_parser("show", help="Show agent workspace context")
+    show_parser = workspace_commands.add_parser("show", help="Show Keryx-backed agent workspace context")
     show_parser.set_defaults(parser=show_parser)
     show_parser.add_argument("agent_id", help="Agent id")
 
     handoff_parser = top_level.add_parser(
         "handoff",
-        help="Manage thread-linked handoff pointers",
+        help="Manage Keryx handoff pointers",
         description=(
-            "Record and inspect thread-linked handoff pointers stored in "
-            "collaboration state, then follow them into workspace/runtime checks."
+            "Record and inspect Keryx-backed handoff pointers stored in "
+            "Keryx collaboration state, then follow them into workspace/runtime checks."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
