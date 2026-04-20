@@ -14,6 +14,11 @@ from maia.runtime_spec import RuntimeSpec
 from maia.sqlite_state import SQLiteState
 
 __all__ = [
+    "MAIA_KERYX_BASE_URL",
+    "MAIA_KERYX_CONTAINER_NAME",
+    "MAIA_KERYX_HOST_PORT",
+    "MAIA_KERYX_IMAGE",
+    "MAIA_KERYX_INTERNAL_PORT",
     "MAIA_NETWORK_NAME",
     "MAIA_QUEUE_CONTAINER_NAME",
     "MAIA_QUEUE_IMAGE",
@@ -21,13 +26,18 @@ __all__ = [
     "bootstrap_shared_infra",
     "collect_doctor_checks",
     "default_agent_runtime_spec",
-    "runtime_broker_url",
+    "runtime_keryx_base_url",
 ]
 
 MAIA_NETWORK_NAME = "maia"
 MAIA_QUEUE_CONTAINER_NAME = "maia-rabbitmq"
 MAIA_QUEUE_VOLUME_NAME = "maia-rabbitmq-data"
 MAIA_QUEUE_IMAGE = "rabbitmq:3.13-alpine"
+MAIA_KERYX_CONTAINER_NAME = "maia-keryx"
+MAIA_KERYX_IMAGE = "python:3.11-alpine"
+MAIA_KERYX_INTERNAL_PORT = 8765
+MAIA_KERYX_HOST_PORT = 8765
+MAIA_KERYX_BASE_URL = f"http://{MAIA_KERYX_CONTAINER_NAME}:{MAIA_KERYX_INTERNAL_PORT}"
 MAIA_HERMES_WORKER_IMAGE = "maia-local/hermes-worker:latest"
 MAIA_HERMES_WORKER_WORKSPACE = "/opt/maia"
 
@@ -44,19 +54,18 @@ def default_agent_runtime_spec(agent_name: str) -> RuntimeSpec:
     )
 
 
-def runtime_broker_url() -> str:
-    """Return the broker URL runtime containers should use for live Maia delivery."""
 
-    configured = os.environ.get("MAIA_BROKER_URL", "").strip()
+def runtime_keryx_base_url() -> str:
+
+    configured = os.environ.get("KERYX_BASE_URL", "").strip()
     if configured:
         return configured
-    user = "guest"
-    password = "guest"
-    return f"amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
+    return MAIA_KERYX_BASE_URL
 
 
 def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
     """Collect shared-infra readiness checks for doctor."""
+
 
     target = Path(state_path)
     checks: list[dict[str, str]] = []
@@ -86,6 +95,14 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
                 "remediation": "Fix Docker first, then run maia doctor again",
             }
         )
+        checks.append(
+            {
+                "name": "keryx",
+                "status": "blocked",
+                "detail": "Keryx health needs a working Docker daemon",
+                "remediation": "Fix Docker first, then run maia doctor again",
+            }
+        )
         checks.append(_collect_state_db_check(target))
         return checks
 
@@ -107,6 +124,7 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
     )
     checks.append(docker_daemon_check)
     checks.append(_collect_queue_check(docker_bin, docker_daemon_check))
+    checks.append(_collect_keryx_check(docker_bin, docker_daemon_check))
     checks.append(_collect_state_db_check(target))
     return checks
 
@@ -148,6 +166,7 @@ def bootstrap_shared_infra(state_path: Path | str) -> list[dict[str, str]]:
             create_command=[docker_bin, "volume", "create", MAIA_QUEUE_VOLUME_NAME],
         )
         queue_action = _ensure_queue_container(docker_bin)
+        keryx_action = _ensure_keryx_container(docker_bin, target)
     except ValueError as exc:
         sqlite_state.set_infra_status("bootstrap", status="failed", detail=str(exc))
         raise
@@ -155,6 +174,7 @@ def bootstrap_shared_infra(state_path: Path | str) -> list[dict[str, str]]:
     sqlite_state.set_infra_status("network", status="ready", detail=MAIA_NETWORK_NAME)
     sqlite_state.set_infra_status("queue_volume", status="ready", detail=MAIA_QUEUE_VOLUME_NAME)
     sqlite_state.set_infra_status("queue", status="ready", detail=MAIA_QUEUE_CONTAINER_NAME)
+    sqlite_state.set_infra_status("keryx", status="ready", detail=runtime_keryx_base_url())
     sqlite_state.set_infra_status("state_db", status="ready", detail=str(target))
     sqlite_state.set_infra_status("bootstrap", status="ready", detail="shared infra is ready")
 
@@ -162,6 +182,7 @@ def bootstrap_shared_infra(state_path: Path | str) -> list[dict[str, str]]:
         {"step": "network", "status": network_action, "detail": MAIA_NETWORK_NAME},
         {"step": "volume", "status": volume_action, "detail": MAIA_QUEUE_VOLUME_NAME},
         {"step": "queue", "status": queue_action, "detail": MAIA_QUEUE_CONTAINER_NAME},
+        {"step": "keryx", "status": keryx_action, "detail": runtime_keryx_base_url()},
         {"step": "db", "status": "ready", "detail": str(target)},
     ]
 
@@ -202,6 +223,42 @@ def _collect_queue_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         "status": "fail",
         "detail": f"RabbitMQ container {MAIA_QUEUE_CONTAINER_NAME} is {status or 'not ready'}",
         "remediation": "Run maia setup to restart the shared queue",
+    }
+
+
+def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -> dict[str, str]:
+    if docker_daemon_check["status"] != "ok":
+        return {
+            "name": "keryx",
+            "status": "blocked",
+            "detail": "Keryx health needs a working Docker daemon",
+            "remediation": "Fix Docker first, then run maia doctor again",
+        }
+
+    result = _run_command(
+        [docker_bin, "inspect", "--format", "{{.State.Status}}", MAIA_KERYX_CONTAINER_NAME]
+    )
+    if result.returncode != 0:
+        return {
+            "name": "keryx",
+            "status": "missing",
+            "detail": f"Keryx endpoint {runtime_keryx_base_url()} is not running",
+            "remediation": "Run maia setup to bootstrap shared infra",
+        }
+
+    status = result.stdout.strip().lower()
+    if status == "running":
+        return {
+            "name": "keryx",
+            "status": "ok",
+            "detail": f"Keryx endpoint {runtime_keryx_base_url()} is running",
+            "remediation": "No action needed",
+        }
+    return {
+        "name": "keryx",
+        "status": "fail",
+        "detail": f"Keryx container {MAIA_KERYX_CONTAINER_NAME} is {status or 'not ready'}",
+        "remediation": "Run maia setup to restart the shared Keryx endpoint",
     }
 
 
@@ -349,6 +406,88 @@ def _ensure_queue_container(docker_bin: str) -> str:
         detail = (run_result.stderr or run_result.stdout or "command failed").strip()
         raise ValueError(detail)
     return "started"
+
+
+def _ensure_keryx_container(docker_bin: str, state_path: Path) -> str:
+    inspect_result = _run_command(
+        [docker_bin, "inspect", "--format", "{{.State.Status}}", MAIA_KERYX_CONTAINER_NAME]
+    )
+    if inspect_result.returncode == 0:
+        if not _keryx_container_matches_state_path(docker_bin, state_path):
+            remove_result = _run_command([docker_bin, "rm", "-f", MAIA_KERYX_CONTAINER_NAME])
+            if remove_result.returncode != 0:
+                detail = (remove_result.stderr or remove_result.stdout or "command failed").strip()
+                raise ValueError(detail)
+            run_result = _run_command(_keryx_run_command(docker_bin, state_path))
+            if run_result.returncode != 0:
+                detail = (run_result.stderr or run_result.stdout or "command failed").strip()
+                raise ValueError(detail)
+            return "restarted"
+        status = inspect_result.stdout.strip().lower()
+        if status == "running":
+            return "ready"
+        start_result = _run_command([docker_bin, "start", MAIA_KERYX_CONTAINER_NAME])
+        if start_result.returncode != 0:
+            detail = (start_result.stderr or start_result.stdout or "command failed").strip()
+            raise ValueError(detail)
+        return "started"
+
+    run_result = _run_command(_keryx_run_command(docker_bin, state_path))
+    if run_result.returncode != 0:
+        detail = (run_result.stderr or run_result.stdout or "command failed").strip()
+        raise ValueError(detail)
+    return "started"
+
+
+def _keryx_container_matches_state_path(docker_bin: str, state_path: Path) -> bool:
+    mounts_result = _run_command(
+        [
+            docker_bin,
+            "inspect",
+            "--format",
+            "{{range .Mounts}}{{println .Source \"|\" .Destination}}{{end}}",
+            MAIA_KERYX_CONTAINER_NAME,
+        ]
+    )
+    if mounts_result.returncode != 0:
+        return False
+    expected_source = state_path.resolve()
+    for raw_line in mounts_result.stdout.splitlines():
+        source, separator, destination = raw_line.partition("|")
+        if separator and destination.strip() == "/maia/control/state.db":
+            if Path(source.strip()).resolve() == expected_source:
+                return True
+    return False
+
+
+def _keryx_run_command(docker_bin: str, state_path: Path) -> list[str]:
+    source_root = Path(__file__).resolve().parents[1]
+    return [
+        docker_bin,
+        "run",
+        "-d",
+        "--name",
+        MAIA_KERYX_CONTAINER_NAME,
+        "--network",
+        MAIA_NETWORK_NAME,
+        "-p",
+        f"127.0.0.1:{MAIA_KERYX_HOST_PORT}:{MAIA_KERYX_INTERNAL_PORT}",
+        "-v",
+        f"{source_root}:/opt/maia/src:ro",
+        "-v",
+        f"{state_path}:/maia/control/state.db",
+        "-e",
+        "PYTHONPATH=/opt/maia/src",
+        MAIA_KERYX_IMAGE,
+        "python",
+        "-c",
+        (
+            "from maia.keryx_server import create_keryx_http_server; "
+            f"server = create_keryx_http_server(host='0.0.0.0', port={MAIA_KERYX_INTERNAL_PORT}, "
+            "state_db_path='/maia/control/state.db'); "
+            "server.serve_forever()"
+        ),
+    ]
 
 
 def _run_command(command: list[str]) -> subprocess.CompletedProcess[str]:

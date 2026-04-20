@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from maia.app_state import get_agent_hermes_home
-from maia.infra_runtime import MAIA_NETWORK_NAME, runtime_broker_url
+from maia.infra_runtime import MAIA_NETWORK_NAME, runtime_keryx_base_url
 from maia.runtime_adapter import (
     RuntimeAdapter,
     RuntimeLogsRequest,
@@ -74,7 +74,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             **spec.env,
             "MAIA_AGENT_ID": request.agent.agent_id,
             "MAIA_AGENT_NAME": request.agent.name,
-            "MAIA_BROKER_URL": spec.env.get("MAIA_BROKER_URL", runtime_broker_url()),
+            "KERYX_BASE_URL": runtime_keryx_base_url(),
             "MAIA_STATE_DB_PATH": "/maia/control/state.db",
         }
         for key, value in sorted(runtime_env.items()):

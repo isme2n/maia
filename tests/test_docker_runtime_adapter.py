@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,7 +15,12 @@ sys.path.insert(0, str(SRC_ROOT))
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.app_state import get_agent_hermes_home
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
-from maia.infra_runtime import MAIA_NETWORK_NAME, MAIA_QUEUE_CONTAINER_NAME, runtime_broker_url
+import maia.infra_runtime as infra_runtime_module
+from maia.infra_runtime import (
+    MAIA_KERYX_BASE_URL,
+    MAIA_NETWORK_NAME,
+    runtime_keryx_base_url,
+)
 from maia.runtime_adapter import (
     RuntimeLogsRequest,
     RuntimeStartRequest,
@@ -114,23 +120,63 @@ def test_runtime_state_storage_round_trip(tmp_path: Path) -> None:
     assert restored == states
 
 
-def test_runtime_broker_url_defaults_to_local_maia_queue(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MAIA_BROKER_URL", raising=False)
+def test_runtime_keryx_base_url_defaults_to_managed_shared_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KERYX_BASE_URL", raising=False)
 
-    user = "guest"
-    password = "guest"
-    expected = f"amqp://{user}:{password}@{MAIA_QUEUE_CONTAINER_NAME}:5672/%2F"
-    assert runtime_broker_url() == expected
-    assert "***" not in runtime_broker_url()
+    assert runtime_keryx_base_url() == MAIA_KERYX_BASE_URL
 
 
-def test_runtime_broker_url_uses_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    user = "user"
-    password = "pass"
-    explicit = f"amqp://{user}:{password}@example:5672/custom"
-    monkeypatch.setenv("MAIA_BROKER_URL", explicit)
+def test_runtime_keryx_base_url_uses_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    explicit = "http://custom-keryx:9999"
+    monkeypatch.setenv("KERYX_BASE_URL", explicit)
 
-    assert runtime_broker_url() == explicit
+    assert runtime_keryx_base_url() == explicit
+
+
+def test_ensure_keryx_container_recreates_existing_container_for_different_state_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_state = tmp_path / "expected" / "maia.db"
+    expected_state.parent.mkdir(parents=True)
+    expected_state.touch()
+    wrong_state = tmp_path / "wrong" / "maia.db"
+    wrong_state.parent.mkdir(parents=True)
+    wrong_state.touch()
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str]):
+        calls.append(command)
+        if command == ["docker", "inspect", "--format", "{{.State.Status}}", infra_runtime_module.MAIA_KERYX_CONTAINER_NAME]:
+            return subprocess.CompletedProcess(command, 0, "running\n", "")
+        if command == [
+            "docker",
+            "inspect",
+            "--format",
+            "{{range .Mounts}}{{println .Source \"|\" .Destination}}{{end}}",
+            infra_runtime_module.MAIA_KERYX_CONTAINER_NAME,
+        ]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                f"{wrong_state.resolve()} | /maia/control/state.db\n",
+                "",
+            )
+        if command == ["docker", "rm", "-f", infra_runtime_module.MAIA_KERYX_CONTAINER_NAME]:
+            return subprocess.CompletedProcess(command, 0, "maia-keryx\n", "")
+        if command[:2] == ["docker", "run"]:
+            return subprocess.CompletedProcess(command, 0, "maia-keryx\n", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(infra_runtime_module, "_run_command", fake_run)
+
+    result = infra_runtime_module._ensure_keryx_container("docker", expected_state)
+
+    assert result == "restarted"
+    assert ["docker", "rm", "-f", infra_runtime_module.MAIA_KERYX_CONTAINER_NAME] in calls
+    run_commands = [command for command in calls if command[:2] == ["docker", "run"]]
+    assert len(run_commands) == 1
+    assert f"{expected_state}:/maia/control/state.db" in run_commands[0]
 
 
 def test_docker_runtime_adapter_start_status_logs_stop_flow(tmp_path: Path) -> None:
@@ -292,7 +338,7 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     )
     docker_script.chmod(0o755)
     home = tmp_path / "home"
-    state_path = home / ".maia" / "state.db"
+    state_path = home / ".maia" / "maia.db"
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
         state_path=state_path,
@@ -314,10 +360,9 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     assert "HERMES_HOME=/maia/hermes" in env_values
     assert "MAIA_AGENT_ID=agent-001" in env_values
     assert "MAIA_AGENT_NAME=reviewer" in env_values
+    assert f"KERYX_BASE_URL={runtime_keryx_base_url()}" in env_values
     assert "MAIA_STATE_DB_PATH=/maia/control/state.db" in env_values
-    broker_values = [value for value in env_values if value.startswith("MAIA_BROKER_URL=")]
-    assert broker_values == [f"MAIA_BROKER_URL={runtime_broker_url()}"]
-    assert "***" not in broker_values[0]
+    assert not [value for value in env_values if value.startswith("MAIA_BROKER_URL=")]
 
 
 def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tmp_path: Path) -> None:
@@ -350,6 +395,7 @@ def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tm
             workspace="/workspace/reviewer",
             command=["python", "-m", "reviewer"],
             env={
+                "KERYX_BASE_URL": "http://wrong-keryx:9999",
                 "MAIA_AGENT_ID": "wrong-id",
                 "MAIA_AGENT_NAME": "wrong-name",
                 "MAIA_ENV": "test",
@@ -364,47 +410,10 @@ def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tm
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
     assert "MAIA_AGENT_ID=agent-001" in env_values
     assert "MAIA_AGENT_NAME=reviewer" in env_values
+    assert f"KERYX_BASE_URL={runtime_keryx_base_url()}" in env_values
     assert "MAIA_AGENT_ID=wrong-id" not in env_values
     assert "MAIA_AGENT_NAME=wrong-name" not in env_values
+    assert "KERYX_BASE_URL=http://wrong-keryx:9999" not in env_values
 
 
-def test_docker_runtime_adapter_start_preserves_explicit_broker_url(tmp_path: Path) -> None:
-    docker_script = tmp_path / "docker"
-    argv_path = tmp_path / "argv.json"
-    docker_script.write_text(
-        "#!/usr/bin/env python3\n"
-        "from pathlib import Path\n"
-        "import json, sys\n"
-        "argv_path = Path(__file__).with_name('argv.json')\n"
-        "args = sys.argv[1:]\n"
-        "argv_path.write_text(json.dumps(args), encoding='utf-8')\n"
-        "print('runtime-001')\n"
-        "raise SystemExit(0)\n",
-        encoding="utf-8",
-    )
-    docker_script.chmod(0o755)
-    adapter = DockerRuntimeAdapter(
-        state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
-        docker_bin=str(docker_script),
-    )
-    agent = AgentRecord(
-        agent_id="agent-001",
-        name="reviewer",
-        status=AgentStatus.STOPPED,
-        persona="strict",
-        runtime_spec=RuntimeSpec(
-            image="ghcr.io/example/reviewer:latest",
-            workspace="/workspace/reviewer",
-            command=["python", "-m", "reviewer"],
-            env={"MAIA_BROKER_URL": "amqp://custom:secret@example:5672/%2F"},
-        ),
-    )
 
-    start_result = adapter.start(RuntimeStartRequest(agent=agent))
-    assert start_result.runtime.runtime_handle == "runtime-001"
-
-    args = json.loads(argv_path.read_text(encoding="utf-8"))
-    env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
-    assert f"MAIA_BROKER_URL=amqp://custom:secret@example:5672/%2F" in env_values
-    assert f"MAIA_BROKER_URL={runtime_broker_url()}" not in env_values

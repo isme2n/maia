@@ -30,7 +30,7 @@ _EXPORTS_DIRNAME = "exports"
 _REGISTRY_FILENAME = "registry.json"
 _RUNTIME_DIRNAME = "runtime"
 _RUNTIME_STATE_FILENAME = "runtime-state.json"
-_STATE_DB_FILENAME = "state.db"
+_STATE_DB_FILENAME = "maia.db"
 _TEAM_METADATA_FILENAME = "team.json"
 
 
