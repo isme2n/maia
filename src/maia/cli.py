@@ -79,7 +79,7 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
     try:
         command_name = _get_runtime_command_name(args)
         if resource == "doctor":
-            return _handle_doctor()
+            return _handle_doctor(verbose=getattr(args, "verbose", False))
         if resource == "setup":
             return _handle_setup()
         if resource == "import":
@@ -149,10 +149,10 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
     raise ValueError(f"Unsupported command: {command_name}")
 
 
-def _handle_doctor() -> int:
+def _handle_doctor(*, verbose: bool = False) -> int:
     checks = infra_runtime.collect_doctor_checks(get_state_db_path())
     failed_checks = [check["name"] for check in checks if _is_doctor_failure(check)]
-    for line in _format_doctor_summary_lines(checks, failed_checks):
+    for line in _format_doctor_output_lines(checks, failed_checks, state_path=get_state_db_path(), verbose=verbose):
         print(line)
     return 0 if not failed_checks else 1
 
@@ -380,6 +380,55 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
         icon, token = "✓", "OK"
         lines.append(f"{_style_doctor_token(icon, token)} Shared infra ready")
     return lines
+
+
+def _doctor_detail_lines(checks: list[dict[str, str]], *, state_path: Path | str) -> dict[str, list[str]]:
+    docker_cli = _doctor_check_by_name(checks, "docker_cli")
+    docker_daemon = _doctor_check_by_name(checks, "docker_daemon")
+    docker_detail = "CLI docker; daemon ready via `docker info`"
+    if docker_cli and docker_cli["status"] != "ok":
+        docker_detail = "CLI docker not found on PATH; daemon probe unavailable without Docker"
+    elif docker_daemon and docker_daemon["status"] != "ok":
+        docker_detail = f"CLI docker; daemon probe failed: {docker_daemon['detail']}"
+
+    keryx_details = [f"  detail: endpoint={infra_runtime.runtime_keryx_base_url()}"]
+    if infra_runtime.using_default_keryx_base_url():
+        keryx_details.append(
+            "  detail: "
+            f"container={infra_runtime.MAIA_KERYX_CONTAINER_NAME} "
+            f"image={infra_runtime.MAIA_KERYX_IMAGE} "
+            f"host=127.0.0.1:{infra_runtime.MAIA_KERYX_HOST_PORT}->{infra_runtime.MAIA_KERYX_INTERNAL_PORT} "
+            f"runtime=python HTTP server from {infra_runtime.keryx_server_container_path()}"
+        )
+    else:
+        keryx_details.append("  detail: runtime=external Keryx HTTP API configured via KERYX_BASE_URL")
+
+    return {
+        "docker": [f"  detail: {docker_detail}"],
+        "keryx": keryx_details,
+        "state_db": [f"  detail: path={state_path}"],
+    }
+
+
+def _format_doctor_output_lines(
+    checks: list[dict[str, str]],
+    failed_checks: list[str],
+    *,
+    state_path: Path | str,
+    verbose: bool,
+) -> list[str]:
+    lines = _format_doctor_summary_lines(checks, failed_checks)
+    if not verbose:
+        return lines
+
+    detail_lines = _doctor_detail_lines(checks, state_path=state_path)
+    output: list[str] = []
+    summary_components = ("docker", "keryx", "state_db")
+    for component_name, summary_line in zip(summary_components, lines[: len(summary_components)], strict=False):
+        output.append(summary_line)
+        output.extend(detail_lines.get(component_name, []))
+    output.extend(lines[len(summary_components) :])
+    return output
 
 
 def _format_setup_step_line(step: dict[str, str]) -> str:

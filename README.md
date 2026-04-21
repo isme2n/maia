@@ -25,7 +25,7 @@ Install Maia, then follow the Part 1 bootstrap path in this order:
 4. `maia agent setup <name>`
 5. `maia agent start <name>`
 
-`maia doctor` is the infra-only gate for this flow. It tells you whether to fix Docker, Keryx HTTP API, or DB access first, or continue to `maia setup`.
+`maia doctor` is the infra-only gate for this flow. It tells you whether to fix Docker, Keryx HTTP API, or DB access first, or continue to `maia setup`. Add `--verbose` when you need concrete per-component detail lines under the short summary.
 
 `maia agent setup` is an interactive CLI-only passthrough to `hermes setup` for one agent. Maia does not replace or reinterpret the Hermes setup wizard.
 
@@ -59,7 +59,7 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 
 ## What each command means
 
-- `maia doctor`: check shared infra readiness only: Docker, Keryx HTTP API, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.
+- `maia doctor`: check shared infra readiness only: Docker, Keryx HTTP API, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`. Use `maia doctor --verbose` for concrete component details such as the Keryx endpoint, container/runtime path, Docker probe detail, and SQLite DB path.
 - `maia setup`: bootstrap shared infra only after `doctor` says the shared infra path is ready to continue.
 - `maia agent new`: interactively create an agent identity by asking for agent name, how the agent addresses the user, and persona. New agents still carry the shared Hermes worker defaults needed for first start.
 - `maia agent setup <name>`: open `hermes setup` for that agent in the CLI.

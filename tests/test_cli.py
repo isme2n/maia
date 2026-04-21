@@ -657,9 +657,12 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "hermes setup" not in captured.out
     assert "login" not in captured.out
     assert "wizard" not in captured.out
+    assert "--verbose" in captured.out
+    assert "Show per-component detail lines under the doctor summary" in captured.out
     assert "Examples:" in captured.out
     assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
     assert "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
+    assert "Run `maia doctor --verbose` to print concrete component details under the short summary." in captured.out
     assert "RabbitMQ" not in captured.out
     assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
     _assert_contains_lines(captured.out, DOCTOR_EXAMPLES)

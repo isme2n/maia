@@ -14,6 +14,7 @@ from maia.sqlite_state import SQLiteState
 __all__ = [
     "MAIA_KERYX_BASE_URL",
     "MAIA_KERYX_CONTAINER_NAME",
+    "MAIA_KERYX_CONTAINER_SOURCE_ROOT",
     "MAIA_KERYX_HOST_PORT",
     "MAIA_KERYX_IMAGE",
     "MAIA_KERYX_INTERNAL_PORT",
@@ -21,11 +22,14 @@ __all__ = [
     "bootstrap_shared_infra",
     "collect_doctor_checks",
     "default_agent_runtime_spec",
+    "keryx_server_container_path",
     "runtime_keryx_base_url",
+    "using_default_keryx_base_url",
 ]
 
 MAIA_NETWORK_NAME = "maia"
 MAIA_KERYX_CONTAINER_NAME = "maia-keryx"
+MAIA_KERYX_CONTAINER_SOURCE_ROOT = "/opt/maia/src"
 MAIA_KERYX_IMAGE = "python:3.11-alpine"
 MAIA_KERYX_INTERNAL_PORT = 8765
 MAIA_KERYX_HOST_PORT = 8765
@@ -51,6 +55,14 @@ def runtime_keryx_base_url() -> str:
     if configured:
         return configured
     return MAIA_KERYX_BASE_URL
+
+
+def using_default_keryx_base_url() -> bool:
+    return not os.environ.get("KERYX_BASE_URL", "").strip()
+
+
+def keryx_server_container_path() -> str:
+    return f"{MAIA_KERYX_CONTAINER_SOURCE_ROOT}/maia/keryx_server.py"
 
 
 def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
@@ -325,11 +337,11 @@ def _keryx_run_command(docker_bin: str, state_path: Path) -> list[str]:
         "-p",
         f"127.0.0.1:{MAIA_KERYX_HOST_PORT}:{MAIA_KERYX_INTERNAL_PORT}",
         "-v",
-        f"{source_root}:/opt/maia/src:ro",
+        f"{source_root}:{MAIA_KERYX_CONTAINER_SOURCE_ROOT}:ro",
         "-v",
         f"{state_path}:/maia/control/state.db",
         "-e",
-        "PYTHONPATH=/opt/maia/src",
+        f"PYTHONPATH={MAIA_KERYX_CONTAINER_SOURCE_ROOT}",
         MAIA_KERYX_IMAGE,
         "python",
         "-c",

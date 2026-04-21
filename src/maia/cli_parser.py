@@ -75,7 +75,10 @@ PART1_OPERATOR_FLOW = (
     "maia agent logs planner --tail-lines 20",
     "maia agent stop planner",
 )
-DOCTOR_EXAMPLES = ("maia doctor",)
+DOCTOR_EXAMPLES = (
+    "maia doctor",
+    "maia doctor --verbose",
+)
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
@@ -84,6 +87,7 @@ RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 DOCTOR_ROLE_CONTRACT = (
     "`maia doctor` is the first bootstrap gate for Maia shared infra.",
     "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step.",
+    "Run `maia doctor --verbose` to print concrete component details under the short summary.",
     "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.",
 )
 RUNTIME_SUPPORT_BOUNDARY = (
@@ -317,6 +321,11 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.epilog = _format_epilog_sections(
                 ("Role:", DOCTOR_ROLE_CONTRACT),
                 ("Examples:", DOCTOR_EXAMPLES),
+            )
+            command_parser.add_argument(
+                "--verbose",
+                action="store_true",
+                help="Show per-component detail lines under the doctor summary",
             )
         if command_name == "setup":
             command_parser.epilog = _format_epilog("Examples:", SETUP_EXAMPLES)

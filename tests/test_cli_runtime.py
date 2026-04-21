@@ -649,6 +649,90 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     ]
 
 
+def test_doctor_verbose_adds_component_details_without_changing_short_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    setup = run_module(tmp_path, 'setup')
+    assert setup.returncode == 0
+
+    default_result = run_module(tmp_path, 'doctor')
+    assert default_result.returncode == 0
+    assert default_result.stdout.strip().splitlines() == [
+        '✓ Docker OK',
+        '✓ Keryx HTTP API OK',
+        '✓ SQLite State DB OK',
+        '✓ Shared infra ready',
+    ]
+
+    verbose_result = run_module(tmp_path, 'doctor', '--verbose')
+    assert verbose_result.returncode == 0
+    assert verbose_result.stderr == ''
+    assert verbose_result.stdout.strip().splitlines() == [
+        '✓ Docker OK',
+        '  detail: CLI docker; daemon ready via `docker info`',
+        '✓ Keryx HTTP API OK',
+        '  detail: endpoint=http://maia-keryx:8765',
+        '  detail: container=maia-keryx image=python:3.11-alpine host=127.0.0.1:8765->8765 runtime=python HTTP server from /opt/maia/src/maia/keryx_server.py',
+        '✓ SQLite State DB OK',
+        f'  detail: path={get_state_db_path({"HOME": str(tmp_path)})}',
+        '✓ Shared infra ready',
+    ]
+
+
+def test_doctor_verbose_keeps_failure_summary_and_adds_failure_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty_bin = tmp_path / 'empty-bin'
+    empty_bin.mkdir()
+    monkeypatch.setenv('PATH', str(empty_bin))
+
+    result = run_module(tmp_path, 'doctor', '--verbose')
+
+    assert result.returncode == 1
+    assert result.stderr == ''
+    assert result.stdout.strip().splitlines() == [
+        "✗ Docker FAIL — Docker can't run because Docker is missing",
+        '  detail: CLI docker not found on PATH; daemon probe unavailable without Docker',
+        '• Keryx HTTP API BLOCKED — Keryx HTTP API health needs a working Docker daemon',
+        '  detail: endpoint=http://maia-keryx:8765',
+        '  detail: container=maia-keryx image=python:3.11-alpine host=127.0.0.1:8765->8765 runtime=python HTTP server from /opt/maia/src/maia/keryx_server.py',
+        '✓ SQLite State DB OK',
+        f'  detail: path={get_state_db_path({"HOME": str(tmp_path)})}',
+        'Next: install Docker, then run maia doctor again',
+    ]
+
+
+def test_doctor_verbose_describes_external_keryx_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    fake_docker = fake_bin / 'docker'
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv('KERYX_BASE_URL', 'http://custom-keryx:9999')
+
+    result = run_module(tmp_path, 'doctor', '--verbose')
+
+    assert result.returncode == 1
+    assert result.stderr == ''
+    lines = result.stdout.strip().splitlines()
+    assert '✓ Docker OK' in lines
+    assert '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://custom-keryx:9999 is not running' in lines
+    assert '  detail: endpoint=http://custom-keryx:9999' in lines
+    assert '  detail: runtime=external Keryx HTTP API configured via KERYX_BASE_URL' in lines
+    assert not any('container=maia-keryx' in line for line in lines)
+
+
 def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_bin = tmp_path / 'bin'
     fake_bin.mkdir()
