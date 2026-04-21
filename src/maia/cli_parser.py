@@ -48,12 +48,14 @@ AGENT_COMMANDS = (
     "start",
     "stop",
     "archive",
+    "archive-all",
     "restore",
     "status",
     "logs",
     "list",
     "tune",
     "purge",
+    "purge-all",
 )
 TEAM_COMMANDS = ("show", "update")
 LIFECYCLE_STATUS_BY_COMMAND = {
@@ -129,6 +131,7 @@ EXPORT_HELP_CONTRACT = (
 IMPORT_HELP_CONTRACT = (
     "`maia import <path>` is the primary restore flow for Maia portable state.",
     "Use `--preview` for a read-only diff, add `--verbose-preview` for full lists, and use `--yes` only when you want to skip overwrite confirmation.",
+    "Both preview and destructive apply warn that import resets Maia's local runtime/setup state before the snapshot replacement is applied.",
 )
 INSPECT_HELP_CONTRACT = (
     "`maia inspect <path>` is optional support for looking at a snapshot before restore.",
@@ -281,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument(
                 "--preview",
                 action="store_true",
-                help="Show the import preview and risk summary without changing local Maia state",
+                help="Show the import preview and risk summary without changing local Maia state; preview also warns that apply will reset runtime/setup state",
             )
             command_parser.add_argument(
                 "--verbose-preview",
@@ -291,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument(
                 "--yes",
                 action="store_true",
-                help="Skip overwrite confirmation for destructive imports",
+                help="Skip overwrite confirmation for destructive imports that reset local runtime/setup state before snapshot replacement",
             )
 
     for command_name in TOP_LEVEL_INFO_COMMANDS:
@@ -375,7 +378,8 @@ def build_parser() -> argparse.ArgumentParser:
         command_help = {
             "new": "Create an agent identity",
             "setup": "Open hermes setup for an agent in the CLI",
-            "setup-gateway": "Reopen hermes setup gateway for an agent in the CLI",
+            "setup-gateway": "Recover skipped gateway/home-channel setup for an agent in the CLI",
+            "archive-all": "Archive every agent identity",
             "start": "Start an agent runtime",
             "stop": "Stop a running agent runtime",
             "archive": "Archive an agent identity",
@@ -385,16 +389,19 @@ def build_parser() -> argparse.ArgumentParser:
             "list": "List agent identities",
             "tune": "Update stored agent metadata",
             "purge": "Purge an agent identity and local state",
+            "purge-all": "Purge every archived agent identity and local state",
         }[command_name]
         command_description = {
             "new": "Interactively create an agent identity with name, user call-sign, and persona.",
             "setup": "Open hermes setup for an agent in the CLI and keep the shared Hermes worker defaults for first start.",
-            "setup-gateway": "Reopen `hermes setup gateway` for an agent when messaging/home-channel setup was skipped the first time.",
-            "start": "Start an agent runtime after shared infra and agent setup are ready.",
+            "setup-gateway": "Recover skipped gateway/home-channel setup for an agent in the CLI by reopening `hermes setup gateway` after messaging/home-channel setup was skipped during the normal agent setup flow.",
+            "start": "Start an agent runtime after shared infra, agent setup, and gateway/home-channel readiness are complete.",
             "stop": "Stop a running agent runtime without changing the stored agent identity.",
             "status": "Show the operator-facing agent status plus setup and runtime state.",
             "logs": "Show recent runtime logs for an agent after setup is complete and the runtime has started.",
             "list": "List stored agent identities with their operator-facing launch-readiness state.",
+            "archive-all": "Archive every stored agent identity only when no agent runtime is active.",
+            "purge-all": "Purge every archived agent identity and local Maia/Hermes state after explicit confirmation.",
         }.get(command_name)
         command_parser = agent_commands.add_parser(
             command_name,
@@ -412,6 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_EXAMPLES)
         if command_name == "setup-gateway":
             command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_GATEWAY_EXAMPLES)
+        if command_name == "purge-all":
+            command_parser.add_argument(
+                "--yes",
+                action="store_true",
+                help="Confirm full deletion of every archived agent and its local Maia/Hermes state",
+            )
         if command_name == "logs":
             command_parser.add_argument(
                 "--tail-lines",
@@ -538,8 +551,8 @@ def build_parser() -> argparse.ArgumentParser:
         "workspace",
         help="Show Keryx-backed agent workspace context",
         description=(
-            "Show Keryx-backed operator workspace context for a collaboration participant "
-            "from the stored agent runtime spec."
+            "Show Keryx-backed operator workspace context as runtime/workspace context for a collaboration participant "
+            "so the operator can follow up from the agent's current workspace surface."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -448,7 +448,10 @@ def test_agent_start_help_describes_part1_prerequisites(capsys: pytest.CaptureFi
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Start an agent runtime after shared infra and agent setup are ready." in captured.out
+    assert (
+        "Start an agent runtime after shared infra, agent setup, and gateway/home-channel readiness are complete."
+        in captured.out
+    )
     assert "name" in captured.out
 
 
@@ -544,9 +547,53 @@ def test_workspace_help_includes_examples(capsys: pytest.CaptureFixture[str]) ->
     captured = capsys.readouterr()
     assert "usage: maia workspace" in captured.out
     assert "Keryx-backed operator workspace context" in captured.out
+    assert "runtime/workspace context" in captured.out
+    assert "stored agent runtime spec" not in captured.out
     assert "show" in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, WORKSPACE_EXAMPLES)
+
+
+def test_agent_setup_gateway_help_uses_recovery_wording(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "setup-gateway", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Recover skipped gateway/home-channel setup for an agent in the CLI" in captured.out
+    assert "messaging/home-channel setup was skipped during the normal agent setup flow" in captured.out
+    assert "primary bootstrap" not in captured.out
+
+
+def test_agent_start_help_mentions_gateway_readiness(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "start", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "gateway/home-channel readiness" in captured.out
+
+
+def test_agent_help_includes_archive_all_and_purge_all(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "archive-all" in captured.out
+    assert "purge-all" in captured.out
+
+
+def test_build_parser_agent_bulk_lifecycle_shapes() -> None:
+    archive_args = build_parser().parse_args(["agent", "archive-all"])
+    purge_args = build_parser().parse_args(["agent", "purge-all", "--yes"])
+
+    assert archive_args.resource == "agent"
+    assert archive_args.agent_command == "archive-all"
+    assert not hasattr(archive_args, "agent_id")
+    assert purge_args.resource == "agent"
+    assert purge_args.agent_command == "purge-all"
+    assert purge_args.yes is True
 
 
 def test_build_parser_handoff_add_shape() -> None:
@@ -975,6 +1022,7 @@ def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) 
     assert "without" in captured.out
     assert "truncation" in captured.out
     assert "Skip overwrite confirmation for destructive imports" in captured.out
+    assert "reset runtime/setup state" in captured.out
     assert "`maia import <path>` is the primary restore flow for Maia portable state." in captured.out
     assert (
         "Use `--preview` for a read-only diff, add `--verbose-preview` for full "

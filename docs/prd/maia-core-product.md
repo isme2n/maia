@@ -71,7 +71,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - Maia는 control plane과 Keryx-backed visibility surface를 제공하고, live delivery 세부 구현은 public collaboration identity가 아니다.
 - legacy broker/call-era `send` / `reply` / `inbox` CLI contract는 제거 대상이며 유지 계약이 아니다.
 - Maia public surface에서는 Keryx collaboration object를 `thread` / `thread_id`로 부르고, Hermes의 `session` 개념과 섞지 않는다.
-- `thread` / `handoff` / `workspace`는 Keryx-backed open collaboration visibility surface로 남는다.
+- `thread` / `handoff` / `workspace`는 Keryx-backed open collaboration visibility surface로 남고, `workspace`는 operator가 collaboration follow-up에 필요한 participant runtime/workspace context를 보는 surface다.
 - public operator visibility flow는 `thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs` 순서로 닫는다.
 
 ## Success criteria for this contract lock

@@ -1747,6 +1747,30 @@ def test_agent_lifecycle_archive_restore_and_purge(tmp_path: Path) -> None:
     )
 
 
+def test_agent_archive_refuses_running_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "demo")
+    mark_runtime_start_ready(tmp_path, agent_id)
+    started = run_module(tmp_path, "agent", "start", agent_id)
+    assert started.returncode == 0
+
+    archived = run_module(tmp_path, "agent", "archive", agent_id)
+    assert archived.returncode == 1
+    assert archived.stderr.strip() == (
+        f"error: Can't archive agent {agent_id!r} while its runtime is active; stop it first"
+    )
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert f"agent_id={agent_id}" in listed.stdout
+    assert "status=running" in listed.stdout
+
+
 
 def test_agent_status_uses_stored_runtime_state_after_runtime_spec_clear(
     tmp_path: Path,
@@ -2125,6 +2149,9 @@ def test_agent_purge_removes_runtime_state(
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
 
     agent_id = create_agent(tmp_path, "demo")
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "config.yaml").write_text("configured: true\n", encoding="utf-8")
     mark_runtime_start_ready(tmp_path, agent_id)
     tuned = run_module(
         tmp_path,
@@ -2147,12 +2174,106 @@ def test_agent_purge_removes_runtime_state(
     started = run_module(tmp_path, "agent", "start", agent_id)
     assert started.returncode == 0
 
+    stopped = run_module(tmp_path, "agent", "stop", agent_id)
+    assert stopped.returncode == 0
     archived = run_module(tmp_path, "agent", "archive", agent_id)
     assert archived.returncode == 0
     purged = run_module(tmp_path, "agent", "purge", agent_id)
     assert purged.returncode == 0
 
     assert load_runtime_state(tmp_path) == {"runtimes": []}
+    assert not hermes_home.exists()
+
+
+def test_agent_archive_all_is_all_or_nothing_for_active_runtimes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    running_id = create_agent(tmp_path, "running")
+    stopped_id = create_agent(tmp_path, "stopped")
+    mark_runtime_start_ready(tmp_path, running_id)
+    started = run_module(tmp_path, "agent", "start", running_id)
+    assert started.returncode == 0
+
+    archived = run_module(tmp_path, "agent", "archive-all")
+    assert archived.returncode == 1
+    assert archived.stderr.strip() == (
+        f"error: Can't archive all agents while runtimes are active: {running_id}. Stop them first"
+    )
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert f"agent_id={running_id}" in listed.stdout and "status=running" in listed.stdout
+    assert f"agent_id={stopped_id}" in listed.stdout and "status=not-configured" in listed.stdout
+
+
+def test_agent_purge_all_requires_yes_and_archived_only(
+    tmp_path: Path,
+) -> None:
+    archived_id = create_agent(tmp_path, "archived")
+    active_id = create_agent(tmp_path, "active")
+    archived = run_module(tmp_path, "agent", "archive", archived_id)
+    assert archived.returncode == 0
+
+    missing_yes = run_module(tmp_path, "agent", "purge-all")
+    assert missing_yes.returncode == 1
+    assert missing_yes.stderr.strip() == "error: maia agent purge-all requires --yes"
+
+    refused = run_module(tmp_path, "agent", "purge-all", "--yes")
+    assert refused.returncode == 1
+    assert refused.stderr.strip() == (
+        f"error: Can't purge all agents unless every remaining agent is archived: {active_id}"
+    )
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert f"agent_id={archived_id}" in listed.stdout
+    assert f"agent_id={active_id}" in listed.stdout
+
+
+def test_agent_purge_all_removes_all_archived_agents_and_homes(tmp_path: Path) -> None:
+    first_id = create_agent(tmp_path, "first")
+    second_id = create_agent(tmp_path, "second")
+    first_home = get_agent_hermes_home(first_id, {"HOME": str(tmp_path)})
+    second_home = get_agent_hermes_home(second_id, {"HOME": str(tmp_path)})
+    first_home.mkdir(parents=True, exist_ok=True)
+    second_home.mkdir(parents=True, exist_ok=True)
+    (first_home / "marker.txt").write_text("first\n", encoding="utf-8")
+    (second_home / "marker.txt").write_text("second\n", encoding="utf-8")
+
+    team_updated = run_module(
+        tmp_path,
+        "team",
+        "update",
+        "--name",
+        "demo-team",
+        "--default-agent",
+        first_id,
+    )
+    assert team_updated.returncode == 0
+
+    assert run_module(tmp_path, "agent", "archive", first_id).returncode == 0
+    assert run_module(tmp_path, "agent", "archive", second_id).returncode == 0
+
+    purged = run_module(tmp_path, "agent", "purge-all", "--yes")
+    assert purged.returncode == 0
+    assert parse_fields(purged.stdout.strip()) == {"agents": "2"}
+    assert load_registry(tmp_path) == {"agents": []}
+    assert load_runtime_state(tmp_path) == {"runtimes": []}
+    assert not first_home.exists()
+    assert not second_home.exists()
+    assert load_team_metadata(get_team_metadata_path({"HOME": str(tmp_path)})) == TeamMetadata(
+        team_name="demo-team",
+        team_description="",
+        team_tags=[],
+        default_agent_id="",
+    )
 
 
 
@@ -2791,6 +2912,7 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
     preview = run_module(dest_home, "import", str(bundle_path), "--preview", "--verbose-preview")
     assert preview.returncode == 0
     assert preview.stderr == ""
+    assert "warning import preview: applying this snapshot will reset runtime/setup state for all local agents" in preview.stdout
     lines = line_map(preview.stdout)
     assert parse_fields(lines["preview"]) == {
         "source": str(bundle_path),
@@ -2812,6 +2934,7 @@ def test_import_preview_reports_role_model_tags_diffs_and_imports(tmp_path: Path
     imported = run_module(dest_home, "import", str(bundle_path), "--yes")
     assert imported.returncode == 0
     assert imported.stderr == ""
+    assert "warning import apply will reset runtime/setup state for all local agents before replacing the snapshot" in imported.stdout
     import_lines = line_map(imported.stdout)
     assert parse_fields(import_lines["imported"]) == {
         "source": str(bundle_path),

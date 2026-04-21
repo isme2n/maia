@@ -63,8 +63,8 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 - `maia setup`: bootstrap shared infra only after `doctor` says the shared infra path is ready to continue.
 - `maia agent new`: interactively create an agent identity by asking for agent name, how the agent addresses the user, and persona. New agents still carry the shared Hermes worker defaults needed for first start.
 - `maia agent setup <name>`: open `hermes setup` for that agent in the CLI.
-- `maia agent setup-gateway <name>`: reopen only the agent-scoped `hermes setup gateway` flow if messaging/home-channel setup was skipped the first time.
-- `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready.
+- `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if messaging/home-channel setup was skipped during the normal `maia agent setup <name>` run.
+- `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with gateway/home-channel setup required before `start`.
 - `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
 - `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
 - agent setup is recorded separately from the runtime launch state.
@@ -91,7 +91,7 @@ Keryx is Maia's canonical collaboration root for live multi-agent work.
 - Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.
 - Legacy `/call` and `/agent-call` are removed from the active collaboration contract.
 - Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract.
-- The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` as Keryx-backed operator views of open collaboration state, recent handoffs, and participant runtime context.
+- The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` as Keryx-backed operator views of open collaboration state, recent handoffs, and participant runtime/workspace context.
 - Keryx message delivery intent uses `delivery_mode`: `agent_only` keeps the exchange inside agent collaboration, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicitly reported as `failed`.
 
 ## Direct-agent delegation contract
@@ -135,7 +135,9 @@ These remain public support workflows, but they are not the primary first-run bo
 - `maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`.
 - `maia export [path] --label <label> --description <text>` lets the operator write a user/project snapshot to an explicit path while keeping the same bundle/import contract and overriding manifest metadata.
 - `maia import <path>` always prints the preview/risk block first. When the current registry is non-empty or team-level portable metadata would be overwritten, it then performs a destructive-import preflight: warns about overwrite behavior and asks for confirmation.
+- Preview also warns that applying the snapshot resets Maia's local runtime/setup state before snapshot replacement, and the destructive apply path repeats that runtime/setup reset warning.
 - `maia import <path> --yes` skips the interactive confirmation but still prints the preview/risk summary and overwrite warning.
+- `maia import <path> --yes` also still prints the runtime/setup reset warning before snapshot replacement.
 - `maia inspect <path>` is a secondary support command for pre-restore inspection; it is not required for the normal `maia export` + `maia import <path>` flow.
 - Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`
 - Primary Part 3 portable-state flow: `maia export`, `maia export <path>`, `maia import <path>`; use `maia inspect <path>` only as optional support when you want to inspect a snapshot before restore.

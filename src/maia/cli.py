@@ -17,6 +17,7 @@ from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus
 import maia.agent_setup_session as agent_setup_session
 from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
+    get_agent_hermes_home,
     get_default_export_path,
     get_state_db_path,
     get_team_metadata_path,
@@ -135,8 +136,12 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
             return _handle_agent_tune(args, storage, state_path, registry)
         if command_name == "purge":
             return _handle_agent_purge(args, storage, state_path, registry)
+        if command_name == "purge-all":
+            return _handle_agent_purge_all(args, storage, state_path, registry)
         if command_name in {"archive", "restore"}:
             return _handle_agent_lifecycle(args, storage, state_path, registry)
+        if command_name == "archive-all":
+            return _handle_agent_archive_all(storage, state_path, registry)
     except (LookupError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1122,6 +1127,7 @@ def _handle_transfer_import(
         return 0
 
     _print_import_preview(preview, source_path, import_path)
+    print("warning import apply will reset runtime/setup state for all local agents before replacing the snapshot")
     if preview["current_agents"] > 0 or preview["team_details"] != "-":
         print("warning import will overwrite the current Maia registry with the snapshot state")
         print("warning removed agents and changed fields will be replaced by snapshot values")
@@ -1142,6 +1148,7 @@ def _handle_transfer_import(
 
 
 def _print_import_preview(preview: dict[str, object], source_path: Path, import_path: Path) -> None:
+    print("warning import preview: applying this snapshot will reset runtime/setup state for all local agents")
     print(
         "preview "
         f"source={_format_preview_value(str(source_path))} "
@@ -1962,6 +1969,9 @@ def _handle_agent_lifecycle(
     registry_path: str,
     registry,
 ) -> int:
+    record = registry.get(args.agent_id)
+    if args.agent_command == "archive" and _agent_has_active_runtime(record.agent_id):
+        raise ValueError(f"Can't archive agent {args.agent_id!r} while its runtime is active; stop it first")
     updated = registry.set_status(
         args.agent_id, LIFECYCLE_STATUS_BY_COMMAND[args.agent_command]
     )
@@ -1986,6 +1996,7 @@ def _handle_agent_purge(
     registry.remove(args.agent_id)
     storage.save(registry_path, registry)
     RuntimeStateStorage().remove(get_state_db_path(), args.agent_id)
+    _remove_agent_hermes_home(args.agent_id)
     team_metadata_path = get_team_metadata_path()
     team_metadata = load_team_metadata(team_metadata_path)
     if team_metadata.default_agent_id == args.agent_id:
@@ -2000,6 +2011,80 @@ def _handle_agent_purge(
         )
     print(f"purged agent_id={args.agent_id}")
     return 0
+
+
+def _handle_agent_archive_all(
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    records = registry.list()
+    active_agent_ids = [record.agent_id for record in records if _agent_has_active_runtime(record.agent_id)]
+    if active_agent_ids:
+        raise ValueError(
+            f"Can't archive all agents while runtimes are active: {','.join(active_agent_ids)}. Stop them first"
+        )
+    updated_count = 0
+    for record in records:
+        if record.status is AgentStatus.ARCHIVED:
+            continue
+        registry.set_status(record.agent_id, AgentStatus.ARCHIVED)
+        updated_count += 1
+    storage.save(registry_path, registry)
+    print(f"updated agents={updated_count} status=archived")
+    return 0
+
+
+def _handle_agent_purge_all(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    if not args.yes:
+        raise ValueError("maia agent purge-all requires --yes")
+    records = registry.list()
+    non_archived = [record.agent_id for record in records if record.status is not AgentStatus.ARCHIVED]
+    if non_archived:
+        raise ValueError(
+            f"Can't purge all agents unless every remaining agent is archived: {','.join(non_archived)}"
+        )
+    for record in records:
+        RuntimeStateStorage().remove(get_state_db_path(), record.agent_id)
+        _remove_agent_hermes_home(record.agent_id)
+        registry.remove(record.agent_id)
+    storage.save(registry_path, registry)
+    team_metadata_path = get_team_metadata_path()
+    team_metadata = load_team_metadata(team_metadata_path)
+    if team_metadata.default_agent_id:
+        save_team_metadata(
+            team_metadata_path,
+            TeamMetadata(
+                team_name=team_metadata.team_name,
+                team_description=team_metadata.team_description,
+                team_tags=list(team_metadata.team_tags),
+                default_agent_id="",
+            ),
+        )
+    print(f"purged agents={len(records)}")
+    return 0
+
+
+def _agent_has_active_runtime(agent_id: str) -> bool:
+    runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(agent_id)
+    return runtime_state is not None and runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES
+
+
+def _remove_agent_hermes_home(agent_id: str) -> None:
+    hermes_home = get_agent_hermes_home(agent_id)
+    if not hermes_home.exists():
+        return
+    for path in sorted(hermes_home.rglob("*"), reverse=True):
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+        else:
+            path.rmdir()
+    hermes_home.rmdir()
 
 
 def _format_record(record: AgentRecord, *, runtime_state: RuntimeState | None = None) -> str:
