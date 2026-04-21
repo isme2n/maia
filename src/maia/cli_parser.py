@@ -83,31 +83,31 @@ QUICKSTART_EXAMPLES = PART1_OPERATOR_FLOW
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 DOCTOR_ROLE_CONTRACT = (
     "`maia doctor` is the first bootstrap gate for Maia shared infra.",
-    "It checks Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step.",
+    "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step.",
     "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.",
 )
 RUNTIME_SUPPORT_BOUNDARY = (
-    "Fake-docker tests verify Maia's runtime command flow, not whether Docker, RabbitMQ, the Keryx HTTP API, or the SQLite state DB work on this host.",
+    "Fake-docker tests verify Maia's runtime command flow, not whether Docker, the Keryx HTTP API, or the SQLite state DB work on this host.",
     "Run `maia doctor` before using `agent start|stop|status|logs` for real.",
     "Run `maia setup` to bootstrap shared infra before the first agent run.",
 )
 V1_RELEASE_CHECKLIST = (
     "Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.",
-    "`doctor` stays infra-only: Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB.",
+    "`doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.",
     "`agent new` interactively captures agent name, user call-sign, and persona.",
     "`agent setup` is the operator path to open `hermes setup` for one agent.",
 )
 KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
-    "Shared infra currently depends on RabbitMQ, the Keryx HTTP API, and a writable SQLite state DB path.",
-    "`maia setup` bootstraps the shared Maia network, RabbitMQ container, Keryx HTTP API container, and SQLite state DB.",
+    "Shared infra currently depends on the Keryx HTTP API and a writable SQLite state DB path.",
+    "`maia setup` bootstraps the shared Maia network, Keryx HTTP API container, and SQLite state DB.",
     "`maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.",
     "Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.",
 )
 GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW
 HOST_VALIDATION_CHECKLIST = PART1_OPERATOR_FLOW
 RUNTIME_RECOVERY_CHECKLIST = (
-    "If doctor fails, fix Docker, RabbitMQ, Keryx HTTP API, or SQLite state DB access first.",
+    "If doctor fails, fix Docker, Keryx HTTP API, or SQLite state DB access first.",
     "If setup fails, finish shared infra bootstrap before retrying agent commands.",
     "If agent setup fails, rerun `maia agent setup <name>`.",
     "If start fails, rerun doctor and confirm shared infra is ready.",
@@ -299,12 +299,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_INFO_COMMANDS:
         help_text = {
-            "doctor": "Check shared infra readiness (Docker, RabbitMQ, Keryx HTTP API, SQLite state DB)",
-            "setup": "Bootstrap shared Maia infra (Docker, RabbitMQ, Keryx HTTP API, SQLite state DB)",
+            "doctor": "Check shared infra readiness (Docker, Keryx HTTP API, SQLite state DB)",
+            "setup": "Bootstrap shared Maia infra (Docker, Keryx HTTP API, SQLite state DB)",
         }[command_name]
         description_text = {
-            "doctor": "Check shared infra readiness for Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB access only.",
-            "setup": "Bootstrap shared Maia infra only: Docker-backed RabbitMQ, Docker-backed Keryx HTTP API, and SQLite state DB state.",
+            "doctor": "Check shared infra readiness for Docker, Keryx HTTP API, and SQLite state DB access only.",
+            "setup": "Bootstrap shared Maia infra only: Docker-backed Keryx HTTP API and SQLite state DB state.",
         }[command_name]
         command_parser = top_level.add_parser(
             command_name,

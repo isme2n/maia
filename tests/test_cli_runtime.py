@@ -529,14 +529,13 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     lines = result.stdout.strip().splitlines()
     assert lines == [
         "✗ Docker FAIL — Docker can't run because Docker is missing",
-        '• RabbitMQ BLOCKED — RabbitMQ health needs a working Docker daemon',
         '• Keryx HTTP API BLOCKED — Keryx HTTP API health needs a working Docker daemon',
         '✓ SQLite State DB OK',
         'Next: install Docker, then run maia doctor again',
     ]
 
 
-def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_doctor_reports_keryx_missing_before_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_bin = tmp_path / 'bin'
     fake_bin.mkdir()
     fake_docker = fake_bin / 'docker'
@@ -549,46 +548,13 @@ def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: 
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
-        '✗ RabbitMQ FAIL — RabbitMQ container maia-rabbitmq is not running',
         '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
         '✓ SQLite State DB OK',
         'Next: run maia setup to bootstrap shared infra',
     ]
 
 
-def test_doctor_accepts_reachable_external_queue_before_setup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import socket
-
-    fake_bin = tmp_path / 'bin'
-    fake_bin.mkdir()
-    fake_docker = fake_bin / 'docker'
-    _write_fake_docker(fake_docker)
-    monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-
-    listener = socket.socket()
-    listener.bind(('127.0.0.1', 0))
-    listener.listen(1)
-    host, port = listener.getsockname()
-    monkeypatch.setenv('MAIA_BROKER_URL', f'amqp://guest:guest@{host}:{port}/%2F')
-
-    result = run_module(tmp_path, 'doctor')
-    listener.close()
-
-    assert result.returncode == 1
-    lines = result.stdout.strip().splitlines()
-    assert lines == [
-        '✓ Docker OK',
-        '✓ RabbitMQ OK',
-        '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
-        '✓ SQLite State DB OK',
-        'Next: run maia setup to bootstrap shared infra',
-    ]
-
-
-def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
+def test_doctor_ignores_broker_url_before_setup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -597,7 +563,7 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
     fake_docker = fake_bin / 'docker'
     _write_fake_docker(fake_docker)
     monkeypatch.setenv('PATH', f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:guest@127.0.0.1:6553/%2F')
+    monkeypatch.setenv('MAIA_BROKER_URL', 'amqp://guest:***@127.0.0.1:6553/%2F')
 
     result = run_module(tmp_path, 'doctor')
 
@@ -605,11 +571,12 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
-        '✗ RabbitMQ FAIL — Connection refused',
         '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
         '✓ SQLite State DB OK',
-        'Next: fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again',
+        'Next: run maia setup to bootstrap shared infra',
     ]
+    assert 'RabbitMQ' not in result.stdout
+    assert 'MAIA_BROKER_URL' not in result.stdout
 
 
 def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
@@ -632,7 +599,6 @@ def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
     doctor_lines = doctor.stdout.strip().splitlines()
     assert doctor_lines == [
         '✓ Docker OK',
-        '✗ RabbitMQ FAIL — RabbitMQ container maia-rabbitmq is not running',
         '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
         f"✗ SQLite State DB FAIL — Maia state DB at {state_db_path} is unreadable",
         'Next: run maia setup to bootstrap shared infra',
@@ -661,23 +627,22 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     assert setup.returncode == 0
     setup_lines = setup.stdout.strip().splitlines()
     assert setup_lines[0] == 'Created Maia network maia.'
-    assert setup_lines[1] == 'Created Maia volume maia-rabbitmq-data.'
-    assert setup_lines[2] == 'Started RabbitMQ maia-rabbitmq.'
-    assert setup_lines[3] == 'Started Keryx HTTP API http://maia-keryx:8765.'
-    assert setup_lines[4] == f'SQLite State DB is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
-    assert setup_lines[5] == 'Shared infra is ready.'
-    assert setup_lines[6] == 'Next: run maia agent new'
+    assert setup_lines[1] == 'Started Keryx HTTP API http://maia-keryx:8765.'
+    assert setup_lines[2] == f'SQLite State DB is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
+    assert setup_lines[3] == 'Shared infra is ready.'
+    assert setup_lines[4] == 'Next: run maia agent new'
     assert setup.stderr == ''
 
     fake_state = json.loads((fake_bin / 'fake-docker-state.json').read_text(encoding='utf-8'))
     assert 'maia-keryx' in fake_state['containers']
+    assert 'maia-rabbitmq' not in fake_state['containers']
+    assert 'maia-rabbitmq-data' not in fake_state['volumes']
 
     doctor = run_module(tmp_path, 'doctor')
     assert doctor.returncode == 0
     doctor_lines = doctor.stdout.strip().splitlines()
     assert doctor_lines == [
         '✓ Docker OK',
-        '✓ RabbitMQ OK',
         '✓ Keryx HTTP API OK',
         '✓ SQLite State DB OK',
         '✓ Shared infra ready',
@@ -715,7 +680,6 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
     lines = result.stdout.strip().splitlines()
     assert lines == [
         "✗ Docker FAIL — Docker is installed, but this user cannot talk to the Docker daemon",
-        '• RabbitMQ BLOCKED — RabbitMQ health needs a working Docker daemon',
         '• Keryx HTTP API BLOCKED — Keryx HTTP API health needs a working Docker daemon',
         '✓ SQLite State DB OK',
         'Next: fix Docker permissions for this user, then run maia doctor again',

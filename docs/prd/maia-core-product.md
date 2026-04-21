@@ -31,7 +31,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 - deeper runtime/setup implementation details
 
 ## Part 1 operator story
-1. 운영자는 `maia doctor`로 Docker, queue, DB readiness를 확인한다.
+1. 운영자는 `maia doctor`로 Docker, Keryx HTTP API, DB readiness를 확인한다.
 - 운영자는 `maia setup`으로 shared infra를 bootstrap한다.
 - canonical Maia SQLite DB filename is `~/.maia/maia.db`, and Keryx collaboration data remains stored as tables inside that same DB.
 3. 운영자는 `maia agent new planner`로 agent identity를 만든다.
@@ -60,7 +60,7 @@ Maia는 shared infra를 확인하고 띄운 뒤, agent identity를 만들고, ag
 
 ## UX / DX rules
 - help text는 현재 구현 상태를 과장하지 않는다.
-- `doctor` wording은 Docker / queue / DB 같은 infra-only wording을 쓴다.
+- `doctor` wording은 Docker / Keryx HTTP API / DB 같은 infra-only wording을 쓴다.
 - `setup` wording은 shared infra bootstrap만 설명한다.
 - `agent new` wording은 identity creation만 설명한다.
 - `agent setup` wording은 `hermes setup` passthrough만 설명한다.

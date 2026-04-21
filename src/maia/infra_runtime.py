@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import os
-import socket
 import sqlite3
 import subprocess
 from pathlib import Path
 import shutil
-from urllib.parse import urlparse
 
 from maia.runtime_spec import RuntimeSpec
 from maia.sqlite_state import SQLiteState
@@ -20,9 +18,6 @@ __all__ = [
     "MAIA_KERYX_IMAGE",
     "MAIA_KERYX_INTERNAL_PORT",
     "MAIA_NETWORK_NAME",
-    "MAIA_QUEUE_CONTAINER_NAME",
-    "MAIA_QUEUE_IMAGE",
-    "MAIA_QUEUE_VOLUME_NAME",
     "bootstrap_shared_infra",
     "collect_doctor_checks",
     "default_agent_runtime_spec",
@@ -30,9 +25,6 @@ __all__ = [
 ]
 
 MAIA_NETWORK_NAME = "maia"
-MAIA_QUEUE_CONTAINER_NAME = "maia-rabbitmq"
-MAIA_QUEUE_VOLUME_NAME = "maia-rabbitmq-data"
-MAIA_QUEUE_IMAGE = "rabbitmq:3.13-alpine"
 MAIA_KERYX_CONTAINER_NAME = "maia-keryx"
 MAIA_KERYX_IMAGE = "python:3.11-alpine"
 MAIA_KERYX_INTERNAL_PORT = 8765
@@ -54,9 +46,7 @@ def default_agent_runtime_spec(agent_name: str) -> RuntimeSpec:
     )
 
 
-
 def runtime_keryx_base_url() -> str:
-
     configured = os.environ.get("KERYX_BASE_URL", "").strip()
     if configured:
         return configured
@@ -65,7 +55,6 @@ def runtime_keryx_base_url() -> str:
 
 def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
     """Collect shared-infra readiness checks for doctor."""
-
 
     target = Path(state_path)
     checks: list[dict[str, str]] = []
@@ -85,14 +74,6 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
                 "status": "missing",
                 "detail": "Docker can't run because Docker is missing",
                 "remediation": "Install Docker, then start the Docker service",
-            }
-        )
-        checks.append(
-            {
-                "name": "queue",
-                "status": "blocked",
-                "detail": "RabbitMQ health needs a working Docker daemon",
-                "remediation": "Fix Docker first, then run maia doctor again",
             }
         )
         checks.append(
@@ -123,7 +104,6 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
         failure_remediation="Start Docker or fix Docker access permissions",
     )
     checks.append(docker_daemon_check)
-    checks.append(_collect_queue_check(docker_bin, docker_daemon_check))
     checks.append(_collect_keryx_check(docker_bin, docker_daemon_check))
     checks.append(_collect_state_db_check(target))
     return checks
@@ -160,70 +140,21 @@ def bootstrap_shared_infra(state_path: Path | str) -> list[dict[str, str]]:
             inspect_command=[docker_bin, "network", "inspect", MAIA_NETWORK_NAME],
             create_command=[docker_bin, "network", "create", MAIA_NETWORK_NAME],
         )
-        volume_action = _ensure_docker_resource(
-            docker_bin,
-            inspect_command=[docker_bin, "volume", "inspect", MAIA_QUEUE_VOLUME_NAME],
-            create_command=[docker_bin, "volume", "create", MAIA_QUEUE_VOLUME_NAME],
-        )
-        queue_action = _ensure_queue_container(docker_bin)
         keryx_action = _ensure_keryx_container(docker_bin, target)
     except ValueError as exc:
         sqlite_state.set_infra_status("bootstrap", status="failed", detail=str(exc))
         raise
 
     sqlite_state.set_infra_status("network", status="ready", detail=MAIA_NETWORK_NAME)
-    sqlite_state.set_infra_status("queue_volume", status="ready", detail=MAIA_QUEUE_VOLUME_NAME)
-    sqlite_state.set_infra_status("queue", status="ready", detail=MAIA_QUEUE_CONTAINER_NAME)
     sqlite_state.set_infra_status("keryx", status="ready", detail=runtime_keryx_base_url())
     sqlite_state.set_infra_status("state_db", status="ready", detail=str(target))
     sqlite_state.set_infra_status("bootstrap", status="ready", detail="shared infra is ready")
 
     return [
         {"step": "network", "status": network_action, "detail": MAIA_NETWORK_NAME},
-        {"step": "volume", "status": volume_action, "detail": MAIA_QUEUE_VOLUME_NAME},
-        {"step": "queue", "status": queue_action, "detail": MAIA_QUEUE_CONTAINER_NAME},
         {"step": "keryx", "status": keryx_action, "detail": runtime_keryx_base_url()},
         {"step": "db", "status": "ready", "detail": str(target)},
     ]
-
-
-def _collect_queue_check(docker_bin: str, docker_daemon_check: dict[str, str]) -> dict[str, str]:
-    if docker_daemon_check["status"] != "ok":
-        return {
-            "name": "queue",
-            "status": "blocked",
-            "detail": "RabbitMQ health needs a working Docker daemon",
-            "remediation": "Fix Docker first, then run maia doctor again",
-        }
-
-    result = _run_command(
-        [docker_bin, "inspect", "--format", "{{.State.Status}}", MAIA_QUEUE_CONTAINER_NAME]
-    )
-    if result.returncode != 0:
-        external_queue_check = _collect_external_queue_check()
-        if external_queue_check is not None:
-            return external_queue_check
-        return {
-            "name": "queue",
-            "status": "missing",
-            "detail": f"RabbitMQ container {MAIA_QUEUE_CONTAINER_NAME} is not running",
-            "remediation": "Run maia setup to bootstrap shared infra",
-        }
-
-    status = result.stdout.strip().lower()
-    if status == "running":
-        return {
-            "name": "queue",
-            "status": "ok",
-            "detail": f"RabbitMQ container {MAIA_QUEUE_CONTAINER_NAME} is running",
-            "remediation": "No action needed",
-        }
-    return {
-        "name": "queue",
-        "status": "fail",
-        "detail": f"RabbitMQ container {MAIA_QUEUE_CONTAINER_NAME} is {status or 'not ready'}",
-        "remediation": "Run maia setup to restart the shared queue",
-    }
 
 
 def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -> dict[str, str]:
@@ -259,51 +190,6 @@ def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         "status": "fail",
         "detail": f"Keryx HTTP API container {MAIA_KERYX_CONTAINER_NAME} is {status or 'not ready'}",
         "remediation": "Run maia setup to restart the shared Keryx HTTP API",
-    }
-
-
-def _collect_external_queue_check() -> dict[str, str] | None:
-    broker_url = os.environ.get("MAIA_BROKER_URL", "").strip()
-    if not broker_url:
-        return None
-
-    parsed = urlparse(broker_url)
-    try:
-        port = parsed.port
-    except ValueError:
-        return {
-            "name": "queue",
-            "status": "fail",
-            "detail": "MAIA_BROKER_URL needs a numeric port",
-            "remediation": "Use a full AMQP URL like amqp://user:password@host:5672/vhost",
-        }
-    if not parsed.hostname:
-        return {
-            "name": "queue",
-            "status": "fail",
-            "detail": "MAIA_BROKER_URL needs a hostname",
-            "remediation": "Use a full AMQP URL like amqp://user:password@host:5672/vhost",
-        }
-    if port is None:
-        port = 5671 if parsed.scheme == "amqps" else 5672
-
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=2):
-            pass
-    except OSError as exc:
-        detail = exc.strerror or str(exc)
-        return {
-            "name": "queue",
-            "status": "fail",
-            "detail": detail,
-            "remediation": "Start the external RabbitMQ service or run maia setup for the local shared queue",
-        }
-
-    return {
-        "name": "queue",
-        "status": "ok",
-        "detail": f"RabbitMQ is reachable at {parsed.hostname}:{port}",
-        "remediation": "No action needed",
     }
 
 
@@ -372,40 +258,6 @@ def _ensure_docker_resource(
         detail = (create_result.stderr or create_result.stdout or "command failed").strip()
         raise ValueError(detail)
     return "created"
-
-
-def _ensure_queue_container(docker_bin: str) -> str:
-    inspect_result = _run_command(
-        [docker_bin, "inspect", "--format", "{{.State.Status}}", MAIA_QUEUE_CONTAINER_NAME]
-    )
-    if inspect_result.returncode == 0:
-        status = inspect_result.stdout.strip().lower()
-        if status == "running":
-            return "ready"
-        start_result = _run_command([docker_bin, "start", MAIA_QUEUE_CONTAINER_NAME])
-        if start_result.returncode != 0:
-            detail = (start_result.stderr or start_result.stdout or "command failed").strip()
-            raise ValueError(detail)
-        return "started"
-
-    run_result = _run_command(
-        [
-            docker_bin,
-            "run",
-            "-d",
-            "--name",
-            MAIA_QUEUE_CONTAINER_NAME,
-            "--network",
-            MAIA_NETWORK_NAME,
-            "-v",
-            f"{MAIA_QUEUE_VOLUME_NAME}:/var/lib/rabbitmq",
-            MAIA_QUEUE_IMAGE,
-        ]
-    )
-    if run_result.returncode != 0:
-        detail = (run_result.stderr or run_result.stdout or "command failed").strip()
-        raise ValueError(detail)
-    return "started"
 
 
 def _ensure_keryx_container(docker_bin: str, state_path: Path) -> str:

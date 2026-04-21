@@ -296,10 +296,6 @@ def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) ->
         if docker_daemon_check and "cannot talk to the Docker daemon" in docker_daemon_check["detail"]:
             return "fix Docker permissions for this user, then run maia doctor again"
         return "start Docker, then run maia doctor again"
-    if "queue" in failed_checks:
-        if os.environ.get("MAIA_BROKER_URL", "").strip():
-            return "fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again"
-        return "run maia setup to bootstrap shared infra"
     if "keryx" in failed_checks:
         return "run maia setup to bootstrap shared infra"
     if "state_db" in failed_checks:
@@ -310,7 +306,6 @@ def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) ->
 def _doctor_component_label(name: str) -> str:
     return {
         "docker": "Docker",
-        "queue": "RabbitMQ",
         "keryx": "Keryx HTTP API",
         "state_db": "SQLite State DB",
     }[name]
@@ -351,7 +346,6 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
     lines: list[str] = []
     docker_cli = _doctor_check_by_name(checks, "docker_cli")
     docker_daemon = _doctor_check_by_name(checks, "docker_daemon")
-    queue = _doctor_check_by_name(checks, "queue")
     keryx = _doctor_check_by_name(checks, "keryx")
     state_db = _doctor_check_by_name(checks, "state_db")
 
@@ -370,7 +364,7 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
             f"{_style_doctor_token(icon, token)} {_doctor_component_label('docker')} {_style_doctor_token(token, token)} — {detail}"
         )
 
-    for check_name, check in (("queue", queue), ("keryx", keryx), ("state_db", state_db)):
+    for check_name, check in (("keryx", keryx), ("state_db", state_db)):
         if not check:
             continue
         icon, token = _doctor_status_token(check)
