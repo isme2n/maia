@@ -57,6 +57,8 @@ from maia.keryx_models import (
     KeryxSessionStatus,
 )
 from maia.keryx_service import KeryxService
+from maia.keryx_skill import get_agent_keryx_skill_path, render_keryx_skill_content
+from maia.runtime_adapter import RuntimeStartResult, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 
@@ -85,6 +87,35 @@ def _line_with_prefix(text: str, prefix: str) -> str:
 def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
     for line in lines:
         assert line in text
+
+
+def _section_after_heading(text: str, heading: str, end_headings: tuple[str, ...]) -> str:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != heading:
+            continue
+        section_lines: list[str] = []
+        for next_line in lines[index + 1 :]:
+            if next_line.strip() in end_headings:
+                break
+            section_lines.append(next_line)
+        return "\n".join(section_lines)
+    raise AssertionError(f"Missing section heading {heading!r}")
+
+
+def _assert_locked_collaboration_contract(section: str) -> None:
+    assert "User-facing collaboration entry is `/keryx <instruction>`." in section
+    assert "Keryx message delivery intent uses `delivery_mode`:" in section
+    assert "`agent_only`" in section
+    assert "`user_direct`" in section
+    assert "`failed`" in section
+    active_section = "\n".join(
+        line
+        for line in section.splitlines()
+        if "Legacy `/call` and `/agent-call` are removed from the active collaboration contract." not in line
+    )
+    assert "`/call`" not in active_section
+    assert "`/agent-call`" not in active_section
 
 
 def test_readme_locks_part1_public_flow() -> None:
@@ -124,6 +155,13 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "Secondary surfaces" in text
+    _assert_locked_collaboration_contract(
+        _section_after_heading(
+            text,
+            "## Part 2 Keryx collaboration",
+            ("## Direct-agent delegation contract",),
+        )
+    )
     _assert_contains_lines(text, PART2_VISIBILITY_FLOW)
 
 
@@ -235,6 +273,13 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "reply <" not in captured.out
     assert "maia thread show <thread_id>" in captured.out
     assert "maia handoff show <handoff_id>" in captured.out
+    _assert_locked_collaboration_contract(
+        _section_after_heading(
+            captured.out,
+            "Keryx collaboration contract:",
+            ("Direct-agent delegation contract:",),
+        )
+    )
     _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
@@ -359,6 +404,13 @@ def test_thread_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "public name for this Keryx collaboration object" in captured.out
     assert "distinct from a Hermes session" in captured.out
     assert "Examples:" in captured.out
+    _assert_locked_collaboration_contract(
+        _section_after_heading(
+            captured.out,
+            "Keryx collaboration contract:",
+            ("Examples:",),
+        )
+    )
     _assert_contains_lines(captured.out, THREAD_EXAMPLES)
 
 
@@ -509,6 +561,52 @@ def test_agent_new_prompts_for_identity_fields_and_points_to_agent_setup(
     assert record.name == "econ"
     assert record.call_sign == "Ash"
     assert record.persona == "Calm macro researcher"
+    skill_path = get_agent_keryx_skill_path(record.agent_id, {"HOME": str(tmp_path)})
+    assert skill_path.exists()
+    assert "name: keryx" in skill_path.read_text(encoding="utf-8")
+    assert "/keryx 경제에게 지난번 조사했던 거 있으면 그거 좀 달라 그래" in skill_path.read_text(encoding="utf-8")
+
+
+def test_builtin_keryx_skill_locks_grounded_http_workflow() -> None:
+    content = render_keryx_skill_content()
+
+    assert "`/keryx <instruction>`" in content
+    assert "실제 Keryx HTTP API" in content
+    assert "실제로 Keryx 리소스를 만들거나 읽지 않았고" in content
+    assert "협업을 수행한 척하지 말고" in content
+    assert "실제 HTTP 호출/응답 확인 없이 다른 agent가 이미 답했다고 꾸며내지 않는다." in content
+    assert "`GET /agents`" in content
+    assert "`GET /sessions`" in content
+    assert "`POST /sessions`" in content
+    assert "`POST /sessions/{session_id}/messages`" in content
+    assert "`GET /sessions/{session_id}/messages`" in content
+    assert "`POST /sessions/{session_id}/handoffs`" in content
+    assert "기본값은 새 session 생성이다." in content
+    assert "thread_id=<session_id>" in content
+
+
+def test_agent_new_installs_keryx_skill_with_grounded_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answers = iter(["econ", "Ash", "Calm macro researcher"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert main(["agent", "new"]) == 0
+    capsys.readouterr()
+
+    registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    record = registry.list()[0]
+    content = get_agent_keryx_skill_path(record.agent_id, {"HOME": str(tmp_path)}).read_text(encoding="utf-8")
+
+    assert "`GET /agents`" in content
+    assert "`POST /sessions`" in content
+    assert "`POST /sessions/{session_id}/messages`" in content
+    assert "`GET /sessions/{session_id}/messages`" in content
+    assert "`POST /sessions/{session_id}/handoffs`" in content
+    assert "실제로 Keryx 리소스를 만들거나 읽지 않았고" in content
 
 
 def test_agent_setup_gateway_command_runs_gateway_section_and_records_complete(
@@ -643,6 +741,33 @@ def test_agent_setup_session_normalizes_signal_exit_code(
     assert result.hermes_home == get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)})
 
 
+def test_agent_setup_session_restores_builtin_keryx_skill_after_setup_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli_module.agent_setup_session.shutil, "which", lambda name: "/tmp/fake-hermes")
+
+    def _run(command: list[str], *, env: dict[str, str], check: bool) -> subprocess.CompletedProcess[list[str]]:
+        assert command == ["/tmp/fake-hermes", "setup"]
+        skill_path = get_agent_keryx_skill_path("planner1234", {"HOME": str(tmp_path)})
+        assert skill_path.exists()
+        skill_path.unlink()
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cli_module.agent_setup_session.subprocess, "run", _run)
+
+    result = cli_module.agent_setup_session.run_agent_setup_session(
+        agent_id="planner1234",
+        agent_name="planner",
+    )
+
+    skill_path = get_agent_keryx_skill_path("planner1234", {"HOME": str(tmp_path)})
+    assert result.exit_code == 0
+    assert skill_path.exists()
+    assert "/keryx" in skill_path.read_text(encoding="utf-8")
+
+
 def test_agent_setup_command_records_incomplete_when_hermes_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -669,6 +794,51 @@ def test_agent_setup_command_records_incomplete_when_hermes_is_missing(
         "setup_status": "incomplete",
         "gateway_setup_status": "incomplete",
     }
+
+
+def test_agent_start_backfills_missing_builtin_keryx_skill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    skill_path = get_agent_keryx_skill_path(agent_id, {"HOME": str(tmp_path)})
+    skill_path.unlink()
+
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    monkeypatch.setattr(cli_module, "_require_shared_infra_ready", lambda agent_id: None)
+
+    class _FakeRuntimeAdapter:
+        def start(self, request: object) -> RuntimeStartResult:
+            assert request.agent.agent_id == agent_id
+            return RuntimeStartResult(
+                runtime=RuntimeState(
+                    agent_id=agent_id,
+                    runtime_status=RuntimeStatus.RUNNING,
+                    runtime_handle="container://planner",
+                )
+            )
+
+    monkeypatch.setattr(cli_module, "_build_runtime_adapter", lambda: _FakeRuntimeAdapter())
+
+    assert main(["agent", "start", "planner"]) == 0
+    captured = capsys.readouterr()
+    assert "updated agent_id=" in captured.out
+    assert "runtime_status=running" in captured.out
+    assert skill_path.exists()
+    assert "/keryx" in skill_path.read_text(encoding="utf-8")
 
 
 def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) -> None:

@@ -15,10 +15,18 @@ HANDOFF_COMMANDS = ("add", "list", "show")
 WORKSPACE_COMMANDS = ("show",)
 PART2_CONVERSATION_CONTRACT = (
     "Keryx is Maia's canonical collaboration root for live multi-agent work.",
+    "User-facing collaboration entry is `/keryx <instruction>`.",
     "`thread` / `thread_id` are Maia's public names for the Keryx collaboration object.",
     "Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.",
+    "Legacy `/call` and `/agent-call` are removed from the active collaboration contract.",
     "Legacy broker-style send/reply/inbox CLI entrypoints are removed from the active product contract.",
+    "Keryx message delivery intent uses `delivery_mode`: `agent_only` stays agent-only, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicit `failed`.",
     "`thread`, `handoff`, and `workspace` are Keryx-backed operator views of open collaboration state.",
+)
+THREAD_HELP_CONTRACT = (
+    "User-facing collaboration entry is `/keryx <instruction>`.",
+    "Legacy `/call` and `/agent-call` are removed from the active collaboration contract.",
+    "Keryx message delivery intent uses `delivery_mode`: `agent_only` stays agent-only, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicit `failed`.",
 )
 DIRECT_AGENT_DELEGATION_CONTRACT = (
     "Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.",
@@ -267,7 +275,10 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser = top_level.add_parser(command_name, **parser_kwargs)
         command_parser.set_defaults(parser=command_parser)
         if command_name == "thread":
-            command_parser.epilog = _format_epilog("Examples:", THREAD_EXAMPLES)
+            command_parser.epilog = _format_epilog_sections(
+                ("Keryx collaboration contract:", THREAD_HELP_CONTRACT),
+                ("Examples:", THREAD_EXAMPLES),
+            )
             thread_commands = command_parser.add_subparsers(
                 dest="thread_command",
                 metavar="{" + ",".join(THREAD_COMMANDS) + "}",

@@ -12,6 +12,7 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maia.keryx_models import (
     KeryxAgentSummary,
+    KeryxDeliveryMode,
     KeryxHandoffRecord,
     KeryxHandoffStatus,
     KeryxMessageRecord,
@@ -30,6 +31,11 @@ def test_keryx_handoff_status_values() -> None:
     assert KeryxHandoffStatus.OPEN.value == "open"
     assert KeryxHandoffStatus.ACCEPTED.value == "accepted"
     assert KeryxHandoffStatus.DONE.value == "done"
+
+
+def test_keryx_delivery_mode_values() -> None:
+    assert KeryxDeliveryMode.AGENT_ONLY.value == "agent_only"
+    assert KeryxDeliveryMode.USER_DIRECT.value == "user_direct"
 
 
 def test_keryx_agent_summary_round_trip() -> None:
@@ -184,6 +190,7 @@ def test_keryx_message_record_round_trip_with_reply_to_message_id() -> None:
         kind="question",
         body="Can you review the rollout notes?",
         created_at="2026-04-20T10:01:00Z",
+        delivery_mode=KeryxDeliveryMode.USER_DIRECT,
         reply_to_message_id="msg-000",
     )
 
@@ -198,8 +205,57 @@ def test_keryx_message_record_round_trip_with_reply_to_message_id() -> None:
         "kind": "question",
         "body": "Can you review the rollout notes?",
         "created_at": "2026-04-20T10:01:00Z",
+        "delivery_mode": "user_direct",
         "reply_to_message_id": "msg-000",
     }
+
+
+def test_keryx_message_record_defaults_delivery_mode_to_agent_only() -> None:
+    record = KeryxMessageRecord(
+        message_id="msg-001b",
+        session_id="session-001",
+        from_agent="planner",
+        to_agent="reviewer",
+        kind="question",
+        body="Default delivery mode should be agent_only.",
+        created_at="2026-04-20T10:01:30Z",
+    )
+
+    restored = KeryxMessageRecord.from_dict(
+        {
+            "message_id": "msg-001c",
+            "session_id": "session-001",
+            "from_agent": "planner",
+            "to_agent": "reviewer",
+            "kind": "question",
+            "body": "Backward-compatible payload omits delivery_mode.",
+            "created_at": "2026-04-20T10:01:40Z",
+        }
+    )
+
+    assert record.delivery_mode is KeryxDeliveryMode.AGENT_ONLY
+    assert record.to_dict()["delivery_mode"] == "agent_only"
+    assert restored.delivery_mode is KeryxDeliveryMode.AGENT_ONLY
+
+
+def test_keryx_message_record_invalid_delivery_mode_error() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Invalid Keryx message delivery_mode: expected one of "
+            r"'agent_only', 'user_direct'; got 'broadcast'"
+        ),
+    ):
+        KeryxMessageRecord(
+            message_id="msg-001d",
+            session_id="session-001",
+            from_agent="planner",
+            to_agent="reviewer",
+            kind="question",
+            body="Invalid delivery mode",
+            created_at="2026-04-20T10:01:45Z",
+            delivery_mode="broadcast",
+        )
 
 
 def test_keryx_message_record_missing_required_fields_error() -> None:

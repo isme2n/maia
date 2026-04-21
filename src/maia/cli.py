@@ -42,6 +42,7 @@ from maia.keryx_models import (
     KeryxSessionRecord,
     KeryxSessionStatus,
 )
+from maia.keryx_skill import ensure_agent_keryx_skill_installed
 from maia.keryx_service import KeryxService
 from maia.runtime_adapter import RuntimeLogsRequest, RuntimeStatusRequest, RuntimeStopRequest, RuntimeStartRequest, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
@@ -415,6 +416,7 @@ def _handle_agent_new(
     )
     registry.add(record)
     storage.save(registry_path, registry)
+    ensure_agent_keryx_skill_installed(record.agent_id)
     print(
         f"created agent_id={record.agent_id} name={_format_preview_value(record.name)} "
         f"call_sign={_format_preview_value(record.call_sign)} status={record.status.value}"
@@ -1779,6 +1781,7 @@ def _handle_agent_start(
     _require_shared_infra_ready(args.agent_id)
     _require_agent_setup_complete(record, stored_runtime_state)
     _require_agent_gateway_setup_complete(record, stored_runtime_state)
+    ensure_agent_keryx_skill_installed(record.agent_id)
     if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
         raise _agent_runtime_already_active_error(args.agent_id)
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))

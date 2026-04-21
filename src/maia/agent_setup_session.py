@@ -9,6 +9,7 @@ import shutil
 import subprocess
 
 from maia.app_state import get_agent_hermes_home
+from maia.keryx_skill import ensure_keryx_skill_installed
 
 __all__ = [
     "AgentSetupSessionResult",
@@ -95,6 +96,7 @@ def run_agent_setup_session(
 
     hermes_home = get_agent_hermes_home(agent_id)
     hermes_home.mkdir(parents=True, exist_ok=True)
+    ensure_keryx_skill_installed(hermes_home)
 
     child_env = os.environ.copy()
     child_env["HERMES_HOME"] = str(hermes_home)
@@ -114,6 +116,7 @@ def run_agent_setup_session(
         ) from exc
 
     exit_code = completed.returncode if completed.returncode >= 0 else 128 + abs(completed.returncode)
+    ensure_keryx_skill_installed(hermes_home)
     gateway_setup_status = (
         derive_gateway_setup_status(hermes_home) if exit_code == 0 else "incomplete"
     )

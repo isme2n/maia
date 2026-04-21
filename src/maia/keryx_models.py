@@ -9,6 +9,7 @@ from typing import Any, Self
 
 __all__ = [
     "KeryxAgentSummary",
+    "KeryxDeliveryMode",
     "KeryxHandoffRecord",
     "KeryxHandoffStatus",
     "KeryxMessageRecord",
@@ -109,6 +110,27 @@ def _coerce_handoff_status(value: object) -> "KeryxHandoffStatus":
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid Keryx handoff status: {value!r}") from exc
+
+
+class KeryxDeliveryMode(str, Enum):
+    """Supported delivery intent contract for Keryx messages."""
+
+    AGENT_ONLY = "agent_only"
+    USER_DIRECT = "user_direct"
+
+
+def _coerce_delivery_mode(value: object) -> "KeryxDeliveryMode":
+    try:
+        return (
+            value
+            if isinstance(value, KeryxDeliveryMode)
+            else KeryxDeliveryMode(value)
+        )
+    except (TypeError, ValueError) as exc:
+        allowed = ", ".join(repr(mode.value) for mode in KeryxDeliveryMode)
+        raise ValueError(
+            f"Invalid Keryx message delivery_mode: expected one of {allowed}; got {value!r}"
+        ) from exc
 
 
 @dataclass(slots=True)
@@ -323,6 +345,7 @@ class KeryxMessageRecord:
     kind: str
     body: str
     created_at: str
+    delivery_mode: KeryxDeliveryMode = KeryxDeliveryMode.AGENT_ONLY
     reply_to_message_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -360,6 +383,7 @@ class KeryxMessageRecord:
             error="Invalid Keryx message created_at: expected str",
             allow_empty=False,
         )
+        self.delivery_mode = _coerce_delivery_mode(self.delivery_mode)
         self.reply_to_message_id = _validate_optional_str(
             self.reply_to_message_id,
             error="Invalid Keryx message reply_to_message_id: expected str",
@@ -383,6 +407,7 @@ class KeryxMessageRecord:
             kind=self.kind,
             body=self.body,
             created_at=self.created_at,
+            delivery_mode=self.delivery_mode.value,
             reply_to_message_id=self.reply_to_message_id,
         )
 
@@ -397,6 +422,7 @@ class KeryxMessageRecord:
             "kind": self.kind,
             "body": self.body,
             "created_at": self.created_at,
+            "delivery_mode": self.delivery_mode.value,
         }
         if self.reply_to_message_id is not None:
             payload["reply_to_message_id"] = self.reply_to_message_id
@@ -427,6 +453,7 @@ class KeryxMessageRecord:
             kind=data["kind"],
             body=data["body"],
             created_at=data["created_at"],
+            delivery_mode=data.get("delivery_mode", KeryxDeliveryMode.AGENT_ONLY.value),
             reply_to_message_id=data.get("reply_to_message_id"),
         )
 
@@ -700,6 +727,7 @@ class KeryxThreadMessageView:
     kind: str
     body: str
     created_at: str
+    delivery_mode: str = KeryxDeliveryMode.AGENT_ONLY.value
     reply_to_message_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -737,6 +765,7 @@ class KeryxThreadMessageView:
             error="Invalid Keryx thread message created_at: expected str",
             allow_empty=False,
         )
+        self.delivery_mode = _coerce_delivery_mode(self.delivery_mode).value
         self.reply_to_message_id = _validate_optional_str(
             self.reply_to_message_id,
             error="Invalid Keryx thread message reply_to_message_id: expected str",
@@ -756,6 +785,7 @@ class KeryxThreadMessageView:
             kind=self.kind,
             body=self.body,
             created_at=self.created_at,
+            delivery_mode=self.delivery_mode,
             reply_to_message_id=self.reply_to_message_id,
         )
 

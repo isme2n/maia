@@ -56,12 +56,15 @@ maia agent stop planner
 Keryx is Maia's canonical collaboration root for live multi-agent work.
 
 - The product story is not “the operator manually relays every message in a CLI messenger.”
+- User-facing collaboration entry is `/keryx <instruction>`.
 - Users talk directly to a specific agent; Maia is not a central dispatcher or front desk for this flow.
 - If that agent delegates to another agent, the active conversation agent stays the user-facing anchor.
 - `thread` / `thread_id` are Maia's public names for the Keryx collaboration object.
 - Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.
+- Legacy `/call` and `/agent-call` are removed from the active collaboration contract.
 - Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract.
 - The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` as Keryx-backed operator views of open collaboration state, recent handoffs, and participant runtime context.
+- Keryx message delivery intent uses `delivery_mode`: `agent_only` keeps the exchange inside agent collaboration, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicitly reported as `failed`.
 - The target end state is multi-turn `request` / `question` / `answer` / `report` / `handoff` exchange rooted in Keryx collaboration state.
 
 ## Direct-agent delegation contract

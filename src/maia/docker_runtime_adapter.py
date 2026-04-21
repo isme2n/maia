@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,6 +54,7 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             {"HOME": str(self._state_path.parent.parent)},
         )
         hermes_home.mkdir(parents=True, exist_ok=True)
+        runtime_user = f"{os.getuid()}:{os.getgid()}"
         command = [
             docker_bin,
             "run",
@@ -61,6 +63,10 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             f"maia.agent_id={request.agent.agent_id}",
             "--network",
             MAIA_NETWORK_NAME,
+            # Match the invoking host user so new files in the mounted Hermes home
+            # stay writable by the host-side Maia process instead of drifting to root.
+            "--user",
+            runtime_user,
             "-w",
             spec.workspace,
             "-v",

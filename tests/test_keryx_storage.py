@@ -12,6 +12,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.keryx_models import (
+    KeryxDeliveryMode,
     KeryxHandoffRecord,
     KeryxHandoffStatus,
     KeryxMessageRecord,
@@ -45,6 +46,7 @@ def _build_message(
     message_id: str = "msg-001",
     session_id: str = "session-001",
     created_at: str = "2026-04-19T09:01:00Z",
+    delivery_mode: KeryxDeliveryMode = KeryxDeliveryMode.AGENT_ONLY,
 ) -> KeryxMessageRecord:
     return KeryxMessageRecord(
         message_id=message_id,
@@ -54,6 +56,7 @@ def _build_message(
         kind="request",
         body="Please review the Phase 1 storage patch.",
         created_at=created_at,
+        delivery_mode=delivery_mode,
     )
 
 
@@ -88,7 +91,7 @@ def test_keryx_storage_round_trips_phase1_records(tmp_path: Path) -> None:
         participants=["planner", "analyst"],
         updated_at="2026-04-19T09:10:00Z",
     )
-    message = _build_message()
+    message = _build_message(delivery_mode=KeryxDeliveryMode.USER_DIRECT)
     handoff = _build_handoff()
 
     storage.create_session(session)
@@ -99,6 +102,7 @@ def test_keryx_storage_round_trips_phase1_records(tmp_path: Path) -> None:
     assert storage.list_sessions() == [session, session_two]
     assert storage.get_session(session.session_id) == session
     assert storage.get_message(message.message_id) == message
+    assert storage.get_message(message.message_id).delivery_mode is KeryxDeliveryMode.USER_DIRECT
     assert storage.list_messages(session_id=session.session_id) == [message]
     assert storage.list_handoffs(session_id=session.session_id) == [handoff]
     assert storage.get_handoff(handoff.handoff_id) == handoff

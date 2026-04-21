@@ -16,6 +16,7 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.keryx_models import (
+    KeryxDeliveryMode,
     KeryxHandoffRecord,
     KeryxHandoffStatus,
     KeryxMessageRecord,
@@ -108,6 +109,7 @@ def _build_message(
     session_id: str = "session-001",
     from_agent: str = "planner",
     to_agent: str = "reviewer",
+    delivery_mode: KeryxDeliveryMode = KeryxDeliveryMode.AGENT_ONLY,
 ) -> KeryxMessageRecord:
     return KeryxMessageRecord(
         message_id=message_id,
@@ -117,6 +119,7 @@ def _build_message(
         kind="request",
         body="Please review the Phase 1 patch.",
         created_at="2026-04-20T09:15:00Z",
+        delivery_mode=delivery_mode,
     )
 
 
@@ -249,7 +252,7 @@ def test_keryx_http_server_exposes_phase1_json_routes(
     assert status == 200
     assert payload == []
 
-    message = _build_message().to_dict()
+    message = _build_message(delivery_mode=KeryxDeliveryMode.USER_DIRECT).to_dict()
     status, payload = _request(
         running_server,
         "POST",
@@ -360,4 +363,20 @@ def test_keryx_http_server_returns_400_for_invalid_json_and_id_mismatch(
     assert status == 400
     assert payload == {
         "error": "Keryx session session_id must match route id 'session-001'",
+    }
+
+    invalid_message = _build_message().to_dict()
+    invalid_message["delivery_mode"] = "broadcast"
+    status, payload = _request(
+        running_server,
+        "POST",
+        "/sessions/session-001/messages",
+        invalid_message,
+    )
+    assert status == 400
+    assert payload == {
+        "error": (
+            "Invalid Keryx message delivery_mode: expected one of "
+            "'agent_only', 'user_direct'; got 'broadcast'"
+        )
     }

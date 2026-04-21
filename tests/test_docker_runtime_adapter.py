@@ -14,6 +14,7 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maia.agent_model import AgentRecord, AgentStatus
 from maia.app_state import get_agent_hermes_home
+import maia.docker_runtime_adapter as docker_runtime_adapter_module
 from maia.docker_runtime_adapter import DockerRuntimeAdapter
 import maia.infra_runtime as infra_runtime_module
 from maia.infra_runtime import (
@@ -363,6 +364,38 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     assert f"KERYX_BASE_URL={runtime_keryx_base_url()}" in env_values
     assert "MAIA_STATE_DB_PATH=/maia/control/state.db" in env_values
     assert not [value for value in env_values if value.startswith("MAIA_BROKER_URL=")]
+
+
+def test_docker_runtime_adapter_start_sets_runtime_user_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    docker_script = tmp_path / "docker"
+    argv_path = tmp_path / "argv.json"
+    docker_script.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import json, sys\n"
+        "argv_path = Path(__file__).with_name('argv.json')\n"
+        "args = sys.argv[1:]\n"
+        "argv_path.write_text(json.dumps(args), encoding='utf-8')\n"
+        "print('runtime-001')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    docker_script.chmod(0o755)
+    monkeypatch.setattr(docker_runtime_adapter_module.os, "getuid", lambda: 1234)
+    monkeypatch.setattr(docker_runtime_adapter_module.os, "getgid", lambda: 2345)
+    adapter = DockerRuntimeAdapter(
+        state_storage=RuntimeStateStorage(),
+        state_path=tmp_path / "runtime-state.json",
+        docker_bin=str(docker_script),
+    )
+
+    start_result = adapter.start(RuntimeStartRequest(agent=_build_agent()))
+    assert start_result.runtime.runtime_handle == "runtime-001"
+
+    args = json.loads(argv_path.read_text(encoding="utf-8"))
+    user_index = args.index("--user")
+    assert args[user_index + 1] == "1234:2345"
+    assert args[user_index - 2:user_index + 2] == ["--network", MAIA_NETWORK_NAME, "--user", "1234:2345"]
 
 
 def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tmp_path: Path) -> None:
