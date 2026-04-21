@@ -79,6 +79,11 @@ AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
 QUICKSTART_EXAMPLES = PART1_OPERATOR_FLOW
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
+DOCTOR_ROLE_CONTRACT = (
+    "`maia doctor` is the first bootstrap gate for Maia shared infra.",
+    "It checks Docker, queue, and DB readiness only, then points you to the next step.",
+    "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.",
+)
 RUNTIME_SUPPORT_BOUNDARY = (
     "Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.",
     "Run `maia doctor` before using `agent start|stop|status|logs` for real.",
@@ -128,6 +133,10 @@ IMPORT_HELP_CONTRACT = (
 INSPECT_HELP_CONTRACT = (
     "`maia inspect <path>` is optional support for looking at a snapshot before restore.",
     "The normal Part 3 flow is still `maia export` + safety-first `maia import <path>`.",
+)
+SUPPORT_SURFACE_CONTRACT = (
+    "Portable state (`export`, `import`, `inspect`) stays public as operator support, not the first-run bootstrap path.",
+    "Keryx visibility (`thread`, `handoff`, `workspace`) stays public as operator support, not the Part 1 bootstrap flow.",
 )
 EXPORT_EXAMPLES = (
     "maia export",
@@ -195,7 +204,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(parser=parser)
     parser.epilog = _format_epilog_sections(
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
+        ("Doctor role:", DOCTOR_ROLE_CONTRACT),
         ("Portable state flow:", PORTABLE_STATE_FLOW),
+        ("Support surfaces:", SUPPORT_SURFACE_CONTRACT),
         ("Known limitations:", KNOWN_LIMITATIONS),
         ("Keryx collaboration contract:", PART2_CONVERSATION_CONTRACT),
         ("Direct-agent delegation contract:", DIRECT_AGENT_DELEGATION_CONTRACT),
@@ -300,7 +311,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "doctor":
-            command_parser.epilog = _format_epilog("Examples:", DOCTOR_EXAMPLES)
+            command_parser.epilog = _format_epilog_sections(
+                ("Role:", DOCTOR_ROLE_CONTRACT),
+                ("Examples:", DOCTOR_EXAMPLES),
+            )
         if command_name == "setup":
             command_parser.epilog = _format_epilog("Examples:", SETUP_EXAMPLES)
 

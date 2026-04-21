@@ -98,6 +98,7 @@
 - `docs/plans/phase18-direct-agent-delegation-and-user-anchored-collaboration.md`
 - Part 4 wording must keep the public story as `user -> A -> B -> A -> user`, with agent A staying the user-facing anchor instead of Maia becoming a front desk.
 - Closeout note: Task 124 locked a truthful regression using Maia's current anchor-thread interpretation, so the live delegation loop is verified on the same A-owned thread/context until a separate first-class user conversation object exists.
+- Part 4 closeout note: Tasks 142A/142B/142C/142D closed UX contract alignment across README/help/tests (including `doctor` positioning and interactive `maia agent new` wording). Recorded closeout evidence: `python3 -m maia --help`, `python3 -m maia doctor --help`, `python3 -m maia setup --help`, `python3 -m maia agent --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py` (`92 passed`).
 
 ---
 
@@ -142,5 +143,5 @@
 - [x] Part 1 complete
 - [x] Part 2 complete
 - [x] Part 3 complete
-- [ ] Part 4 complete
+- [x] Part 4 complete
 - [ ] Part 5 complete

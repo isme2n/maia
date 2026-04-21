@@ -89,6 +89,27 @@ def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
         assert line in text
 
 
+def _assert_contains_in_order(text: str, snippets: tuple[str, ...]) -> None:
+    start = 0
+    for snippet in snippets:
+        index = text.find(snippet, start)
+        assert index != -1, f"Missing snippet in order: {snippet!r}"
+        start = index + len(snippet)
+
+
+def _assert_not_contains_any(text: str, snippets: tuple[str, ...]) -> None:
+    for snippet in snippets:
+        assert snippet not in text
+
+
+def _markdown_numbered_lines(section: str) -> tuple[str, ...]:
+    return tuple(
+        line.strip()
+        for line in section.splitlines()
+        if ". " in line.strip() and line.strip().split(". ", 1)[0].isdigit()
+    )
+
+
 def _section_after_heading(text: str, heading: str, end_headings: tuple[str, ...]) -> str:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -143,18 +164,39 @@ def _assert_locked_portable_state_contract(section: str) -> None:
 
 def test_readme_locks_part1_public_flow() -> None:
     text = README_PATH.read_text(encoding="utf-8")
+    first_run = _section_after_heading(text, "## First run", ("## Part 1 operator flow",))
 
     assert "## First run" in text
     assert "Install Maia, then follow the Part 1 bootstrap path in this order" in text
     assert "maia doctor" in text
     assert "maia setup" in text
-    assert "maia agent new planner" in text
+    assert "maia agent new" in text
     assert "maia agent setup planner" in text
     assert "maia agent start planner" in text
     assert "maia agent stop planner" in text
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
     assert "interactively create an agent identity" in text.lower()
+    assert "`maia doctor` is the infra-only gate for this flow." in first_run
+    assert "Portable state and Keryx visibility stay available as support surfaces outside this first-run path." in first_run
+    assert _markdown_numbered_lines(first_run) == (
+        "1. `maia doctor`",
+        "2. `maia setup`",
+        "3. `maia agent new`",
+        "4. `maia agent setup <name>`",
+        "5. `maia agent start <name>`",
+    )
+    _assert_not_contains_any(
+        first_run,
+        (
+            "`maia export`",
+            "`maia import`",
+            "`maia inspect`",
+            "`maia thread`",
+            "`maia handoff`",
+            "`maia workspace`",
+        ),
+    )
     assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
@@ -271,6 +313,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
+    part1_section = _section_after_heading(captured.out, "Part 1 operator flow:", ("Doctor role:",))
     assert "usage: maia" in captured.out
     assert "agent" in captured.out
     assert "team" in captured.out
@@ -286,6 +329,8 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Check shared infra readiness" in captured.out
     assert "Bootstrap shared Maia infra" in captured.out
     assert "Part 1 operator flow:" in captured.out
+    assert "Doctor role:" in captured.out
+    assert "Support surfaces:" in captured.out
     assert "Known limitations:" in captured.out
     assert "Keryx collaboration contract:" in captured.out
     assert "Direct-agent delegation contract:" in captured.out
@@ -304,10 +349,46 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
         )
     )
     _assert_contains_lines(captured.out, PART1_OPERATOR_FLOW)
+    _assert_contains_in_order(
+        captured.out,
+        (
+            "maia doctor",
+            "maia setup",
+            "maia agent new",
+            "maia agent setup planner",
+            "maia agent start planner",
+        ),
+    )
+    assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
+    assert "It checks Docker, queue, and DB readiness only, then points you to the next step." in captured.out
+    assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
+    assert "Portable state (`export`, `import`, `inspect`) stays public as operator support, not the first-run bootstrap path." in captured.out
+    assert "Keryx visibility (`thread`, `handoff`, `workspace`) stays public as operator support, not the Part 1 bootstrap flow." in captured.out
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
     _assert_contains_lines(captured.out, DIRECT_AGENT_DELEGATION_CONTRACT)
     _assert_contains_lines(captured.out, PART2_VISIBILITY_FLOW)
+    _assert_contains_in_order(
+        part1_section,
+        (
+            "maia doctor",
+            "maia setup",
+            "maia agent new",
+            "maia agent setup planner",
+            "maia agent start planner",
+        ),
+    )
+    _assert_not_contains_any(
+        part1_section,
+        (
+            "maia export",
+            "maia import",
+            "maia inspect",
+            "maia thread",
+            "maia handoff",
+            "maia workspace",
+        ),
+    )
     _assert_locked_portable_state_contract(
         _section_after_heading(
             captured.out,
@@ -517,12 +598,20 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "Check shared infra readiness" in captured.out
+    assert "Check shared infra readiness for Docker, queue, and DB access only." in captured.out
     assert "Docker" in captured.out
     assert "queue" in captured.out
     assert "DB" in captured.out
+    assert "Role:" in captured.out
+    assert "maia setup" in captured.out
     assert "provider" not in captured.out
+    assert "hermes setup" not in captured.out
     assert "login" not in captured.out
+    assert "wizard" not in captured.out
     assert "Examples:" in captured.out
+    assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
+    assert "It checks Docker, queue, and DB readiness only, then points you to the next step." in captured.out
+    assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
     _assert_contains_lines(captured.out, DOCTOR_EXAMPLES)
     assert "doctor" in captured.out
 
@@ -980,6 +1069,7 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "## Part 1 operator flow" in readme
     assert "## What each command means" in readme
     assert "## Known limitations" in readme
+    assert "## Secondary surfaces" in readme
     assert "## Part 2 visibility flow" in readme
     assert "## Runtime support boundary" in readme
     assert "## Live host runtime recovery" in readme
@@ -995,6 +1085,9 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "Keryx is Maia's canonical collaboration root for live multi-agent work." in readme
     assert "Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract." in readme
     assert "Keryx-backed operator views of open collaboration state" in readme
+    assert "These remain public support workflows, but they are not the primary first-run bootstrap path." in readme
+    assert "Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows." in readme
+    assert "Keryx collaboration visibility commands (`thread`, `handoff`, `workspace`) remain available outside the Part 1 bootstrap story." in readme
     for line in PART2_VISIBILITY_FLOW:
         assert line in readme
     for line in RUNTIME_SUPPORT_BOUNDARY:

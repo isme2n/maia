@@ -11,10 +11,14 @@ Install Maia, then follow the Part 1 bootstrap path in this order:
 4. `maia agent setup <name>`
 5. `maia agent start <name>`
 
+`maia doctor` is the infra-only gate for this flow. It tells you whether to fix Docker, queue, or DB access first, or continue to `maia setup`.
+
 `maia agent setup` is an interactive CLI-only passthrough to `hermes setup` for one agent. Maia does not replace or reinterpret the Hermes setup wizard.
 
+Portable state and Keryx visibility stay available as support surfaces outside this first-run path.
+
 ## Part 1 operator flow
-Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story.
+Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story. `maia doctor` is the first shared-infra decision point, and the rest of the bootstrap path follows only after it points you to `maia setup`.
 
 ```bash
 maia doctor
@@ -28,8 +32,8 @@ maia agent stop planner
 ```
 
 ## What each command means
-- `maia doctor`: check shared infra readiness only: Docker, queue, and DB.
-- `maia setup`: bootstrap shared infra only.
+- `maia doctor`: check shared infra readiness only: Docker, queue, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.
+- `maia setup`: bootstrap shared infra only after `doctor` says the shared infra path is ready to continue.
 - `maia agent new`: interactively create an agent identity by asking for agent name, how the agent addresses the user, and persona. New agents still carry the shared Hermes worker runtime defaults needed for first start.
 - `maia agent setup <name>`: open `hermes setup` for that agent.
 - `maia agent setup-gateway <name>`: reopen only the agent-scoped `hermes setup gateway` flow if messaging/home-channel setup was skipped the first time.
@@ -49,6 +53,8 @@ maia agent stop planner
 - Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.
 
 ## Secondary surfaces
+These remain public support workflows, but they are not the primary first-run bootstrap path.
+
 - Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows.
 - Keryx collaboration visibility commands (`thread`, `handoff`, `workspace`) remain available outside the Part 1 bootstrap story.
 
@@ -180,7 +186,7 @@ These are Keryx-backed operator views for checking who is pending, which thread 
 - Part 1 operator flow:
   - `maia doctor`
   - `maia setup`
-  - `maia agent new planner`
+  - `maia agent new`
   - `maia agent setup planner`
   - `maia agent start planner`
   - `maia agent status planner`
