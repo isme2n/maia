@@ -72,6 +72,7 @@
 - preview/risk/warning UX hardening
 - import/export docs/help/tests alignment
 - bundle stability
+- Closeout note: Tasks 141A/141B/141C locked the current portable-state contract as `maia export`, `maia export <path>`, and safety-first `maia import <path>`, with `maia inspect <path>` kept as optional support. Recorded closeout evidence uses `python3 -m maia --help`, `python3 -m maia export --help`, `python3 -m maia import --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py`. Runtime-focused portable-state checks remain documented in `docs/contracts/portable-state-drift-checks.md` as follow-up drift checks. Later Part 4/5 work can polish wording and OSS packaging, but it does not widen portable-state scope without new contract work.
 
 ---
 
@@ -140,6 +141,6 @@
 ## Progress tracker
 - [x] Part 1 complete
 - [x] Part 2 complete
-- [ ] Part 3 complete
+- [x] Part 3 complete
 - [ ] Part 4 complete
 - [ ] Part 5 complete

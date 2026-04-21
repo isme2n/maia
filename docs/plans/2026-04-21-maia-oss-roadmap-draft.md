@@ -116,3 +116,4 @@ Close P0/P1 from real users before public confidence claims.
 ## Decision log
 - This is intentionally draft-first and changeable.
 - At each stream boundary, tighten with explicit metrics and acceptance tests.
+- Part 3 portable-state contract is the current Maia baseline: `maia export` default snapshot, `maia export <path>` explicit snapshot, safety-first `maia import <path>`, and optional-support `maia inspect <path>`. Recorded closeout evidence: `python3 -m maia --help`, `python3 -m maia export --help`, `python3 -m maia import --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py`. Runtime-focused portable-state checks are tracked in `docs/contracts/portable-state-drift-checks.md` as follow-up drift checks. Later OSS streams should package and document this baseline, not quietly expand portable-state scope.

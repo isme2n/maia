@@ -118,6 +118,29 @@ def _assert_locked_collaboration_contract(section: str) -> None:
     assert "`/agent-call`" not in active_section
 
 
+def _assert_locked_portable_state_contract(section: str) -> None:
+    assert (
+        "Primary Part 3 flow: `maia export` saves the full portable snapshot to "
+        "`~/.maia/exports/maia-state.maia` by default."
+    ) in section
+    assert (
+        "`maia export <path>` writes the same portable state to an explicit "
+        "user/project snapshot path."
+    ) in section
+    assert (
+        "`maia import <path>` restores safely: preview first, confirm before "
+        "destructive apply, use `--yes` to skip confirmation."
+    ) in section
+    assert (
+        "`maia inspect <path>` is an optional support command, not a required "
+        "part of the normal save/restore flow."
+    ) in section
+    primary_section = "\n".join(
+        line for line in section.splitlines() if "optional support command" not in line
+    )
+    assert "`maia inspect <path>`" not in primary_section
+
+
 def test_readme_locks_part1_public_flow() -> None:
     text = README_PATH.read_text(encoding="utf-8")
 
@@ -285,6 +308,13 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
     _assert_contains_lines(captured.out, DIRECT_AGENT_DELEGATION_CONTRACT)
     _assert_contains_lines(captured.out, PART2_VISIBILITY_FLOW)
+    _assert_locked_portable_state_contract(
+        _section_after_heading(
+            captured.out,
+            "Portable state flow:",
+            ("Known limitations:",),
+        )
+    )
 
 
 def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixture[str]) -> None:
@@ -856,6 +886,12 @@ def test_import_help_describes_safety_flags(capsys: pytest.CaptureFixture[str]) 
     assert "without" in captured.out
     assert "truncation" in captured.out
     assert "Skip overwrite confirmation for destructive imports" in captured.out
+    assert "`maia import <path>` is the primary restore flow for Maia portable state." in captured.out
+    assert (
+        "Use `--preview` for a read-only diff, add `--verbose-preview` for full "
+        "lists, and use `--yes` only when you want to skip overwrite confirmation."
+    ) in captured.out
+    assert "`maia inspect <path>`" not in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, IMPORT_EXAMPLES)
 
@@ -867,6 +903,9 @@ def test_inspect_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> N
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "Read a .maia bundle, manifest.json" in captured.out
+    assert "`maia inspect <path>` is optional support for looking at a snapshot before restore." in captured.out
+    assert "The normal Part 3 flow is still `maia export` + safety-first `maia import <path>`." in captured.out
+    assert "`maia inspect <path>` is the primary restore flow" not in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, INSPECT_EXAMPLES)
 
@@ -879,6 +918,15 @@ def test_export_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     captured = capsys.readouterr()
     assert "Write a Maia bundle (.maia) or raw registry snapshot" in captured.out
     assert "path" in captured.out
+    assert (
+        "`maia export` writes the full Maia portable snapshot to "
+        "`~/.maia/exports/maia-state.maia` by default."
+    ) in captured.out
+    assert (
+        "Pass `[path]` to write the same snapshot to an explicit user/project "
+        "bundle or raw registry path."
+    ) in captured.out
+    assert "`maia inspect <path>`" not in captured.out
     assert "Examples:" in captured.out
     _assert_contains_lines(captured.out, EXPORT_EXAMPLES)
 
@@ -955,7 +1003,15 @@ def test_readme_examples_align_with_public_help() -> None:
         assert line in readme
     for line in V1_RELEASE_CHECKLIST:
         assert line in readme
+    assert "Part 3 portable-state mental model: export all by default, export to an explicit path when you want a named user/project snapshot, then import safely with preview + confirm." in readme
+    assert "`maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`." in readme
+    assert "`maia export [path] --label <label> --description <text>` lets the operator write a user/project snapshot to an explicit path while keeping the same bundle/import contract and overriding manifest metadata." in readme
+    assert "`maia import <path>` always prints the preview/risk block first. When the current registry is non-empty or team-level portable metadata would be overwritten, it then performs a destructive-import preflight: warns about overwrite behavior and asks for confirmation." in readme
+    assert "`maia import <path> --yes` skips the interactive confirmation but still prints the preview/risk summary and overwrite warning." in readme
+    assert "`maia inspect <path>` is a secondary support command for pre-restore inspection; it is not required for the normal `maia export` + `maia import <path>` flow." in readme
     assert "Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`" in readme
+    assert "Primary Part 3 portable-state flow: `maia export`, `maia export <path>`, `maia import <path>`; use `maia inspect <path>` only as optional support when you want to inspect a snapshot before restore." in readme
+    assert "Primary Part 3 portable-state flow: `maia export`, `maia inspect <path>`, `maia import <path>`" not in readme
     assert "Team metadata: `maia team show`, `maia team update ...`" in readme
     assert "Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`" in readme
     assert f"`{DOCTOR_EXAMPLES[0]}`" in readme

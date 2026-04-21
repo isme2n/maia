@@ -111,6 +111,24 @@ HOST_VALIDATION_REPORT_TEMPLATE = (
     "agent_setup=ok|fail",
     "live_runtime_smoke=ok|fail",
 )
+PORTABLE_STATE_FLOW = (
+    "Primary Part 3 flow: `maia export` saves the full portable snapshot to `~/.maia/exports/maia-state.maia` by default.",
+    "`maia export <path>` writes the same portable state to an explicit user/project snapshot path.",
+    "`maia import <path>` restores safely: preview first, confirm before destructive apply, use `--yes` to skip confirmation.",
+    "`maia inspect <path>` is an optional support command, not a required part of the normal save/restore flow.",
+)
+EXPORT_HELP_CONTRACT = (
+    "`maia export` writes the full Maia portable snapshot to `~/.maia/exports/maia-state.maia` by default.",
+    "Pass `[path]` to write the same snapshot to an explicit user/project bundle or raw registry path.",
+)
+IMPORT_HELP_CONTRACT = (
+    "`maia import <path>` is the primary restore flow for Maia portable state.",
+    "Use `--preview` for a read-only diff, add `--verbose-preview` for full lists, and use `--yes` only when you want to skip overwrite confirmation.",
+)
+INSPECT_HELP_CONTRACT = (
+    "`maia inspect <path>` is optional support for looking at a snapshot before restore.",
+    "The normal Part 3 flow is still `maia export` + safety-first `maia import <path>`.",
+)
 EXPORT_EXAMPLES = (
     "maia export",
     "maia export backups/team.maia",
@@ -177,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(parser=parser)
     parser.epilog = _format_epilog_sections(
         ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
+        ("Portable state flow:", PORTABLE_STATE_FLOW),
         ("Known limitations:", KNOWN_LIMITATIONS),
         ("Keryx collaboration contract:", PART2_CONVERSATION_CONTRACT),
         ("Direct-agent delegation contract:", DIRECT_AGENT_DELEGATION_CONTRACT),
@@ -187,22 +206,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command_name in TOP_LEVEL_TRANSFER_COMMANDS:
         transfer_help = {
-            "export": "Export Maia portable state",
-            "import": "Import Maia portable state safely",
-            "inspect": "Inspect an importable Maia snapshot",
+            "export": "Export Maia portable state (default full snapshot or explicit path)",
+            "import": "Import Maia portable state safely (preview, confirm, --yes)",
+            "inspect": "Inspect an importable Maia snapshot (optional support)",
+        }[command_name]
+        description_text = {
+            "export": (
+                "Export Maia portable state. Omit `[path]` to write the full snapshot "
+                "to `~/.maia/exports/maia-state.maia`, or provide `[path]` to write an "
+                "explicit user/project snapshot."
+            ),
+            "import": (
+                "Import Maia portable state safely. `maia import <path>` always prints "
+                "the preview/risk block first, then asks for confirmation before "
+                "destructive apply unless `--yes` is set."
+            ),
+            "inspect": (
+                "Inspect an importable Maia snapshot as optional support before restore. "
+                "`inspect` is not required for the normal `export` + `import` flow."
+            ),
         }[command_name]
         command_parser = top_level.add_parser(
             command_name,
             help=transfer_help,
+            description=description_text,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         command_parser.set_defaults(parser=command_parser)
         if command_name == "export":
-            command_parser.epilog = _format_epilog("Examples:", EXPORT_EXAMPLES)
+            command_parser.epilog = _format_epilog_sections(
+                ("Flow:", EXPORT_HELP_CONTRACT),
+                ("Examples:", EXPORT_EXAMPLES),
+            )
             command_parser.add_argument(
                 "path",
                 nargs="?",
-                help="Write a Maia bundle (.maia) or raw registry snapshot path",
+                help="Write a Maia bundle (.maia) or raw registry snapshot path. Omit to use `~/.maia/exports/maia-state.maia`.",
             )
             command_parser.add_argument(
                 "--label",
@@ -214,9 +253,15 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command_name in {"import", "inspect"}:
             if command_name == "import":
-                command_parser.epilog = _format_epilog("Examples:", IMPORT_EXAMPLES)
+                command_parser.epilog = _format_epilog_sections(
+                    ("Safety flow:", IMPORT_HELP_CONTRACT),
+                    ("Examples:", IMPORT_EXAMPLES),
+                )
             if command_name == "inspect":
-                command_parser.epilog = _format_epilog("Examples:", INSPECT_EXAMPLES)
+                command_parser.epilog = _format_epilog_sections(
+                    ("Support role:", INSPECT_HELP_CONTRACT),
+                    ("Examples:", INSPECT_EXAMPLES),
+                )
             command_parser.add_argument(
                 "path",
                 help="Read a .maia bundle, manifest.json, or raw registry snapshot path",

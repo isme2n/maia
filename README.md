@@ -121,8 +121,10 @@ These are Keryx-backed operator views for checking who is pending, which thread 
 - `JsonRegistryStorage` saves the agent registry as a single JSON object with an `agents` array.
 - Missing registry files load as an empty `AgentRegistry`.
 - Runtime CLI commands `maia export|import|inspect` operate on Maia portable state while Maia keeps one canonical SQLite DB at `~/.maia/maia.db` and the default registry path `~/.maia/registry.json` as the current portable source/target state.
+- Part 3 portable-state mental model: export all by default, export to an explicit path when you want a named user/project snapshot, then import safely with preview + confirm.
 - `maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`.
-- `maia export [path] --label <label> --description <text>` lets the operator override manifest metadata while keeping the same bundle/import contract.
+- `maia export [path] --label <label> --description <text>` lets the operator write a user/project snapshot to an explicit path while keeping the same bundle/import contract and overriding manifest metadata.
+- `maia import <path>` is the primary restore path for Maia portable state.
 - `maia import <path> --preview` shows an import diff summary plus a risk classification line without mutating the current local registry.
 - The preview also includes a `team` diff line so team-level portable metadata changes are visible before apply.
 - Long preview value lists (`added`, `removed`, `changed`) truncate after 5 entries and append `...(+X)` while keeping the summary counts intact.
@@ -143,6 +145,7 @@ These are Keryx-backed operator views for checking who is pending, which thread 
   - `no_shared_agent_ids`
 - `maia import <path>` always prints the preview/risk block first. When the current registry is non-empty or team-level portable metadata would be overwritten, it then performs a destructive-import preflight: warns about overwrite behavior and asks for confirmation.
 - `maia import <path> --yes` skips the interactive confirmation but still prints the preview/risk summary and overwrite warning.
+- `maia inspect <path>` is a secondary support command for pre-restore inspection; it is not required for the normal `maia export` + `maia import <path>` flow.
 - `maia inspect <path>` inspects an importable Maia snapshot before restore and prints bundle format, manifest scope metadata, bundle label/version metadata, provenance metadata, agent names, status counts, and agent profile summaries.
 - `maia team show` prints the current portable team metadata from `~/.maia/team.json` using the same encoded display format as inspect output.
 - `maia team update ...` updates only team-level portable metadata (`team_name`, `team_description`, `team_tags`, `default_agent_id`) and never mutates agent persona/SOUL state.
@@ -190,6 +193,7 @@ These are Keryx-backed operator views for checking who is pending, which thread 
   - `live_runtime_smoke=ok|fail`
 - Secondary surfaces (not Part 1 bootstrap):
   - Portable state: `maia export`, `maia inspect <path>`, `maia import <path>`
+- Primary Part 3 portable-state flow: `maia export`, `maia export <path>`, `maia import <path>`; use `maia inspect <path>` only as optional support when you want to inspect a snapshot before restore.
 - Team metadata: `maia team show`, `maia team update ...`
 - Collaboration visibility: `maia thread ...`, `maia handoff ...`, `maia workspace show ...`
 - Delegation anchor contract: `user -> A -> B -> A -> user`
