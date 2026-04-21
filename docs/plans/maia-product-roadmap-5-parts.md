@@ -118,6 +118,7 @@
 - CONTRIBUTING / TESTING / architecture docs separation
 - internal vs public surface separation
 - final repo polish for open-source release
+- Part 5 closeout note: Tasks 143A/143B/143C closed OSS-facing surface alignment by adding a Part 5 public-surface contract matrix + drift checks, restructuring README around product/install/quickstart/concepts, and splitting contributor-facing content into `CONTRIBUTING.md`, `TESTING.md`, and `ARCHITECTURE.md`. Recorded closeout evidence: `python3 -m maia --help`, `python3 -m maia agent --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py` (`151 passed`).
 
 ---
 
@@ -144,4 +145,4 @@
 - [x] Part 2 complete
 - [x] Part 3 complete
 - [x] Part 4 complete
-- [ ] Part 5 complete
+- [x] Part 5 complete
