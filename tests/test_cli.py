@@ -216,7 +216,7 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "## Part 2 visibility flow" in text
     assert "Keryx-backed operator views" in text
     assert "still lands in the next task" not in text
-    assert "bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB" in text
+    assert "bootstraps the shared Maia network, RabbitMQ container, Keryx HTTP API container, and SQLite state DB" in text
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "Secondary surfaces" in text
@@ -360,7 +360,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
         ),
     )
     assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
-    assert "It checks Docker, queue, and DB readiness only, then points you to the next step." in captured.out
+    assert "It checks Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
     assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
     assert "Portable state (`export`, `import`, `inspect`) stays public as operator support, not the first-run bootstrap path." in captured.out
     assert "Keryx visibility (`thread`, `handoff`, `workspace`) stays public as operator support, not the Part 1 bootstrap flow." in captured.out
@@ -645,10 +645,11 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "Check shared infra readiness" in captured.out
-    assert "Check shared infra readiness for Docker, queue, and DB access only." in captured.out
+    assert "Check shared infra readiness for Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB access only." in captured.out
     assert "Docker" in captured.out
-    assert "queue" in captured.out
-    assert "DB" in captured.out
+    assert "RabbitMQ" in captured.out
+    assert "Keryx HTTP API" in captured.out
+    assert "SQLite" in captured.out
     assert "Role:" in captured.out
     assert "maia setup" in captured.out
     assert "provider" not in captured.out
@@ -657,7 +658,7 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "wizard" not in captured.out
     assert "Examples:" in captured.out
     assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
-    assert "It checks Docker, queue, and DB readiness only, then points you to the next step." in captured.out
+    assert "It checks Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
     assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
     _assert_contains_lines(captured.out, DOCTOR_EXAMPLES)
     assert "doctor" in captured.out
@@ -671,8 +672,9 @@ def test_setup_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> Non
     captured = capsys.readouterr()
     assert "Bootstrap shared Maia infra" in captured.out
     assert "Docker" in captured.out
-    assert "queue" in captured.out
-    assert "DB" in captured.out
+    assert "RabbitMQ" in captured.out
+    assert "Keryx HTTP API" in captured.out
+    assert "SQLite" in captured.out
     assert "team defaults" not in captured.out
     assert "model defaults" not in captured.out
     assert "wizard" not in captured.out
@@ -697,8 +699,8 @@ def test_setup_command_prints_bootstrap_summary_from_infra_runtime(
     assert main(["setup"]) == 0
     captured = capsys.readouterr()
     assert "Created Maia network maia." in captured.out
-    assert "Started shared queue maia-rabbitmq." in captured.out
-    assert "Maia SQLite DB is ready at" in captured.out
+    assert "Started RabbitMQ maia-rabbitmq." in captured.out
+    assert "SQLite State DB is ready at" in captured.out
     assert "Shared infra is ready." in captured.out
     assert "Next: run maia agent new" in captured.out
     assert captured.err == ""

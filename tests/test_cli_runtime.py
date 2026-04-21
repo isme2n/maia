@@ -529,9 +529,9 @@ def test_doctor_reports_missing_docker(tmp_path: Path, monkeypatch: pytest.Monke
     lines = result.stdout.strip().splitlines()
     assert lines == [
         "✗ Docker FAIL — Docker can't run because Docker is missing",
-        '✗ Queue FAIL — Queue health needs a working Docker daemon',
-        '✗ Keryx FAIL — Keryx health needs a working Docker daemon',
-        '✓ Maia DB OK',
+        '• RabbitMQ BLOCKED — RabbitMQ health needs a working Docker daemon',
+        '• Keryx HTTP API BLOCKED — Keryx HTTP API health needs a working Docker daemon',
+        '✓ SQLite State DB OK',
         'Next: install Docker, then run maia doctor again',
     ]
 
@@ -549,9 +549,9 @@ def test_doctor_reports_queue_missing_before_setup(tmp_path: Path, monkeypatch: 
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
-        '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
-        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
-        '✓ Maia DB OK',
+        '✗ RabbitMQ FAIL — RabbitMQ container maia-rabbitmq is not running',
+        '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
+        '✓ SQLite State DB OK',
         'Next: run maia setup to bootstrap shared infra',
     ]
 
@@ -581,9 +581,9 @@ def test_doctor_accepts_reachable_external_queue_before_setup(
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
-        '✓ Queue OK',
-        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
-        '✓ Maia DB OK',
+        '✓ RabbitMQ OK',
+        '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
+        '✓ SQLite State DB OK',
         'Next: run maia setup to bootstrap shared infra',
     ]
 
@@ -605,9 +605,9 @@ def test_doctor_points_to_external_queue_fix_when_broker_url_is_unreachable(
     lines = result.stdout.strip().splitlines()
     assert lines == [
         '✓ Docker OK',
-        '✗ Queue FAIL — Connection refused',
-        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
-        '✓ Maia DB OK',
+        '✗ RabbitMQ FAIL — Connection refused',
+        '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
+        '✓ SQLite State DB OK',
         'Next: fix MAIA_BROKER_URL or the external RabbitMQ service, then run maia doctor again',
     ]
 
@@ -632,9 +632,9 @@ def test_doctor_and_setup_handle_corrupt_state_db_without_traceback(
     doctor_lines = doctor.stdout.strip().splitlines()
     assert doctor_lines == [
         '✓ Docker OK',
-        '✗ Queue FAIL — RabbitMQ container maia-rabbitmq is not running',
-        '✗ Keryx FAIL — Keryx endpoint http://maia-keryx:8765 is not running',
-        f"✗ Maia DB FAIL — Maia state DB at {state_db_path} is unreadable",
+        '✗ RabbitMQ FAIL — RabbitMQ container maia-rabbitmq is not running',
+        '✗ Keryx HTTP API FAIL — Keryx HTTP API endpoint http://maia-keryx:8765 is not running',
+        f"✗ SQLite State DB FAIL — Maia state DB at {state_db_path} is unreadable",
         'Next: run maia setup to bootstrap shared infra',
     ]
 
@@ -662,9 +662,9 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     setup_lines = setup.stdout.strip().splitlines()
     assert setup_lines[0] == 'Created Maia network maia.'
     assert setup_lines[1] == 'Created Maia volume maia-rabbitmq-data.'
-    assert setup_lines[2] == 'Started shared queue maia-rabbitmq.'
-    assert setup_lines[3] == 'Started shared Keryx endpoint http://maia-keryx:8765.'
-    assert setup_lines[4] == f'Maia SQLite DB is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
+    assert setup_lines[2] == 'Started RabbitMQ maia-rabbitmq.'
+    assert setup_lines[3] == 'Started Keryx HTTP API http://maia-keryx:8765.'
+    assert setup_lines[4] == f'SQLite State DB is ready at {get_state_db_path({"HOME": str(tmp_path)})}.'
     assert setup_lines[5] == 'Shared infra is ready.'
     assert setup_lines[6] == 'Next: run maia agent new'
     assert setup.stderr == ''
@@ -677,9 +677,9 @@ def test_setup_bootstraps_shared_infra_and_makes_doctor_pass(
     doctor_lines = doctor.stdout.strip().splitlines()
     assert doctor_lines == [
         '✓ Docker OK',
-        '✓ Queue OK',
-        '✓ Keryx OK',
-        '✓ Maia DB OK',
+        '✓ RabbitMQ OK',
+        '✓ Keryx HTTP API OK',
+        '✓ SQLite State DB OK',
         '✓ Shared infra ready',
     ]
 
@@ -715,9 +715,9 @@ def test_doctor_reports_docker_permission_problem(tmp_path: Path, monkeypatch: p
     lines = result.stdout.strip().splitlines()
     assert lines == [
         "✗ Docker FAIL — Docker is installed, but this user cannot talk to the Docker daemon",
-        '✗ Queue FAIL — Queue health needs a working Docker daemon',
-        '✗ Keryx FAIL — Keryx health needs a working Docker daemon',
-        '✓ Maia DB OK',
+        '• RabbitMQ BLOCKED — RabbitMQ health needs a working Docker daemon',
+        '• Keryx HTTP API BLOCKED — Keryx HTTP API health needs a working Docker daemon',
+        '✓ SQLite State DB OK',
         'Next: fix Docker permissions for this user, then run maia doctor again',
     ]
 

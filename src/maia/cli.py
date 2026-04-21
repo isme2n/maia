@@ -307,6 +307,42 @@ def _doctor_next_step(checks: list[dict[str, str]], failed_checks: list[str]) ->
     return "fix the failed checks above, then run maia doctor again"
 
 
+def _doctor_component_label(name: str) -> str:
+    return {
+        "docker": "Docker",
+        "queue": "RabbitMQ",
+        "keryx": "Keryx HTTP API",
+        "state_db": "SQLite State DB",
+    }[name]
+
+
+def _doctor_status_token(check: dict[str, str]) -> tuple[str, str]:
+    status = check["status"]
+    if status == "ok":
+        return "✓", "OK"
+    if status == "blocked":
+        return "•", "BLOCKED"
+    return "✗", "FAIL"
+
+
+def _doctor_color_enabled() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    isatty = getattr(sys.stdout, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def _style_doctor_token(text: str, token: str) -> str:
+    if not _doctor_color_enabled():
+        return text
+    color = {
+        "OK": "32",
+        "BLOCKED": "33",
+        "FAIL": "31",
+    }[token]
+    return f"\033[{color}m{text}\033[0m"
+
+
 def _doctor_check_by_name(checks: list[dict[str, str]], name: str) -> dict[str, str] | None:
     return next((check for check in checks if check["name"] == name), None)
 
@@ -323,33 +359,32 @@ def _format_doctor_summary_lines(checks: list[dict[str, str]], failed_checks: li
         docker_cli and docker_cli["status"] == "ok" and docker_daemon and docker_daemon["status"] == "ok"
     )
     if docker_ok:
-        lines.append("✓ Docker OK")
+        icon, token = "✓", "OK"
+        lines.append(f"{_style_doctor_token(icon, token)} {_doctor_component_label('docker')} {_style_doctor_token(token, token)}")
     else:
         detail = docker_daemon["detail"] if docker_daemon and docker_daemon["status"] != "ok" else (
             "Docker CLI is missing" if docker_cli and docker_cli["status"] != "ok" else "Docker is not ready"
         )
-        lines.append(f"✗ Docker FAIL — {detail}")
+        icon, token = "✗", "FAIL"
+        lines.append(
+            f"{_style_doctor_token(icon, token)} {_doctor_component_label('docker')} {_style_doctor_token(token, token)} — {detail}"
+        )
 
-    if queue and queue["status"] == "ok":
-        lines.append("✓ Queue OK")
-    elif queue:
-        lines.append(f"✗ Queue FAIL — {queue['detail']}")
-
-    if keryx and keryx["status"] == "ok":
-        lines.append("✓ Keryx OK")
-    elif keryx:
-        lines.append(f"✗ Keryx FAIL — {keryx['detail']}")
-
-    if state_db and state_db["status"] == "ok":
-        lines.append("✓ Maia DB OK")
-    elif state_db:
-        lines.append(f"✗ Maia DB FAIL — {state_db['detail']}")
+    for check_name, check in (("queue", queue), ("keryx", keryx), ("state_db", state_db)):
+        if not check:
+            continue
+        icon, token = _doctor_status_token(check)
+        lines.append(
+            f"{_style_doctor_token(icon, token)} {_doctor_component_label(check_name)} {_style_doctor_token(token, token)}"
+            + ("" if token == "OK" else f" — {check['detail']}")
+        )
 
     next_step = _doctor_next_step(checks, failed_checks)
     if failed_checks:
         lines.append(f"Next: {next_step}")
     else:
-        lines.append("✓ Shared infra ready")
+        icon, token = "✓", "OK"
+        lines.append(f"{_style_doctor_token(icon, token)} Shared infra ready")
     return lines
 
 
@@ -365,11 +400,11 @@ def _format_setup_step_line(step: dict[str, str]) -> str:
     if step["step"] == "volume":
         return f"{action} Maia volume {step['detail']}."
     if step["step"] == "queue":
-        return f"{action} shared queue {step['detail']}."
+        return f"{action} RabbitMQ {step['detail']}."
     if step["step"] == "keryx":
-        return f"{action} shared Keryx endpoint {step['detail']}."
+        return f"{action} Keryx HTTP API {step['detail']}."
     if step["step"] == "db":
-        return f"Maia SQLite DB is ready at {step['detail']}."
+        return f"SQLite State DB is ready at {step['detail']}."
     return f"{action} {step['step']} {step['detail']}."
 
 

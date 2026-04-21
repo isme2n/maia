@@ -73,8 +73,8 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 ## Known limitations
 
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
-- Shared infra depends on a reachable queue and DB state path.
-- `maia setup` bootstraps the shared Maia network, RabbitMQ container, and SQLite state DB.
+- Shared infra currently depends on RabbitMQ, the Keryx HTTP API, and a writable SQLite state DB path.
+- `maia setup` bootstraps the shared Maia network, RabbitMQ container, Keryx HTTP API container, and SQLite state DB.
 - `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
 - `maia agent start` now also requires gateway/home-channel setup to be complete; rerun `maia agent setup-gateway <name>` if that step was skipped.
 - Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.
@@ -154,13 +154,13 @@ Detailed contributor material lives outside the primary onboarding flow:
 
 ## Runtime support boundary
 
-- Fake-docker tests verify Maia's runtime command flow, not whether Docker, the queue, or the DB work on this host.
+- Fake-docker tests verify Maia's runtime command flow, not whether Docker, RabbitMQ, the Keryx HTTP API, or the SQLite state DB work on this host.
 - Run `maia doctor` before using `agent start|stop|status|logs` for real.
 - Run `maia setup` to bootstrap shared infra before the first agent run.
 
 ## Live host runtime recovery
 
-- If doctor fails, fix Docker, queue, or DB access first.
+- If doctor fails, fix Docker, RabbitMQ, Keryx HTTP API, or SQLite state DB access first.
 - If setup fails, finish shared infra bootstrap before retrying agent commands.
 - If agent setup fails, rerun `maia agent setup <name>`.
 - If start fails, rerun doctor and confirm shared infra is ready.
@@ -169,7 +169,7 @@ Detailed contributor material lives outside the primary onboarding flow:
 Compatibility note for tests: the legacy V1 checklist was removed from the public README surface in Task 143B.
 ## V1 release checklist
 - Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.
-- `doctor` stays infra-only: Docker, queue, and DB.
+- `doctor` stays infra-only: Docker, RabbitMQ, Keryx HTTP API, and SQLite state DB.
 - `agent new` interactively captures agent name, user call-sign, and persona.
 - `agent setup` is the operator path to open `hermes setup` for one agent.
 -->

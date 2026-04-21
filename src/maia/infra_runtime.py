@@ -91,7 +91,7 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
             {
                 "name": "queue",
                 "status": "blocked",
-                "detail": "Queue health needs a working Docker daemon",
+                "detail": "RabbitMQ health needs a working Docker daemon",
                 "remediation": "Fix Docker first, then run maia doctor again",
             }
         )
@@ -99,7 +99,7 @@ def collect_doctor_checks(state_path: Path | str) -> list[dict[str, str]]:
             {
                 "name": "keryx",
                 "status": "blocked",
-                "detail": "Keryx health needs a working Docker daemon",
+                "detail": "Keryx HTTP API health needs a working Docker daemon",
                 "remediation": "Fix Docker first, then run maia doctor again",
             }
         )
@@ -192,7 +192,7 @@ def _collect_queue_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         return {
             "name": "queue",
             "status": "blocked",
-            "detail": "Queue health needs a working Docker daemon",
+            "detail": "RabbitMQ health needs a working Docker daemon",
             "remediation": "Fix Docker first, then run maia doctor again",
         }
 
@@ -231,7 +231,7 @@ def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         return {
             "name": "keryx",
             "status": "blocked",
-            "detail": "Keryx health needs a working Docker daemon",
+            "detail": "Keryx HTTP API health needs a working Docker daemon",
             "remediation": "Fix Docker first, then run maia doctor again",
         }
 
@@ -242,7 +242,7 @@ def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         return {
             "name": "keryx",
             "status": "missing",
-            "detail": f"Keryx endpoint {runtime_keryx_base_url()} is not running",
+            "detail": f"Keryx HTTP API endpoint {runtime_keryx_base_url()} is not running",
             "remediation": "Run maia setup to bootstrap shared infra",
         }
 
@@ -251,14 +251,14 @@ def _collect_keryx_check(docker_bin: str, docker_daemon_check: dict[str, str]) -
         return {
             "name": "keryx",
             "status": "ok",
-            "detail": f"Keryx endpoint {runtime_keryx_base_url()} is running",
+            "detail": f"Keryx HTTP API endpoint {runtime_keryx_base_url()} is running",
             "remediation": "No action needed",
         }
     return {
         "name": "keryx",
         "status": "fail",
-        "detail": f"Keryx container {MAIA_KERYX_CONTAINER_NAME} is {status or 'not ready'}",
-        "remediation": "Run maia setup to restart the shared Keryx endpoint",
+        "detail": f"Keryx HTTP API container {MAIA_KERYX_CONTAINER_NAME} is {status or 'not ready'}",
+        "remediation": "Run maia setup to restart the shared Keryx HTTP API",
     }
 
 
