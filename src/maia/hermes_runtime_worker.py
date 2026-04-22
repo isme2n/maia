@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ from typing import Any, Protocol
 from urllib import error, request
 import uuid
 
+from maia import agent_setup_session
 from maia.keryx_models import (
     KeryxAgentSummary,
     KeryxHandoffRecord,
@@ -35,7 +37,11 @@ __all__ = [
     "main",
     "process_once",
     "run_forever",
+    "start_gateway_bridge",
+    "stop_gateway_bridge",
 ]
+
+_READY_GATEWAY_SETUP_STATUSES = frozenset({"complete", "token-only"})
 
 
 @dataclass(slots=True)
@@ -47,6 +53,11 @@ class WorkerConfig:
     max_messages_per_poll: int = 1
     hermes_bin: str = "hermes"
     reply_kind: MessageKind = MessageKind.ANSWER
+    gateway_setup_status: str = "incomplete"
+    gateway_bridge_command: tuple[str, ...] = field(
+        default_factory=lambda: ((sys.executable or "python"), "-m", "maia.hermes_gateway_bridge")
+    )
+    gateway_bridge_shutdown_seconds: float = 5.0
 
 
 HermesRunner = Callable[[str], str] | Callable[[str, "WorkerConfig"], str]
@@ -77,6 +88,16 @@ class KeryxClient(Protocol):
         handoff_id: str,
         record: KeryxThreadHandoffView,
     ) -> KeryxThreadHandoffView: ...
+
+
+class GatewayBridgeProcess(Protocol):
+    def poll(self) -> int | None: ...
+
+    def terminate(self) -> None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+    def kill(self) -> None: ...
 
 
 class HttpKeryxClient:
@@ -190,6 +211,7 @@ def load_config_from_env(env: dict[str, str] | None = None) -> WorkerConfig:
         max_messages_per_poll=int(source.get("MAIA_MAX_MESSAGES_PER_POLL", "1")),
         hermes_bin=source.get("MAIA_HERMES_BIN", "hermes").strip() or "hermes",
         reply_kind=MessageKind(source.get("MAIA_HERMES_REPLY_KIND", MessageKind.ANSWER.value)),
+        gateway_setup_status=_derive_gateway_setup_status(source),
     )
 
 
@@ -203,6 +225,7 @@ def build_prompt(
 ) -> str:
     message = pending_work.message
     thread = pending_work.thread
+    self_summary = next((entry for entry in roster if entry.agent_id == config.agent_id), None)
     roster_lines = [
         f"  - {entry.name} (agent_id={entry.agent_id}, role={entry.role or '-'}, runtime={entry.runtime_status})"
         for entry in roster
@@ -236,8 +259,21 @@ def build_prompt(
             *recent_handoff_lines,
         ]
     )
+    identity_lines = [f"You are {config.agent_name}.", f"agent_id={config.agent_id}"]
+    if self_summary is not None:
+        identity_lines.append(f'Call the user "{self_summary.call_sign}".')
+        identity_lines.append(
+            f"Use a {self_summary.speaking_style} speaking style."
+        )
+        if self_summary.speaking_style == "custom" and self_summary.speaking_style_details:
+            identity_lines.append(
+                f"Custom speaking style details: {self_summary.speaking_style_details}"
+            )
+        if self_summary.persona:
+            identity_lines.append(f"Persona: {self_summary.persona}")
+    identity_block = "\n".join(identity_lines)
     return (
-        f"You are Maia agent {config.agent_name} (agent_id={config.agent_id}).\n\n"
+        f"{identity_block}\n\n"
         f"{context_block}\n\n"
         "Reply as this agent to the incoming Maia thread message below.\n"
         "Keep the answer direct and useful. Return only the reply body.\n\n"
@@ -331,15 +367,24 @@ def run_forever(
     keryx_client: KeryxClient,
     hermes_runner: Callable[..., str] = default_hermes_runner,
     sleep_fn: Callable[[float], None] = time.sleep,
+    popen_factory: Callable[[list[str]], GatewayBridgeProcess] = subprocess.Popen,
 ) -> None:
-    while True:
-        processed = process_once(
-            config,
-            keryx_client=keryx_client,
-            hermes_runner=hermes_runner,
+    gateway_bridge = start_gateway_bridge(config, popen_factory=popen_factory)
+    try:
+        while True:
+            _ensure_gateway_bridge_running(gateway_bridge)
+            processed = process_once(
+                config,
+                keryx_client=keryx_client,
+                hermes_runner=hermes_runner,
+            )
+            if not processed:
+                sleep_fn(config.poll_seconds)
+    finally:
+        stop_gateway_bridge(
+            gateway_bridge,
+            timeout_seconds=config.gateway_bridge_shutdown_seconds,
         )
-        if not processed:
-            sleep_fn(config.poll_seconds)
 
 
 def main() -> int:
@@ -348,12 +393,63 @@ def main() -> int:
     return 0
 
 
+def start_gateway_bridge(
+    config: WorkerConfig,
+    *,
+    popen_factory: Callable[[list[str]], GatewayBridgeProcess] = subprocess.Popen,
+) -> GatewayBridgeProcess | None:
+    if not _is_gateway_start_ready(config.gateway_setup_status):
+        return None
+    try:
+        return popen_factory(list(config.gateway_bridge_command))
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        raise ValueError(f"Gateway bridge failed to start: {detail}") from exc
+
+
+def stop_gateway_bridge(
+    process: GatewayBridgeProcess | None,
+    *,
+    timeout_seconds: float = 5.0,
+) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+    except OSError:
+        return
+    try:
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=timeout_seconds)
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
 def _timestamp_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _derive_gateway_setup_status(env: dict[str, str]) -> str:
+    hermes_home = env.get("HERMES_HOME", "").strip()
+    if not hermes_home:
+        return "incomplete"
+    return agent_setup_session.derive_gateway_setup_status(Path(hermes_home))
+
+
+def _ensure_gateway_bridge_running(process: GatewayBridgeProcess | None) -> None:
+    if process is None:
+        return
+    returncode = process.poll()
+    if returncode is not None:
+        raise RuntimeError(f"Gateway bridge exited unexpectedly with code {returncode}")
+
+
+def _is_gateway_start_ready(status: str | None) -> bool:
+    return status in _READY_GATEWAY_SETUP_STATUSES
 
 
 if __name__ == "__main__":  # pragma: no cover

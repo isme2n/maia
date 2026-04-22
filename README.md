@@ -170,6 +170,6 @@ Compatibility note for tests: the legacy V1 checklist was removed from the publi
 ## V1 release checklist
 - Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.
 - `doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.
-- `agent new` interactively captures agent name, user call-sign, and persona.
+- `agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.
 - `agent setup` is the operator path to open `hermes setup` for one agent.
 -->

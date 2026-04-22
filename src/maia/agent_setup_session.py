@@ -77,6 +77,7 @@ def derive_gateway_setup_status(hermes_home: Path) -> str:
             return "complete"
         if env_values.get(home_key, "").strip():
             return "complete"
+        return "token-only"
     return "incomplete"
 
 

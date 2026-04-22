@@ -41,15 +41,19 @@ class JsonRegistryStorage:
 
         if not portable:
             return record.to_dict()
-        return {
+        payload = {
             "agent_id": record.agent_id,
             "name": record.name,
             "status": record.status.value,
+            "speaking_style": record.speaking_style.value,
             "persona": record.persona,
             "role": record.role,
             "model": record.model,
             "tags": list(record.tags),
         }
+        if record.speaking_style.value == "custom" and record.speaking_style_details:
+            payload["speaking_style_details"] = record.speaking_style_details
+        return payload
 
     def load(self, path: Path | str) -> AgentRegistry:
         """Load registry contents from local SQLite state or portable JSON."""

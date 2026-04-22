@@ -717,22 +717,30 @@ def test_agent_new_prompts_for_identity_fields_and_points_to_agent_setup(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    answers = iter(["econ", "Ash", "Calm macro researcher"])
+    answers = iter(["econ", "Ash", "Custom", "공손하지만 편하게", "Calm macro researcher"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert main(["agent", "new"]) == 0
     captured = capsys.readouterr()
-    assert "How should this agent address you" in captured.out
+    assert "What should this agent call you?" in captured.out
+    assert "Speaking style" in captured.out
+    assert "Respectful / Casual / Custom [default: Respectful]" in captured.out
+    assert "Custom speaking style" in captured.out
     assert "Persona" in captured.out
     assert "created agent_id=" in captured.out
     assert "name=econ" in captured.out
     assert "call_sign=Ash" in captured.out
+    assert "speaking_style=Custom" in captured.out
+    assert "speaking_style_details=공손하지만␠편하게" in captured.out
+    assert "You can tune this agent later with maia agent tune" in captured.out
     assert "Next: run maia agent setup econ" in captured.out
 
     registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
     record = registry.list()[0]
     assert record.name == "econ"
     assert record.call_sign == "Ash"
+    assert record.speaking_style == "custom"
+    assert record.speaking_style_details == "공손하지만 편하게"
     assert record.persona == "Calm macro researcher"
     skill_path = get_agent_keryx_skill_path(record.agent_id, {"HOME": str(tmp_path)})
     assert skill_path.exists()
@@ -754,8 +762,14 @@ def test_builtin_keryx_skill_locks_grounded_http_workflow() -> None:
     assert "`POST /sessions/{session_id}/messages`" in content
     assert "`GET /sessions/{session_id}/messages`" in content
     assert "`POST /sessions/{session_id}/handoffs`" in content
+    assert "`agent-targeted` 요청이면 반드시 OPEN handoff를 만든다." in content
+    assert "질문/응답처럼 가벼운 요청이어도 다른 agent의 답을 기대하면" in content
+    assert "이 OPEN handoff가 있어야 요청이 worker pending-work에 나타난다." in content
+    assert "message는 요청 본문/맥락이고, handoff가 실제 worker 전달 계약이다." in content
     assert "기본값은 새 session 생성이다." in content
     assert "thread_id=<session_id>" in content
+    assert "단순 질문/응답이면 handoff 없이 message만으로 진행한다." not in content
+    assert "정말 필요할 때만 handoff를 만든다." not in content
 
 
 def test_agent_new_installs_keryx_skill_with_grounded_contract(
@@ -764,7 +778,7 @@ def test_agent_new_installs_keryx_skill_with_grounded_contract(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    answers = iter(["econ", "Ash", "Calm macro researcher"])
+    answers = iter(["econ", "Ash", "", "Calm macro researcher"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert main(["agent", "new"]) == 0
@@ -779,7 +793,10 @@ def test_agent_new_installs_keryx_skill_with_grounded_contract(
     assert "`POST /sessions/{session_id}/messages`" in content
     assert "`GET /sessions/{session_id}/messages`" in content
     assert "`POST /sessions/{session_id}/handoffs`" in content
+    assert "`agent-targeted` 요청이면 반드시 OPEN handoff를 만든다." in content
+    assert "이 OPEN handoff가 있어야 요청이 worker pending-work에 나타난다." in content
     assert "실제로 Keryx 리소스를 만들거나 읽지 않았고" in content
+    assert "단순 질문/응답이면 handoff 없이 message만으로 진행한다." not in content
 
 
 def test_agent_setup_gateway_command_runs_gateway_section_and_records_complete(
@@ -845,6 +862,13 @@ def test_agent_setup_command_runs_hermes_setup_and_records_complete(
     assert "run maia agent start planner" in captured.out
     assert "maia agent start planner" in captured.out
     assert captured.err == ""
+    soul = (hermes_home / "SOUL.md").read_text(encoding="utf-8")
+    assert soul == (
+        "You are planner.\n"
+        'Call the user "planner".\n'
+        "Use a respectful speaking style.\n"
+        "Persona: planner\n"
+    )
 
     runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
     assert runtime_state[agent_id].to_dict() == {
@@ -892,6 +916,47 @@ def test_agent_setup_command_records_incomplete_on_failure(
     }
 
 
+def test_agent_tune_resyncs_existing_agent_hermes_soul(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "SOUL.md").write_text("You are Hermes Agent.\n", encoding="utf-8")
+
+    assert main(
+        [
+            "agent",
+            "tune",
+            "planner",
+            "--speaking-style",
+            "Custom",
+            "--speaking-style-details",
+            "Respond in warm, concise Korean.",
+            "--persona",
+            "Sharp reviewer focused on direct code feedback.",
+        ]
+    ) == 0
+    captured = capsys.readouterr()
+    assert "updated agent_id=" in captured.out
+    assert "speaking_style=Custom" in captured.out
+    assert captured.err == ""
+
+    soul = (hermes_home / "SOUL.md").read_text(encoding="utf-8")
+    assert soul == (
+        "You are planner.\n"
+        'Call the user "planner".\n'
+        "Use a custom speaking style.\n"
+        "Custom speaking style details: Respond in warm, concise Korean.\n"
+        "Persona: Sharp reviewer focused on direct code feedback.\n"
+    )
+
+
 def test_agent_setup_session_normalizes_signal_exit_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -912,6 +977,16 @@ def test_agent_setup_session_normalizes_signal_exit_code(
     assert result.exit_code == 130
     assert result.setup_status == "incomplete"
     assert result.hermes_home == get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)})
+
+
+def test_derive_gateway_setup_status_returns_token_only_when_home_channel_is_missing(
+    tmp_path: Path,
+) -> None:
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text("TELEGRAM_BOT_TOKEN=test-token\n", encoding="utf-8")
+
+    assert cli_module.agent_setup_session.derive_gateway_setup_status(hermes_home) == "token-only"
 
 
 def test_agent_setup_session_restores_builtin_keryx_skill_after_setup_run(
@@ -1218,6 +1293,8 @@ def test_agent_tune_help_includes_profile_flags(capsys: pytest.CaptureFixture[st
     _assert_contains_lines(captured.out, AGENT_TUNE_EXAMPLES)
     assert "maia agent tune <planner_id> --role planner" in captured.out
     assert "--persona" in captured.out
+    assert "--speaking-style" in captured.out
+    assert "--speaking-style-details" in captured.out
     assert "--role" in captured.out
     assert "--model" in captured.out
     assert "--tags" in captured.out
@@ -1268,6 +1345,26 @@ def test_agent_tune_parser_rejects_conflicting_role_flags(
     assert "not allowed" in captured.err
 
 
+
+def test_agent_tune_parser_accepts_speaking_style_metadata() -> None:
+    args = build_parser().parse_args(
+        [
+            "agent",
+            "tune",
+            "demo1234",
+            "--speaking-style",
+            "Custom",
+            "--speaking-style-details",
+            "日本語でやわらかく話してください。",
+        ]
+    )
+
+    assert args.agent_command == "tune"
+    assert args.speaking_style == "Custom"
+    assert args.speaking_style_details == "日本語でやわらかく話してください。"
+
+
+
 def test_build_parser_runtime_tune_shape() -> None:
     args = build_parser().parse_args(
         [
@@ -1306,7 +1403,7 @@ def test_build_parser_logs_shape() -> None:
 
 def _create_agent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], home: Path, name: str) -> str:
     monkeypatch.setenv("HOME", str(home))
-    answers = iter([name, name, name])
+    answers = iter([name, name, "", name])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     assert main(["agent", "new"]) == 0
     fields = _parse_fields(_line_with_prefix(capsys.readouterr().out, "created "))

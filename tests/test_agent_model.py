@@ -34,6 +34,8 @@ def test_agent_record_creation() -> None:
     assert record.name == "planner"
     assert record.status is AgentStatus.RUNNING
     assert record.persona == "careful"
+    assert record.speaking_style == "respectful"
+    assert record.speaking_style_details == ""
     assert record.role == ""
     assert record.model == ""
     assert record.tags == []
@@ -56,6 +58,7 @@ def test_agent_record_round_trip() -> None:
         "agent_id": "agent-002",
         "name": "reviewer",
         "status": "stopped",
+        "speaking_style": "respectful",
         "persona": "strict",
     }
 
@@ -85,6 +88,7 @@ def test_agent_record_round_trip_with_runtime_and_messaging_spec() -> None:
         "agent_id": "agent-004",
         "name": "runner",
         "status": "running",
+        "speaking_style": "respectful",
         "persona": "careful",
         "setup_status": "configured",
         "role": "executor",
@@ -116,7 +120,47 @@ def test_agent_record_from_dict_accepts_legacy_shape_without_extension_fields() 
         status=AgentStatus.STOPPED,
         persona="",
     )
-    assert restored.to_dict() == payload
+    assert restored.to_dict() == {
+        **payload,
+        "speaking_style": "respectful",
+    }
+
+
+def test_agent_record_round_trip_with_custom_speaking_style() -> None:
+    record = AgentRecord(
+        agent_id="agent-005c",
+        name="stylist",
+        status=AgentStatus.STOPPED,
+        speaking_style="custom",
+        speaking_style_details="공손하지만 조금 더 따뜻하게 말해 주세요.",
+        persona="helpful",
+    )
+
+    restored = AgentRecord.from_dict(record.to_dict())
+
+    assert restored == record
+    assert restored.to_dict() == {
+        "agent_id": "agent-005c",
+        "name": "stylist",
+        "status": "stopped",
+        "speaking_style": "custom",
+        "speaking_style_details": "공손하지만 조금 더 따뜻하게 말해 주세요.",
+        "persona": "helpful",
+    }
+
+
+def test_agent_record_from_dict_defaults_missing_speaking_style_to_respectful() -> None:
+    restored = AgentRecord.from_dict(
+        {
+            "agent_id": "agent-005d",
+            "name": "legacy-style",
+            "status": "stopped",
+            "persona": "",
+        }
+    )
+
+    assert restored.speaking_style == "respectful"
+    assert restored.speaking_style_details == ""
 
 
 def test_agent_record_from_dict_infers_configured_setup_for_legacy_runtime_spec() -> None:
@@ -141,6 +185,7 @@ def test_agent_record_from_dict_infers_configured_setup_for_legacy_runtime_spec(
         "agent_id": "agent-005b",
         "name": "legacy-runtime",
         "status": "stopped",
+        "speaking_style": "respectful",
         "persona": "",
         "setup_status": "configured",
         "runtime_spec": {
@@ -345,6 +390,7 @@ def test_agent_record_direct_construction_accepts_serialized_extension_fields() 
         "agent_id": "agent-003e",
         "name": "runner",
         "status": "running",
+        "speaking_style": "respectful",
         "persona": "fast",
         "setup_status": "configured",
         "role": "executor",
@@ -395,6 +441,7 @@ def test_agent_record_direct_construction_accepts_valid_runtime_spec_instance() 
         "agent_id": "agent-003ea",
         "name": "runner",
         "status": "running",
+        "speaking_style": "respectful",
         "persona": "fast",
         "setup_status": "configured",
         "runtime_spec": {

@@ -13,7 +13,7 @@ import sys
 import uuid
 from urllib.parse import quote
 
-from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus
+from maia.agent_model import AgentRecord, AgentSetupStatus, AgentStatus, SpeakingStyle
 import maia.agent_setup_session as agent_setup_session
 from maia.runtime_spec import RuntimeSpec
 from maia.app_state import (
@@ -192,6 +192,12 @@ def _handle_agent_setup(
             file=sys.stderr,
         )
         return 1
+    if result.exit_code == 0:
+        _sync_agent_hermes_soul(
+            record,
+            hermes_home=result.hermes_home,
+            create_home=True,
+        )
     _record_runtime_setup_state(
         record.agent_id,
         setup_status=result.setup_status,
@@ -481,16 +487,26 @@ def _handle_agent_new(
     if any(record.name == name for record in registry.list()):
         raise ValueError(f"Agent with name {name!r} already exists")
     call_sign = _prompt_required_text(
-        "How should this agent address you",
+        "What should this agent call you?",
         field_name="agent call-sign",
     )
-    persona = _prompt_required_text("Persona", field_name="agent persona")
+    speaking_style, speaking_style_details = _prompt_speaking_style()
+    print("Persona examples:")
+    print("- calm technical assistant")
+    print("- fast research partner")
+    print("- warm planning helper")
+    persona = _prompt_required_text(
+        "Persona",
+        field_name="agent persona",
+    )
 
     record = AgentRecord(
         agent_id=uuid.uuid4().hex[:8],
         name=name,
         call_sign=call_sign,
         status=AgentStatus.STOPPED,
+        speaking_style=speaking_style,
+        speaking_style_details=speaking_style_details,
         persona=persona,
         role="",
         model="",
@@ -500,11 +516,20 @@ def _handle_agent_new(
     registry.add(record)
     storage.save(registry_path, registry)
     ensure_agent_keryx_skill_installed(record.agent_id)
-    print(
-        f"created agent_id={record.agent_id} name={_format_preview_value(record.name)} "
-        f"call_sign={_format_preview_value(record.call_sign)} status={record.status.value}"
-    )
+    created_parts = [
+        f"created agent_id={record.agent_id}",
+        f"name={_format_preview_value(record.name)}",
+        f"call_sign={_format_preview_value(record.call_sign)}",
+        f"speaking_style={_speaking_style_display(record.speaking_style)}",
+    ]
+    if record.speaking_style is SpeakingStyle.CUSTOM and record.speaking_style_details:
+        created_parts.append(
+            f"speaking_style_details={_format_preview_value(record.speaking_style_details)}"
+        )
+    created_parts.append(f"status={record.status.value}")
+    print(" ".join(created_parts))
     print(f"Next: run maia agent setup {record.name}")
+    print(f"Tip: You can tune this agent later with maia agent tune {record.name}")
     return 0
 
 
@@ -1071,9 +1096,38 @@ def _resolve_configured_runtime_spec(
 
 def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
     runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(record.agent_id)
+    runtime_state = _refresh_gateway_setup_state_from_hermes_home(record, runtime_state)
     if runtime_state is None and record.status is AgentStatus.RUNNING:
         raise _agent_runtime_unavailable_error(record.agent_id, "local runtime state is missing")
     return runtime_state
+
+
+def _refresh_gateway_setup_state_from_hermes_home(
+    record: AgentRecord,
+    runtime_state: RuntimeState | None,
+) -> RuntimeState | None:
+    if runtime_state is None or _is_gateway_start_ready(runtime_state.gateway_setup_status):
+        return runtime_state
+    if runtime_state.setup_status != "complete":
+        return runtime_state
+    derived_status = agent_setup_session.derive_gateway_setup_status(
+        get_agent_hermes_home(record.agent_id)
+    )
+    if not _is_gateway_start_ready(derived_status):
+        return runtime_state
+    updated_state = RuntimeState(
+        agent_id=runtime_state.agent_id,
+        runtime_status=runtime_state.runtime_status,
+        runtime_handle=runtime_state.runtime_handle,
+        setup_status=runtime_state.setup_status,
+        gateway_setup_status=derived_status,
+    )
+    _record_runtime_setup_state(
+        record.agent_id,
+        setup_status=updated_state.setup_status,
+        gateway_setup_status=updated_state.gateway_setup_status,
+    )
+    return updated_state
 
 
 def _require_shared_infra_ready(agent_id: str) -> None:
@@ -1099,7 +1153,7 @@ def _require_agent_gateway_setup_complete(
     *,
     error_factory: Callable[[str, str], ValueError] = _agent_runtime_unavailable_error,
 ) -> RuntimeState:
-    if runtime_state is None or runtime_state.gateway_setup_status != "complete":
+    if runtime_state is None or not _is_gateway_start_ready(runtime_state.gateway_setup_status):
         raise error_factory(
             record.agent_id,
             f"agent gateway setup is not complete; run maia agent setup-gateway {record.name}",
@@ -1646,6 +1700,61 @@ def _normalize_optional_cli_text(value: str, *, field_name: str) -> str:
     return normalized
 
 
+def _speaking_style_display(value: str | SpeakingStyle) -> str:
+    style = value if isinstance(value, SpeakingStyle) else SpeakingStyle(value)
+    return style.value.capitalize()
+
+
+def _resolve_speaking_style(value: str) -> SpeakingStyle:
+    normalized = _normalize_optional_cli_text(value, field_name="agent speaking style").lower()
+    aliases = {
+        "1": SpeakingStyle.RESPECTFUL,
+        "respectful": SpeakingStyle.RESPECTFUL,
+        "respect": SpeakingStyle.RESPECTFUL,
+        "2": SpeakingStyle.CASUAL,
+        "casual": SpeakingStyle.CASUAL,
+        "friendly": SpeakingStyle.CASUAL,
+        "3": SpeakingStyle.CUSTOM,
+        "custom": SpeakingStyle.CUSTOM,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        raise ValueError("Agent speaking style must be Respectful, Casual, or Custom") from exc
+
+
+def _prompt_speaking_style() -> tuple[SpeakingStyle, str]:
+    print("Speaking style:")
+    print("Respectful / Casual / Custom [default: Respectful]")
+    try:
+        raw_value = input()
+    except EOFError:
+        raw_value = ""
+    if not raw_value.strip():
+        return SpeakingStyle.RESPECTFUL, ""
+    style = _resolve_speaking_style(raw_value)
+    if style is not SpeakingStyle.CUSTOM:
+        return style, ""
+    details = _prompt_required_text(
+        "Custom speaking style",
+        field_name="custom speaking style",
+    )
+    return style, details
+
+
+def _normalize_speaking_style_details(raw_value: str | None, *, style: SpeakingStyle) -> str:
+    if style is not SpeakingStyle.CUSTOM:
+        if raw_value is not None:
+            raise ValueError("--speaking-style-details requires --speaking-style Custom")
+        return ""
+    if raw_value is None:
+        raise ValueError("Custom speaking style requires --speaking-style-details")
+    return _normalize_optional_cli_text(
+        raw_value,
+        field_name="agent speaking style details",
+    )
+
+
 def _parse_tag_list(raw_tags: str, *, field_name: str) -> list[str]:
     tags = [item.strip() for item in raw_tags.split(",")]
     if any(not item for item in tags):
@@ -2027,6 +2136,12 @@ def _handle_agent_tune(
     updated = registry.get(args.agent_id)
     if "persona" in updates:
         updated = registry.set_persona(args.agent_id, updates["persona"])
+    if "speaking_style" in updates:
+        updated = registry.set_speaking_style(
+            args.agent_id,
+            speaking_style=str(updates["speaking_style"]),
+            speaking_style_details=str(updates.get("speaking_style_details", "")),
+        )
     profile_updates = {
         key: updates[key]
         for key in ("role", "model", "tags")
@@ -2036,6 +2151,9 @@ def _handle_agent_tune(
         updated = registry.set_profile_metadata(args.agent_id, **profile_updates)
     if "runtime_spec" in updates:
         updated = registry.set_runtime_spec(args.agent_id, updates["runtime_spec"])
+    hermes_home = get_agent_hermes_home(args.agent_id)
+    if hermes_home.exists():
+        _sync_agent_hermes_soul(updated, hermes_home=hermes_home)
     storage.save(registry_path, registry)
     print(_format_agent_tune_result(updated, updates))
     return 0
@@ -2153,6 +2271,31 @@ def _agent_has_active_runtime(agent_id: str) -> bool:
     return runtime_state is not None and runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES
 
 
+def _render_agent_hermes_soul(record: AgentRecord) -> str:
+    lines = [
+        f"You are {record.name}.",
+        f'Call the user "{record.call_sign}".',
+        f"Use a {record.speaking_style.value} speaking style.",
+    ]
+    if record.speaking_style is SpeakingStyle.CUSTOM and record.speaking_style_details:
+        lines.append(f"Custom speaking style details: {record.speaking_style_details}")
+    if record.persona:
+        lines.append(f"Persona: {record.persona}")
+    return "\n".join(lines) + "\n"
+
+
+def _sync_agent_hermes_soul(
+    record: AgentRecord,
+    *,
+    hermes_home: Path,
+    create_home: bool = False,
+) -> None:
+    if not create_home and not hermes_home.exists():
+        return
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "SOUL.md").write_text(_render_agent_hermes_soul(record), encoding="utf-8")
+
+
 def _remove_agent_hermes_home(agent_id: str) -> None:
     hermes_home = get_agent_hermes_home(agent_id)
     if not hermes_home.exists():
@@ -2181,7 +2324,7 @@ def _derive_operator_status(record: AgentRecord, runtime_state: RuntimeState | N
         return AgentStatus.RUNNING.value
     if (
         _derive_setup_state(runtime_state) == "complete"
-        and _derive_gateway_setup_state(runtime_state) == "complete"
+        and _is_gateway_start_ready(_derive_gateway_setup_state(runtime_state))
     ):
         return AgentStatus.STOPPED.value if record.has_started else "ready"
     return AgentSetupStatus.NOT_CONFIGURED.value
@@ -2231,10 +2374,20 @@ def _derive_gateway_setup_state(runtime_state: RuntimeState | None) -> str:
     return runtime_state.gateway_setup_status
 
 
+def _is_gateway_start_ready(status: str | None) -> bool:
+    return status in {"complete", "token-only"}
+
+
 def _format_agent_tune_result(record: AgentRecord, updates: dict[str, object]) -> str:
     parts = [f"updated agent_id={record.agent_id}"]
     if "persona" in updates:
         parts.append(f"persona={_format_preview_value(record.persona)}")
+    if "speaking_style" in updates:
+        parts.append(f"speaking_style={_speaking_style_display(record.speaking_style)}")
+        if record.speaking_style is SpeakingStyle.CUSTOM and record.speaking_style_details:
+            parts.append(
+                f"speaking_style_details={_format_preview_value(record.speaking_style_details)}"
+            )
     if "role" in updates:
         parts.append(f"role={_format_preview_value(record.role)}")
     if "model" in updates:
@@ -2259,6 +2412,15 @@ def _resolve_agent_tune_updates(args: argparse.Namespace) -> dict[str, object]:
     updates: dict[str, object] = {}
     if args.persona is not None or args.persona_file is not None:
         updates["persona"] = _resolve_persona(args)
+    if args.speaking_style is not None:
+        style = _resolve_speaking_style(args.speaking_style)
+        updates["speaking_style"] = style.value
+        updates["speaking_style_details"] = _normalize_speaking_style_details(
+            args.speaking_style_details,
+            style=style,
+        )
+    elif args.speaking_style_details is not None:
+        raise ValueError("--speaking-style-details requires --speaking-style Custom")
     if args.clear_role:
         updates["role"] = ""
     elif args.role is not None:

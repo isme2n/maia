@@ -100,10 +100,12 @@ def render_keryx_skill_content() -> str:
                - body에는 사용자의 `/keryx` 자유문을 실행 가능한 협업 요청으로 정리해 넣는다.
                - from_agent/to_agent를 실제 roster 해석 결과에 맞춰 채운다.
 
-            5. 정말 필요할 때만 handoff를 만든다.
-               - 단순 질문/응답이면 handoff 없이 message만으로 진행한다.
-               - 실제 작업 위임, 산출물 위치 전달, 책임 전환이 필요할 때만 `POST /sessions/{session_id}/handoffs`를 사용한다.
-               - handoff를 만들지 않았다면 만든 척 말하지 않는다.
+            5. 다른 agent가 처리하거나 응답해야 하는 `agent-targeted` 요청이면 반드시 OPEN handoff를 만든다.
+               - 다른 agent에게 보내는 `/keryx` 요청은 message-only fire-and-forget으로 끝내지 않는다.
+               - 질문/응답처럼 가벼운 요청이어도 다른 agent의 답을 기대하면 `POST /sessions/{session_id}/handoffs`로 대상 agent를 향한 handoff를 만든다.
+               - handoff status는 `open`이어야 한다. 이 OPEN handoff가 있어야 요청이 worker pending-work에 나타난다.
+               - message는 요청 본문/맥락이고, handoff가 실제 worker 전달 계약이다.
+               - handoff 생성 응답에서 실제 `handoff_id`, `to_agent`, `status`를 확인한다.
 
             6. 실제 답변이 올 때까지 poll한다.
                - `GET /sessions/{session_id}/messages`를 반복 조회해 대상 agent의 새 `answer`/`report`/관련 응답 message를 찾는다.
@@ -120,8 +122,8 @@ def render_keryx_skill_content() -> str:
             사용자가 `/keryx 테크한테 이 에러 로그 보여주고 원인 먼저 물어봐`라고 하면:
             - `GET /agents`로 self/테크 agent를 찾는다.
             - 분명한 기존 thread가 없으면 `POST /sessions`로 새 session을 만든다.
-            - `POST /sessions/{session_id}/messages`로 질문을 보낸다.
-            - 필요할 때만 `POST /sessions/{session_id}/handoffs`를 추가한다.
+            - `POST /sessions/{session_id}/messages`로 질문을 남긴다.
+            - 바로 `POST /sessions/{session_id}/handoffs`로 대상 agent용 OPEN handoff를 만든다.
             - `GET /sessions/{session_id}/messages`를 poll해서 테크 agent의 실제 `answer` 또는 `report`를 기다린다.
             - 실제 응답이 오면 `thread_id`와 함께 사용자에게 요약한다.
 

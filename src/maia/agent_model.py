@@ -10,7 +10,15 @@ from typing import Any, Self
 
 from maia.runtime_spec import RuntimeSpec
 
-__all__ = ["AgentRecord", "AgentSetupStatus", "AgentStatus"]
+__all__ = ["AgentRecord", "AgentSetupStatus", "AgentStatus", "SpeakingStyle"]
+
+
+class SpeakingStyle(str, Enum):
+    """Supported agent speaking-style presets."""
+
+    RESPECTFUL = "respectful"
+    CASUAL = "casual"
+    CUSTOM = "custom"
 
 
 def _coerce_agent_status(value: object) -> "AgentStatus":
@@ -38,6 +46,21 @@ def _validate_agent_bool(value: object, *, field_name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"Invalid agent {field_name}: expected bool")
     return value
+
+
+def _coerce_speaking_style(value: object) -> "SpeakingStyle":
+    try:
+        return value if isinstance(value, SpeakingStyle) else SpeakingStyle(value)
+    except (TypeError, ValueError) as exc:
+        allowed = ", ".join(repr(style.value) for style in SpeakingStyle)
+        raise ValueError(
+            f"Invalid agent speaking_style: expected one of {allowed}; got {value!r}"
+        ) from exc
+
+
+def _normalize_speaking_style_details(value: object, *, style: SpeakingStyle) -> str:
+    details = _validate_agent_str(value, field_name="speaking_style_details")
+    return details if style is SpeakingStyle.CUSTOM else ""
 
 
 def _normalize_agent_runtime_spec(value: object) -> RuntimeSpec | None:
@@ -97,6 +120,8 @@ class AgentRecord:
     status: AgentStatus = AgentStatus.STOPPED
     setup_status: AgentSetupStatus = AgentSetupStatus.NOT_CONFIGURED
     has_started: bool = False
+    speaking_style: SpeakingStyle = SpeakingStyle.RESPECTFUL
+    speaking_style_details: str = ""
     persona: str = ""
     role: str = ""
     model: str = ""
@@ -116,6 +141,11 @@ class AgentRecord:
         self.status = _coerce_agent_status(self.status)
         self.setup_status = _coerce_agent_setup_status(self.setup_status)
         self.has_started = _validate_agent_bool(self.has_started, field_name="has_started")
+        self.speaking_style = _coerce_speaking_style(self.speaking_style)
+        self.speaking_style_details = _normalize_speaking_style_details(
+            self.speaking_style_details,
+            style=self.speaking_style,
+        )
         self.persona = _validate_agent_str(self.persona, field_name="persona")
         self.role = _validate_agent_str(self.role, field_name="role")
         self.model = _validate_agent_str(self.model, field_name="model")
@@ -135,6 +165,8 @@ class AgentRecord:
             status=self.status,
             setup_status=self.setup_status,
             has_started=self.has_started,
+            speaking_style=self.speaking_style,
+            speaking_style_details=self.speaking_style_details,
             persona=self.persona,
             role=self.role,
             model=self.model,
@@ -150,6 +182,7 @@ class AgentRecord:
             "agent_id": self.agent_id,
             "name": self.name,
             "status": self.status.value,
+            "speaking_style": self.speaking_style.value,
             "persona": self.persona,
         }
         if self.call_sign != self.name:
@@ -158,6 +191,8 @@ class AgentRecord:
             payload["setup_status"] = self.setup_status.value
         if self.has_started:
             payload["has_started"] = True
+        if self.speaking_style is SpeakingStyle.CUSTOM and self.speaking_style_details:
+            payload["speaking_style_details"] = self.speaking_style_details
         if self.role:
             payload["role"] = self.role
         if self.model:
@@ -194,6 +229,8 @@ class AgentRecord:
             status=data["status"],
             setup_status=setup_status,
             has_started=data.get("has_started", False),
+            speaking_style=data.get("speaking_style", SpeakingStyle.RESPECTFUL.value),
+            speaking_style_details=data.get("speaking_style_details", ""),
             persona=data["persona"],
             role=role,
             model=model,

@@ -258,16 +258,17 @@ class KeryxService:
             name=record.name,
             call_sign=record.call_sign,
             role=record.role,
+            speaking_style=record.speaking_style.value,
+            speaking_style_details=record.speaking_style_details,
+            persona=record.persona,
             status=record.status.value,
             setup_status=(
-                record.setup_status.value
-                if runtime_state is None or runtime_state.setup_status is None
-                else runtime_state.setup_status
+                runtime_state.setup_status
+                if runtime_state and runtime_state.setup_status
+                else record.setup_status.value
             ),
             runtime_status=(
-                RuntimeStatus.STOPPED.value
-                if runtime_state is None
-                else runtime_state.runtime_status.value
+                runtime_state.runtime_status.value if runtime_state else RuntimeStatus.STOPPED.value
             ),
         )
 

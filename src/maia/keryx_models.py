@@ -144,6 +144,9 @@ class KeryxAgentSummary:
     runtime_status: str
     call_sign: str | object = field(default_factory=lambda: _DEFAULT_CALL_SIGN)
     role: str = ""
+    speaking_style: str = "respectful"
+    speaking_style_details: str = ""
+    persona: str = ""
 
     def __post_init__(self) -> None:
         self.agent_id = _validate_str(
@@ -169,6 +172,19 @@ class KeryxAgentSummary:
             self.role,
             error="Invalid Keryx agent summary role: expected str",
         )
+        self.speaking_style = _validate_str(
+            self.speaking_style,
+            error="Invalid Keryx agent summary speaking_style: expected str",
+            allow_empty=False,
+        )
+        self.speaking_style_details = _validate_str(
+            self.speaking_style_details,
+            error="Invalid Keryx agent summary speaking_style_details: expected str",
+        )
+        self.persona = _validate_str(
+            self.persona,
+            error="Invalid Keryx agent summary persona: expected str",
+        )
         self.status = _validate_str(
             self.status,
             error="Invalid Keryx agent summary status: expected str",
@@ -193,6 +209,9 @@ class KeryxAgentSummary:
             "name": self.name,
             "call_sign": self.call_sign,
             "role": self.role,
+            "speaking_style": self.speaking_style,
+            "speaking_style_details": self.speaking_style_details,
+            "persona": self.persona,
             "status": self.status,
             "setup_status": self.setup_status,
             "runtime_status": self.runtime_status,
@@ -220,11 +239,28 @@ class KeryxAgentSummary:
                 error="Invalid Keryx agent summary call_sign: expected str",
                 allow_empty=False,
             )
+        role = _validate_str(
+            data.get("role", ""),
+            error="Invalid Keryx agent summary role: expected str",
+        )
         return cls(
             agent_id=data["agent_id"],
             name=data["name"],
             call_sign=call_sign,
-            role=data.get("role", ""),
+            role=role,
+            speaking_style=_validate_str(
+                data.get("speaking_style", "respectful"),
+                error="Invalid Keryx agent summary speaking_style: expected str",
+                allow_empty=False,
+            ),
+            speaking_style_details=_validate_str(
+                data.get("speaking_style_details", ""),
+                error="Invalid Keryx agent summary speaking_style_details: expected str",
+            ),
+            persona=_validate_str(
+                data.get("persona", ""),
+                error="Invalid Keryx agent summary persona: expected str",
+            ),
             status=data["status"],
             setup_status=data["setup_status"],
             runtime_status=data["runtime_status"],

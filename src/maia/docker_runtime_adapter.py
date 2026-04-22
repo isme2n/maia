@@ -27,6 +27,13 @@ from maia.runtime_state_storage import RuntimeStateStorage
 __all__ = ["DockerRuntimeAdapter"]
 
 _AUTO_DOCKER_BIN = object()
+_RUNTIME_HERMES_HOME = "/maia/hermes"
+_RUNTIME_HOME_ENV = {
+    "HERMES_HOME": _RUNTIME_HERMES_HOME,
+    "HOME": _RUNTIME_HERMES_HOME,
+    "XDG_STATE_HOME": f"{_RUNTIME_HERMES_HOME}/.local/state",
+    "XDG_CACHE_HOME": f"{_RUNTIME_HERMES_HOME}/.cache",
+}
 
 
 class DockerRuntimeAdapter(RuntimeAdapter):
@@ -70,14 +77,13 @@ class DockerRuntimeAdapter(RuntimeAdapter):
             "-w",
             spec.workspace,
             "-v",
-            f"{hermes_home}:/maia/hermes",
+            f"{hermes_home}:{_RUNTIME_HERMES_HOME}",
             "-v",
             f"{self._state_path}:/maia/control/state.db:ro",
-            "-e",
-            "HERMES_HOME=/maia/hermes",
         ]
         runtime_env = {
             **spec.env,
+            **_RUNTIME_HOME_ENV,
             "MAIA_AGENT_ID": request.agent.agent_id,
             "MAIA_AGENT_NAME": request.agent.name,
             "KERYX_BASE_URL": runtime_keryx_base_url(),

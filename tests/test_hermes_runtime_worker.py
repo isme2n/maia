@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from subprocess import CompletedProcess
 import sys
 from pathlib import Path
@@ -18,6 +19,9 @@ from maia.hermes_runtime_worker import (
     default_hermes_runner,
     load_config_from_env,
     process_once,
+    run_forever,
+    start_gateway_bridge,
+    stop_gateway_bridge,
 )
 from maia.keryx_models import (
     KeryxAgentSummary,
@@ -39,6 +43,8 @@ class FakeKeryxClient:
                 name="planner",
                 role="planner",
                 call_sign="planner",
+                speaking_style="respectful",
+                persona="Careful planner who summarizes tradeoffs clearly.",
                 status="running",
                 setup_status="complete",
                 runtime_status="running",
@@ -47,7 +53,10 @@ class FakeKeryxClient:
                 agent_id="reviewer",
                 name="reviewer",
                 role="reviewer",
-                call_sign="reviewer",
+                call_sign="planner",
+                speaking_style="custom",
+                speaking_style_details="Respond in warm, concise Korean.",
+                persona="Sharp reviewer focused on direct code feedback.",
                 status="running",
                 setup_status="complete",
                 runtime_status="running",
@@ -102,6 +111,40 @@ class FakeKeryxClient:
         self.updated_handoffs.append(record)
         self.thread_handoffs[record.thread_id] = [record]
         return record
+
+
+class FakeBridgeProcess:
+    def __init__(
+        self,
+        *,
+        returncode: int | None = None,
+        timeout_on_terminate: bool = False,
+    ) -> None:
+        self.command: list[str] | None = None
+        self.returncode = returncode
+        self.timeout_on_terminate = timeout_on_terminate
+        self.terminated = False
+        self.killed = False
+        self.wait_calls: list[float | None] = []
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls.append(timeout)
+        if self.timeout_on_terminate:
+            self.timeout_on_terminate = False
+            raise subprocess.TimeoutExpired(self.command or ["python"], timeout or 0)
+        if self.returncode is None:
+            self.returncode = -15 if self.terminated else 0
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
 
 
 def _message() -> KeryxThreadMessageView:
@@ -238,6 +281,124 @@ def test_load_config_from_env_requires_keryx_base_url() -> None:
         )
 
 
+def test_load_config_from_env_derives_token_only_gateway_status(tmp_path: Path) -> None:
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text("TELEGRAM_BOT_TOKEN=test-token\n", encoding="utf-8")
+
+    config = load_config_from_env(
+        {
+            "MAIA_AGENT_ID": "reviewer",
+            "MAIA_AGENT_NAME": "Reviewer",
+            "KERYX_BASE_URL": "http://keryx.test",
+            "HERMES_HOME": str(hermes_home),
+        }
+    )
+
+    assert config.gateway_setup_status == "token-only"
+
+
+@pytest.mark.parametrize("gateway_setup_status", ["complete", "token-only"])
+def test_start_gateway_bridge_launches_for_start_ready_gateway_status(
+    gateway_setup_status: str,
+) -> None:
+    process = FakeBridgeProcess()
+    commands: list[list[str]] = []
+    config = WorkerConfig(
+        agent_id="reviewer",
+        agent_name="Reviewer",
+        keryx_base_url="http://keryx.test",
+        gateway_setup_status=gateway_setup_status,
+        gateway_bridge_command=("python", "-m", "maia.hermes_gateway_bridge"),
+    )
+
+    started = start_gateway_bridge(
+        config,
+        popen_factory=lambda command: commands.append(command) or process,
+    )
+
+    assert started is process
+    assert commands == [["python", "-m", "maia.hermes_gateway_bridge"]]
+
+
+def test_start_gateway_bridge_skips_incomplete_gateway_status() -> None:
+    config = WorkerConfig(
+        agent_id="reviewer",
+        agent_name="Reviewer",
+        keryx_base_url="http://keryx.test",
+        gateway_setup_status="incomplete",
+    )
+
+    started = start_gateway_bridge(
+        config,
+        popen_factory=lambda command: pytest.fail(f"unexpected bridge launch: {command}"),
+    )
+
+    assert started is None
+
+
+def test_stop_gateway_bridge_kills_unresponsive_child() -> None:
+    process = FakeBridgeProcess(timeout_on_terminate=True)
+
+    stop_gateway_bridge(process, timeout_seconds=3.5)
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls == [3.5, 3.5]
+
+
+def test_run_forever_stops_gateway_bridge_on_shutdown() -> None:
+    process = FakeBridgeProcess()
+    config = WorkerConfig(
+        agent_id="reviewer",
+        agent_name="Reviewer",
+        keryx_base_url="http://keryx.test",
+        gateway_setup_status="token-only",
+        gateway_bridge_command=("python", "-m", "maia.hermes_gateway_bridge"),
+        gateway_bridge_shutdown_seconds=1.25,
+    )
+
+    def popen_factory(command: list[str]) -> FakeBridgeProcess:
+        process.command = command
+        return process
+
+    def sleep_fn(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_forever(
+            config,
+            keryx_client=FakeKeryxClient([]),
+            hermes_runner=lambda prompt, *, config: "unused",
+            sleep_fn=sleep_fn,
+            popen_factory=popen_factory,
+        )
+
+    assert process.command == ["python", "-m", "maia.hermes_gateway_bridge"]
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.wait_calls == [1.25]
+
+
+def test_run_forever_raises_when_gateway_bridge_exits_early() -> None:
+    process = FakeBridgeProcess(returncode=17)
+    config = WorkerConfig(
+        agent_id="reviewer",
+        agent_name="Reviewer",
+        keryx_base_url="http://keryx.test",
+        gateway_setup_status="complete",
+    )
+
+    with pytest.raises(RuntimeError, match="Gateway bridge exited unexpectedly with code 17"):
+        run_forever(
+            config,
+            keryx_client=FakeKeryxClient([]),
+            hermes_runner=lambda prompt, *, config: "unused",
+            sleep_fn=lambda seconds: None,
+            popen_factory=lambda command: process,
+        )
+
+
 def test_build_prompt_includes_keryx_runtime_context() -> None:
     pending_work = _pending_work()
     prompt = build_prompt(
@@ -253,6 +414,12 @@ def test_build_prompt_includes_keryx_runtime_context() -> None:
     )
 
     assert "Current Maia context:" in prompt
+    assert "You are Reviewer." in prompt
+    assert "agent_id=reviewer" in prompt
+    assert 'Call the user "planner".' in prompt
+    assert "Use a custom speaking style." in prompt
+    assert "Custom speaking style details: Respond in warm, concise Korean." in prompt
+    assert "Persona: Sharp reviewer focused on direct code feedback." in prompt
     assert "Known team roster:" in prompt
     assert "planner (agent_id=planner, role=planner, runtime=running)" in prompt
     assert "reviewer (agent_id=reviewer, role=reviewer, runtime=running)" in prompt

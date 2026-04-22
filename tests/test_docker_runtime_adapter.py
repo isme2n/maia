@@ -359,6 +359,9 @@ def test_docker_runtime_adapter_start_mounts_agent_hermes_home(tmp_path: Path) -
     assert "-e" in args
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
     assert "HERMES_HOME=/maia/hermes" in env_values
+    assert "HOME=/maia/hermes" in env_values
+    assert "XDG_STATE_HOME=/maia/hermes/.local/state" in env_values
+    assert "XDG_CACHE_HOME=/maia/hermes/.cache" in env_values
     assert "MAIA_AGENT_ID=agent-001" in env_values
     assert "MAIA_AGENT_NAME=reviewer" in env_values
     assert f"KERYX_BASE_URL={runtime_keryx_base_url()}" in env_values
@@ -428,10 +431,14 @@ def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tm
             workspace="/workspace/reviewer",
             command=["python", "-m", "reviewer"],
             env={
+                "HERMES_HOME": "/tmp/wrong-hermes",
+                "HOME": "/tmp/wrong-home",
                 "KERYX_BASE_URL": "http://wrong-keryx:9999",
                 "MAIA_AGENT_ID": "wrong-id",
                 "MAIA_AGENT_NAME": "wrong-name",
                 "MAIA_ENV": "test",
+                "XDG_CACHE_HOME": "/tmp/wrong-cache",
+                "XDG_STATE_HOME": "/tmp/wrong-state",
             },
         ),
     )
@@ -441,12 +448,19 @@ def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tm
 
     args = json.loads(argv_path.read_text(encoding="utf-8"))
     env_values = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "-e"]
+    assert "HERMES_HOME=/maia/hermes" in env_values
+    assert "HOME=/maia/hermes" in env_values
     assert "MAIA_AGENT_ID=agent-001" in env_values
     assert "MAIA_AGENT_NAME=reviewer" in env_values
     assert f"KERYX_BASE_URL={runtime_keryx_base_url()}" in env_values
+    assert "XDG_CACHE_HOME=/maia/hermes/.cache" in env_values
+    assert "XDG_STATE_HOME=/maia/hermes/.local/state" in env_values
+    assert "HERMES_HOME=/tmp/wrong-hermes" not in env_values
+    assert "HOME=/tmp/wrong-home" not in env_values
     assert "MAIA_AGENT_ID=wrong-id" not in env_values
     assert "MAIA_AGENT_NAME=wrong-name" not in env_values
     assert "KERYX_BASE_URL=http://wrong-keryx:9999" not in env_values
-
+    assert "XDG_CACHE_HOME=/tmp/wrong-cache" not in env_values
+    assert "XDG_STATE_HOME=/tmp/wrong-state" not in env_values
 
 

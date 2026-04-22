@@ -98,7 +98,7 @@ RUNTIME_SUPPORT_BOUNDARY = (
 V1_RELEASE_CHECKLIST = (
     "Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.",
     "`doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.",
-    "`agent new` interactively captures agent name, user call-sign, and persona.",
+    "`agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.",
     "`agent setup` is the operator path to open `hermes setup` for one agent.",
 )
 KNOWN_LIMITATIONS = (
@@ -175,6 +175,8 @@ TEAM_UPDATE_EXAMPLES = (
 AGENT_TUNE_EXAMPLES = (
     "maia agent tune <planner_id> --role planner --runtime-image ghcr.io/example/planner:latest --runtime-workspace /workspace/planner --runtime-command python --runtime-command=-m --runtime-command planner --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=planner",
     "maia agent tune <reviewer_id> --role reviewer --runtime-image ghcr.io/example/reviewer:latest --runtime-workspace /workspace/reviewer --runtime-command python --runtime-command=-m --runtime-command reviewer --runtime-env MAIA_ENV=test --runtime-env MAIA_ROLE=reviewer",
+    "maia agent tune <agent_id> --persona 'calm technical assistant' --speaking-style Respectful",
+    "maia agent tune <agent_id> --speaking-style Custom --speaking-style-details 'Soft polite Korean, not too formal'",
     "maia agent tune <agent_id> --role researcher --model gpt-5 --tags runtime,focus",
     "maia agent tune <agent_id> --clear-role --clear-model --clear-tags",
 )
@@ -401,7 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
             "purge-all": "Purge every archived agent identity and local state",
         }[command_name]
         command_description = {
-            "new": "Interactively create an agent identity with name, user call-sign, and persona.",
+            "new": "Interactively create an agent identity with name, how the agent calls the user, speaking style, and persona.",
             "setup": "Open hermes setup for an agent in the CLI and keep the shared Hermes worker defaults for first start.",
             "setup-gateway": "Recover skipped gateway/home-channel setup for an agent in the CLI by reopening `hermes setup gateway` after messaging/home-channel setup was skipped during the normal agent setup flow.",
             "start": "Start an agent runtime after shared infra, agent setup, and gateway/home-channel readiness are complete.",
@@ -451,6 +453,15 @@ def build_parser() -> argparse.ArgumentParser:
             persona_group.add_argument(
                 "--persona-file",
                 help="UTF-8 text file containing the persona to store for the agent",
+            )
+            command_parser.add_argument(
+                "--speaking-style",
+                choices=("Respectful", "Casual", "Custom"),
+                help="Set the agent speaking style",
+            )
+            command_parser.add_argument(
+                "--speaking-style-details",
+                help="Free-text speaking style details to store when using Custom",
             )
             role_group = command_parser.add_mutually_exclusive_group()
             role_group.add_argument("--role", help="Set the agent role")

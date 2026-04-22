@@ -51,6 +51,24 @@ class AgentRegistry:
         self._records[agent_id] = updated
         return _clone_record(updated)
 
+    def set_speaking_style(
+        self,
+        agent_id: str,
+        *,
+        speaking_style: str,
+        speaking_style_details: str,
+    ) -> AgentRecord:
+        """Update speaking-style metadata for an existing record."""
+
+        record = self._require(agent_id)
+        updated = replace(
+            record,
+            speaking_style=speaking_style,
+            speaking_style_details=speaking_style_details,
+        )
+        self._records[agent_id] = updated
+        return _clone_record(updated)
+
     def set_has_started(self, agent_id: str, has_started: bool) -> AgentRecord:
         """Update whether the agent has started before and return the new value."""
 

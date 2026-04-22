@@ -114,7 +114,7 @@ def create_agent(home: Path, name: str = "demo") -> str:
         home,
         "agent",
         "new",
-        input_text=f"{name}\n{name}\n{name}\n",
+        input_text=f"{name}\n{name}\n\n{name}\n",
     )
     assert result.returncode == 0
     assert result.stderr == ""
@@ -123,7 +123,15 @@ def create_agent(home: Path, name: str = "demo") -> str:
 
 def load_registry(home: Path) -> dict[str, object]:
     registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(home)}))
-    return {"agents": [record.to_dict() for record in registry.list()]}
+    agents: list[dict[str, object]] = []
+    for record in registry.list():
+        payload = record.to_dict()
+        if payload.get("speaking_style") == "respectful":
+            payload.pop("speaking_style", None)
+        if not payload.get("speaking_style_details"):
+            payload.pop("speaking_style_details", None)
+        agents.append(payload)
+    return {"agents": agents}
 
 
 def load_runtime_state(home: Path) -> dict[str, object]:
@@ -952,6 +960,22 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
         "error: Agent tags must be a comma-separated list of non-empty values"
     )
 
+    invalid_style_details = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--speaking-style",
+        "Respectful",
+        "--speaking-style-details",
+        "too much",
+    )
+    assert invalid_style_details.returncode == 1
+    assert invalid_style_details.stdout == ""
+    assert invalid_style_details.stderr.strip() == (
+        "error: --speaking-style-details requires --speaking-style Custom"
+    )
+
     seeded = run_module(
         tmp_path,
         "agent",
@@ -984,6 +1008,24 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
         "tags": "-",
     }
 
+    style_tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--speaking-style",
+        "Custom",
+        "--speaking-style-details",
+        "日本語でやわらかく話してください。",
+    )
+    assert style_tuned.returncode == 0
+    assert style_tuned.stderr == ""
+    assert parse_fields(style_tuned.stdout.strip()) == {
+        "agent_id": agent_id,
+        "speaking_style": "Custom",
+        "speaking_style_details": "日本語でやわらかく話してください。",
+    }
+
     status = run_module(tmp_path, "agent", "status", agent_id)
     assert status.returncode == 0
     assert parse_fields(status.stdout.strip()) == {
@@ -1002,6 +1044,8 @@ def test_agent_tune_validation_and_clear_flags(tmp_path: Path) -> None:
             "agent_id": agent_id,
             "name": "alpha",
             "status": "stopped",
+            "speaking_style": "custom",
+            "speaking_style_details": "日本語でやわらかく話してください。",
             "persona": "alpha",
             "setup_status": "configured",
             "runtime_spec": {
@@ -1404,6 +1448,92 @@ def test_agent_start_rejects_agent_when_agent_setup_is_not_complete(tmp_path: Pa
     assert started.stderr.strip() == (
         f"error: Can't run agent {agent_id!r} yet because agent setup is incomplete"
     )
+
+
+def test_agent_start_allows_token_only_gateway_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "runtime-demo")
+    mark_runtime_start_ready(tmp_path, agent_id, gateway_setup_status="token-only")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert started.returncode == 0
+    assert parse_fields(started.stdout.strip()) == {
+        "agent_id": agent_id,
+        "status": "running",
+        "runtime_status": "running",
+        "runtime_handle": "runtime-001",
+    }
+
+    status = run_module(tmp_path, "agent", "status", agent_id)
+    assert status.returncode == 0
+    assert parse_fields(status.stdout.strip()) == {
+        "agent_id": agent_id,
+        "name": "runtime-demo",
+        "call_sign": "runtime-demo",
+        "status": "running",
+        "setup": "complete",
+        "runtime": "running",
+        "persona": "runtime-demo",
+    }
+
+
+def test_agent_start_refreshes_stale_incomplete_gateway_state_from_hermes_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    _write_fake_docker(fake_docker)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
+
+    agent_id = create_agent(tmp_path, "runtime-demo")
+    mark_runtime_start_ready(tmp_path, agent_id, gateway_setup_status="incomplete")
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / ".env").write_text("TELEGRAM_BOT_TOKEN=test-token\n", encoding="utf-8")
+    tuned = run_module(
+        tmp_path,
+        "agent",
+        "tune",
+        agent_id,
+        "--runtime-image",
+        "ghcr.io/example/reviewer:latest",
+        "--runtime-workspace",
+        "/workspace/reviewer",
+        "--runtime-command",
+        "python",
+        "--runtime-env",
+        "MAIA_ENV=test",
+    )
+    assert tuned.returncode == 0
+
+    started = run_module(tmp_path, "agent", "start", agent_id)
+
+    assert started.returncode == 0
+    runtime_state = load_runtime_state(tmp_path)
+    assert runtime_state["runtimes"][0]["gateway_setup_status"] == "token-only"
 
 
 def test_agent_start_rejects_agent_with_missing_runtime_workspace(tmp_path: Path) -> None:

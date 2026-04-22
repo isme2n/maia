@@ -127,6 +127,30 @@ def test_registry_profile_tags_are_defensively_copied() -> None:
 
 
 
+def test_registry_set_speaking_style_updates_record() -> None:
+    registry = AgentRegistry()
+    record = AgentRecord(
+        agent_id="agent-001",
+        name="planner",
+        status=AgentStatus.RUNNING,
+        persona="careful",
+    )
+
+    registry.add(record)
+    updated = registry.set_speaking_style(
+        "agent-001",
+        speaking_style="custom",
+        speaking_style_details="말 편하게 해도 돼요.",
+    )
+
+    assert updated.speaking_style == "custom"
+    assert updated.speaking_style_details == "말 편하게 해도 돼요."
+    assert registry.get("agent-001").speaking_style == "custom"
+    assert registry.get("agent-001").speaking_style_details == "말 편하게 해도 돼요."
+    assert record.speaking_style == "respectful"
+
+
+
 def test_registry_remove_deletes_record_and_preserves_order() -> None:
     registry = AgentRegistry()
     alpha = AgentRecord(
@@ -189,3 +213,15 @@ def test_registry_remove_missing_id_error() -> None:
 
     with pytest.raises(LookupError, match="Agent with id 'missing' not found"):
         registry.remove("missing")
+
+
+
+def test_registry_set_speaking_style_missing_id_error() -> None:
+    registry = AgentRegistry()
+
+    with pytest.raises(LookupError, match="Agent with id 'missing' not found"):
+        registry.set_speaking_style(
+            "missing",
+            speaking_style="casual",
+            speaking_style_details="",
+        )

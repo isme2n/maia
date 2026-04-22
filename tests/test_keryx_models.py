@@ -44,6 +44,8 @@ def test_keryx_agent_summary_round_trip() -> None:
         name="reviewer",
         call_sign="r",
         role="reviewer",
+        speaking_style="casual",
+        speaking_style_details="",
         status="running",
         setup_status="complete",
         runtime_status="running",
@@ -57,6 +59,9 @@ def test_keryx_agent_summary_round_trip() -> None:
         "name": "reviewer",
         "call_sign": "r",
         "role": "reviewer",
+        "speaking_style": "casual",
+        "speaking_style_details": "",
+        "persona": "",
         "status": "running",
         "setup_status": "complete",
         "runtime_status": "running",
@@ -76,11 +81,16 @@ def test_keryx_agent_summary_from_dict_defaults_call_sign_and_role() -> None:
 
     assert restored.call_sign == "worker"
     assert restored.role == ""
+    assert restored.speaking_style == "respectful"
+    assert restored.speaking_style_details == ""
     assert restored.to_dict() == {
         "agent_id": "worker",
         "name": "worker",
         "call_sign": "worker",
         "role": "",
+        "speaking_style": "respectful",
+        "speaking_style_details": "",
+        "persona": "",
         "status": "stopped",
         "setup_status": "incomplete",
         "runtime_status": "stopped",
@@ -102,6 +112,25 @@ def test_keryx_agent_summary_from_dict_rejects_empty_call_sign() -> None:
                 "runtime_status": "stopped",
             }
         )
+
+
+def test_keryx_agent_summary_preserves_custom_speaking_style() -> None:
+    restored = KeryxAgentSummary.from_dict(
+        {
+            "agent_id": "worker",
+            "name": "worker",
+            "call_sign": "worker",
+            "role": "assistant",
+            "speaking_style": "custom",
+            "speaking_style_details": "Por favor, háblame de forma cálida y breve.",
+            "status": "stopped",
+            "setup_status": "incomplete",
+            "runtime_status": "stopped",
+        }
+    )
+
+    assert restored.speaking_style == "custom"
+    assert restored.speaking_style_details == "Por favor, háblame de forma cálida y breve."
 
 
 def test_keryx_session_record_round_trip() -> None:

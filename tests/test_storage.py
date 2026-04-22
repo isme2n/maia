@@ -46,12 +46,14 @@ def test_json_registry_storage_round_trip(tmp_path: Path) -> None:
                 "agent_id": "agent-001",
                 "name": "planner",
                 "status": "running",
+                "speaking_style": "respectful",
                 "persona": "careful",
             },
             {
                 "agent_id": "agent-002",
                 "name": "reviewer",
                 "status": "stopped",
+                "speaking_style": "respectful",
                 "persona": "strict",
             },
         ]
@@ -255,7 +257,43 @@ def test_json_registry_storage_drops_non_portable_runtime_fields(tmp_path: Path)
                 "agent_id": "agent-001",
                 "name": "planner",
                 "status": "stopped",
+                "speaking_style": "respectful",
                 "persona": "careful",
+                "role": "",
+                "model": "",
+                "tags": [],
+            }
+        ]
+    }
+
+
+def test_json_registry_storage_portable_export_preserves_custom_speaking_style(tmp_path: Path) -> None:
+    storage = JsonRegistryStorage()
+    registry = AgentRegistry()
+    registry.add(
+        AgentRecord(
+            agent_id="agent-004",
+            name="translator",
+            status=AgentStatus.STOPPED,
+            speaking_style="custom",
+            speaking_style_details="日本語でやわらかく話してください。",
+            persona="helpful",
+        )
+    )
+    path = tmp_path / "portable-speaking-style.json"
+
+    storage.save(path, registry, portable=True)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload == {
+        "agents": [
+            {
+                "agent_id": "agent-004",
+                "name": "translator",
+                "status": "stopped",
+                "speaking_style": "custom",
+                "speaking_style_details": "日本語でやわらかく話してください。",
+                "persona": "helpful",
                 "role": "",
                 "model": "",
                 "tags": [],
@@ -293,6 +331,7 @@ def test_json_registry_storage_local_save_preserves_runtime_fields(tmp_path: Pat
                 "agent_id": "agent-001",
                 "name": "planner",
                 "status": "stopped",
+                "speaking_style": "respectful",
                 "persona": "careful",
                 "setup_status": "configured",
                 "runtime_spec": {
