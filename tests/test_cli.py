@@ -31,12 +31,16 @@ from maia.cli_parser import (
     HANDOFF_EXAMPLES,
     HOST_VALIDATION_CHECKLIST,
     HOST_VALIDATION_REPORT_TEMPLATE,
+    INIT_EXAMPLES,
+    INIT_HELP_CONTRACT,
+    INIT_STATE_MODEL,
     IMPORT_EXAMPLES,
     INSPECT_EXAMPLES,
     KNOWN_LIMITATIONS,
     PART1_OPERATOR_FLOW,
     PART2_CONVERSATION_CONTRACT,
     PART2_VISIBILITY_FLOW,
+    PUBLIC_ONBOARDING_CONTRACT,
     QUICKSTART_EXAMPLES,
     RUNTIME_PREREQ_EXAMPLES,
     RUNTIME_RECOVERY_CHECKLIST,
@@ -45,6 +49,7 @@ from maia.cli_parser import (
     TEAM_SHOW_EXAMPLES,
     TEAM_UPDATE_EXAMPLES,
     THREAD_EXAMPLES,
+    VALIDATION_BOUNDARY,
     V1_RELEASE_CHECKLIST,
     WORKSPACE_EXAMPLES,
     build_parser,
@@ -58,13 +63,15 @@ from maia.keryx_models import (
 )
 from maia.keryx_service import KeryxService
 from maia.keryx_skill import get_agent_keryx_skill_path, render_keryx_skill_content
-from maia.runtime_adapter import RuntimeStartResult, RuntimeState, RuntimeStatus
+from maia.runtime_adapter import RuntimeStartResult, RuntimeState, RuntimeStatus, RuntimeStatusResult
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 
 README_PATH = REPO_ROOT / "README.md"
+PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
 ROADMAP_PATH = REPO_ROOT / "docs/plans/maia-product-roadmap-5-parts.md"
+TASK157_PATH = REPO_ROOT / "docs/tasks/157-maia-init-closeout-and-release-readiness.md"
 PHASE10_PLAN_PATH = REPO_ROOT / "docs/plans/phase10-release-hardening-and-v1-closeout.md"
 PHASE12_PLAN_PATH = REPO_ROOT / "docs/plans/phase12-live-runtime-readiness-and-host-validation.md"
 PHASE15_PLAN_PATH = REPO_ROOT / "docs/plans/phase15-minimal-agent-bootstrap-and-runtime-setup.md"
@@ -73,7 +80,7 @@ PHASE16_PLAN_PATH = REPO_ROOT / "docs/plans/phase16-real-agent-conversation-and-
 
 def _parse_fields(line: str) -> dict[str, str]:
     tokens = line.split()
-    if tokens and tokens[0] in {"added", "created", "message_id", "thread", "workspace"}:
+    if tokens and tokens[0] in {"added", "created", "message_id", "next", "state", "thread", "updated", "workspace"}:
         tokens = tokens[1:]
     return dict(token.split("=", 1) for token in tokens)
 
@@ -83,6 +90,15 @@ def _line_with_prefix(text: str, prefix: str) -> str:
         if line.startswith(prefix):
             return line
     raise AssertionError(f"Missing line starting with {prefix!r}: {text!r}")
+
+
+def _write_gateway_env(hermes_home: Path, *, default_destination: bool) -> None:
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    env_lines = ["TELEGRAM_BOT_TOKEN=test-token"]
+    if default_destination:
+        env_lines.append("TELEGRAM_HOME_CHANNEL=team-room")
+    (hermes_home / ".env").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+
 
 def _assert_contains_lines(text: str, lines: tuple[str, ...]) -> None:
     for line in lines:
@@ -100,14 +116,6 @@ def _assert_contains_in_order(text: str, snippets: tuple[str, ...]) -> None:
 def _assert_not_contains_any(text: str, snippets: tuple[str, ...]) -> None:
     for snippet in snippets:
         assert snippet not in text
-
-
-def _markdown_numbered_lines(section: str) -> tuple[str, ...]:
-    return tuple(
-        line.strip()
-        for line in section.splitlines()
-        if ". " in line.strip() and line.strip().split(". ", 1)[0].isdigit()
-    )
 
 
 def _section_after_heading(text: str, heading: str, end_headings: tuple[str, ...]) -> str:
@@ -162,12 +170,45 @@ def _assert_locked_portable_state_contract(section: str) -> None:
     assert "`maia inspect <path>`" not in primary_section
 
 
-def test_readme_locks_part1_public_flow() -> None:
+def test_pyproject_description_locks_public_product_wording() -> None:
+    text = PYPROJECT_PATH.read_text(encoding="utf-8")
+
+    assert 'description = "Maia control plane CLI for agent onboarding and runtime operations"' in text
+    assert 'description = "Maia CLI skeleton"' not in text
+
+
+def test_readme_install_section_explains_oss_try_and_local_install_paths() -> None:
     text = README_PATH.read_text(encoding="utf-8")
-    first_run = _section_after_heading(text, "## First run", ("## Part 1 operator flow",))
+    install = _section_after_heading(text, "## Install", ("## First run",))
+
+    assert "Try Maia with the canonical onboarding flow: `uvx maia init`" in install
+    assert "Install Maia for repeated local use once distributed: `pipx install maia`" in install
+    assert "From this repository checkout, install locally for development: `python3 -m pip install .`" in install
+
+
+def test_readme_locks_init_public_onboarding_story() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    first_run = _section_after_heading(text, "## First run", ("## Core concepts",))
+    advanced_flow = _section_after_heading(
+        text,
+        "## Advanced/manual operator flow",
+        ("## What each command means",),
+    )
+    validation_boundary = _section_after_heading(
+        text,
+        "## Validation boundary",
+        ("## Live host runtime recovery",),
+    )
 
     assert "## First run" in text
-    assert "Install Maia, then follow the Part 1 bootstrap path in this order" in text
+    assert "The canonical public onboarding path is one command:" in first_run
+    _assert_contains_lines(first_run, QUICKSTART_EXAMPLES)
+    assert "`maia init` is Maia's canonical public onboarding path." in first_run
+    assert "advanced/manual operator flow documented below" in first_run
+    assert "Portable state and Keryx visibility stay available as support surfaces outside this first-run path." in first_run
+    assert "## Advanced/manual operator flow" in text
+    assert "Use the advanced/manual operator flow when you want explicit control over shared infra and agent onboarding." in text
+    assert "Advanced/manual operator flow:" in text
     assert "maia doctor" in text
     assert "maia setup" in text
     assert "maia agent new" in text
@@ -177,30 +218,23 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "shared infra" in text.lower()
     assert "hermes setup" in text
     assert "interactively create an agent identity" in text.lower()
-    assert "`maia doctor` is the infra-only gate for this flow." in first_run
-    assert "Portable state and Keryx visibility stay available as support surfaces outside this first-run path." in first_run
-    assert _markdown_numbered_lines(first_run) == (
-        "1. `maia doctor`",
-        "2. `maia setup`",
-        "3. `maia agent new`",
-        "4. `maia agent setup <name>`",
-        "5. `maia agent start <name>`",
-    )
-    _assert_not_contains_any(
-        first_run,
+    _assert_contains_in_order(
+        advanced_flow,
         (
-            "`maia export`",
-            "`maia import`",
-            "`maia inspect`",
-            "`maia thread`",
-            "`maia handoff`",
-            "`maia workspace`",
+            "maia doctor",
+            "maia setup",
+            "maia agent new",
+            "maia agent setup planner",
+            "maia agent start planner",
         ),
     )
+    assert "These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story." in text
     assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
     assert "interactive CLI-only passthrough to `hermes setup`" in text
+    assert "gateway or default chat-surface setup was skipped" in text
+    assert "usable gateway readiness required before `start`" in text
     assert "agent setup is recorded separately from the runtime launch state" in text
     assert "new agents carry the shared Hermes worker defaults needed for first start" in text
     assert "Part 2 Keryx collaboration" in text
@@ -220,6 +254,7 @@ def test_readme_locks_part1_public_flow() -> None:
     assert "fail cleanly for now" not in text
     assert "send/reply/inbox/thread" not in text
     assert "Secondary surfaces" in text
+    _assert_contains_lines(validation_boundary, VALIDATION_BOUNDARY)
     _assert_locked_collaboration_contract(
         _section_after_heading(
             text,
@@ -241,10 +276,21 @@ def test_readme_locks_direct_agent_anchor_story() -> None:
     assert "Economist -> User: final answer in the original conversation" in text
 
 
-def test_prd_locks_part1_operator_story() -> None:
+def test_prd_locks_init_public_onboarding_story() -> None:
     text = PRD_PATH.read_text(encoding="utf-8")
 
-    assert "doctor → setup → agent new → agent setup → agent start" in text
+    assert "공개 first-run story는 `maia init`" in text
+    assert "truthful onboarding command" in text
+    assert "conversation-ready" in text
+    assert "advanced/manual operator flow" in text
+    assert "## Part 1 public onboarding story" in text
+    assert "`uvx maia init`" in text
+    assert "`maia init`은 shared infra, agent identity, agent setup, gateway/default destination, runtime 상태를 truthfully 보고" in text
+    assert "`maia doctor -> maia setup -> maia agent new -> maia agent setup -> maia agent start`" in text
+    assert "## Release-readiness proof boundary" in text
+    assert "repo-level proof는 README/help/tests 정렬과 fake-docker 기반 `maia init` orchestration coverage" in text
+    assert "host-level proof는 Docker CLI, reachable daemon" in text
+    assert "repo-level proof를 host-level proof처럼 말하지 않는다." in text
     assert "identity" in text.lower()
     assert "hermes setup" in text
     assert "interactive CLI-only" in text
@@ -290,6 +336,20 @@ def test_phase16_plan_locks_part2_contract() -> None:
     assert "public docs/help/tests tell the same operator story" in text
 
 
+def test_roadmap_locks_init_closeout_and_release_boundary() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "## Part 1 — Bootstrap / Control Plane Foundation" in text
+    assert "`uvx maia init` 또는 `maia init`" in text
+    assert "success는 selected agent가 실제로 conversation-ready일 때만" in text
+    assert "`maia init`이 canonical public onboarding path다." in text
+    assert "explicit repo-level vs host-level validation boundary" in text
+    assert "Tasks 152/153/153B/153C/154/155/155B/156/157 closed `maia init` as the canonical public onboarding path" in text
+    assert "`python3 -m maia --help`, `python3 -m maia init --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py`" in text
+    assert "fake-docker repo validation is not host proof" in text
+    assert "Task 157 then finalized the OSS-facing onboarding closeout" in text
+
+
 def test_roadmap_points_part2_to_phase16_plan() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
@@ -313,10 +373,21 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    part1_section = _section_after_heading(captured.out, "Part 1 operator flow:", ("Doctor role:",))
+    onboarding_section = _section_after_heading(
+        captured.out,
+        "Public onboarding path:",
+        ("Advanced/manual operator flow:",),
+    )
+    advanced_flow_section = _section_after_heading(
+        captured.out,
+        "Advanced/manual operator flow:",
+        ("Doctor role:",),
+    )
     assert "usage: maia" in captured.out
+    assert "Maia control plane CLI. Public onboarding centers on `maia init`." in captured.out
     assert "agent" in captured.out
     assert "team" in captured.out
+    assert "Canonical Maia onboarding command" in captured.out
     assert "doctor" in captured.out
     assert "setup" in captured.out
     assert "thread" in captured.out
@@ -328,10 +399,12 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Inspect an importable Maia snapshot" in captured.out
     assert "Check shared infra readiness" in captured.out
     assert "Bootstrap shared Maia infra" in captured.out
-    assert "Part 1 operator flow:" in captured.out
+    assert "Public onboarding path:" in captured.out
+    assert "Advanced/manual operator flow:" in captured.out
     assert "Doctor role:" in captured.out
     assert "Support surfaces:" in captured.out
     assert "Known limitations:" in captured.out
+    assert "Validation boundary:" in captured.out
     assert "Keryx collaboration contract:" in captured.out
     assert "Direct-agent delegation contract:" in captured.out
     assert "Keryx operator visibility flow:" in captured.out
@@ -341,6 +414,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "reply <" not in captured.out
     assert "maia thread show <thread_id>" in captured.out
     assert "maia handoff show <handoff_id>" in captured.out
+    _assert_contains_lines(onboarding_section, PUBLIC_ONBOARDING_CONTRACT)
     _assert_locked_collaboration_contract(
         _section_after_heading(
             captured.out,
@@ -359,18 +433,27 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
             "maia agent start planner",
         ),
     )
-    assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
+    assert "`maia init` is Maia's canonical public one-command onboarding path." in captured.out
+    assert "`maia doctor` is the shared-infra gate in Maia's advanced/manual operator flow." in captured.out
     assert "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
     assert "RabbitMQ" not in captured.out
     assert "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`." in captured.out
     assert "Portable state (`export`, `import`, `inspect`) stays public as operator support, not the first-run bootstrap path." in captured.out
     assert "Keryx visibility (`thread`, `handoff`, `workspace`) stays public as operator support, not the Part 1 bootstrap flow." in captured.out
     _assert_contains_lines(captured.out, KNOWN_LIMITATIONS)
+    _assert_contains_lines(
+        _section_after_heading(
+            captured.out,
+            "Validation boundary:",
+            ("Keryx collaboration contract:",),
+        ),
+        VALIDATION_BOUNDARY,
+    )
     _assert_contains_lines(captured.out, PART2_CONVERSATION_CONTRACT)
     _assert_contains_lines(captured.out, DIRECT_AGENT_DELEGATION_CONTRACT)
     _assert_contains_lines(captured.out, PART2_VISIBILITY_FLOW)
     _assert_contains_in_order(
-        part1_section,
+        advanced_flow_section,
         (
             "maia doctor",
             "maia setup",
@@ -380,7 +463,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
         ),
     )
     _assert_not_contains_any(
-        part1_section,
+        advanced_flow_section,
         (
             "maia export",
             "maia import",
@@ -397,6 +480,22 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
             ("Known limitations:",),
         )
     )
+
+
+def test_init_help_describes_truthful_readiness_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["init", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Canonical Maia onboarding command." in captured.out
+    assert "truthful onboarding readiness state" in captured.out
+    assert "Contract:" in captured.out
+    assert "Truthful readiness model:" in captured.out
+    assert "Examples:" in captured.out
+    _assert_contains_lines(captured.out, INIT_HELP_CONTRACT)
+    _assert_contains_lines(captured.out, INIT_STATE_MODEL)
+    _assert_contains_lines(captured.out, INIT_EXAMPLES)
 
 
 def test_agent_new_help_describes_identity_only_flow(capsys: pytest.CaptureFixture[str]) -> None:
@@ -450,7 +549,7 @@ def test_agent_start_help_describes_part1_prerequisites(capsys: pytest.CaptureFi
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert (
-        "Start an agent runtime after shared infra, agent setup, and gateway/home-channel readiness are complete."
+        "Start an agent runtime after shared infra, agent setup, and usable gateway readiness are complete."
         in captured.out
     )
     assert "name" in captured.out
@@ -497,6 +596,12 @@ def test_build_parser_setup_shape() -> None:
     args = build_parser().parse_args(["setup"])
 
     assert args.resource == "setup"
+
+
+def test_build_parser_init_shape() -> None:
+    args = build_parser().parse_args(["init"])
+
+    assert args.resource == "init"
 
 
 def test_build_parser_agent_setup_shape() -> None:
@@ -561,8 +666,8 @@ def test_agent_setup_gateway_help_uses_recovery_wording(capsys: pytest.CaptureFi
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "Recover skipped gateway/home-channel setup for an agent in the CLI" in captured.out
-    assert "messaging/home-channel setup was skipped during the normal agent setup flow" in captured.out
+    assert "Recover skipped gateway/default-destination setup for an agent in the CLI" in captured.out
+    assert "gateway or default chat-surface setup was skipped during the normal agent setup flow" in captured.out
     assert "primary bootstrap" not in captured.out
 
 
@@ -572,7 +677,7 @@ def test_agent_start_help_mentions_gateway_readiness(capsys: pytest.CaptureFixtu
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "gateway/home-channel readiness" in captured.out
+    assert "usable gateway readiness" in captured.out
 
 
 def test_agent_help_includes_archive_all_and_purge_all(capsys: pytest.CaptureFixture[str]) -> None:
@@ -660,7 +765,7 @@ def test_doctor_help_includes_examples(capsys: pytest.CaptureFixture[str]) -> No
     assert "--verbose" in captured.out
     assert "Show per-component detail lines under the doctor summary" in captured.out
     assert "Examples:" in captured.out
-    assert "`maia doctor` is the first bootstrap gate for Maia shared infra." in captured.out
+    assert "`maia doctor` is the shared-infra gate in Maia's advanced/manual operator flow." in captured.out
     assert "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
     assert "Run `maia doctor --verbose` to print concrete component details under the short summary." in captured.out
     assert "RabbitMQ" not in captured.out
@@ -1044,6 +1149,662 @@ def test_agent_setup_command_records_incomplete_when_hermes_is_missing(
     }
 
 
+def test_init_command_reports_truthful_not_ready_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "docker_cli", "status": "missing"}],
+    )
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "bootstrap_shared_infra",
+        lambda state_path: (_ for _ in ()).throw(ValueError("Docker is not installed or not on PATH")),
+    )
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    infra_fields = _parse_fields(_line_with_prefix(captured.out, "state name=infra_ready"))
+    identity_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_identity_ready"))
+    setup_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_setup_ready"))
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert infra_fields["ready"] == "no"
+    assert identity_fields["ready"] == "no"
+    assert identity_fields["agent_id"] == "-"
+    assert identity_fields["name"] == "-"
+    assert identity_fields["source"] == "none"
+    assert setup_fields["ready"] == "no"
+    assert setup_fields["status"] == "not-started"
+    assert gateway_fields["ready"] == "no"
+    assert gateway_fields["status"] == "not-started"
+    assert destination_fields["ready"] == "no"
+    assert destination_fields["status"] == "not-started"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "not-started"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠doctor"
+    assert next_fields["reason"] == "shared-infra-not-ready"
+    assert captured.err == ""
+
+
+def test_init_command_bootstraps_creates_first_agent_and_runs_setup_passthrough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answers = iter(["planner", "planner", "", "planner"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    infra_ready = {"value": False}
+    setup_calls: list[tuple[str, str, str | None]] = []
+
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok" if infra_ready["value"] else "missing"}],
+    )
+
+    def _bootstrap(state_path: Path | str) -> list[dict[str, str]]:
+        infra_ready["value"] = True
+        return [
+            {"step": "network", "status": "created", "detail": "maia"},
+            {"step": "keryx", "status": "started", "detail": "http://127.0.0.1:8080"},
+            {"step": "db", "status": "ready", "detail": str(state_path)},
+        ]
+
+    monkeypatch.setattr(cli_module.infra_runtime, "bootstrap_shared_infra", _bootstrap)
+
+    def _run_setup(
+        *,
+        agent_id: str,
+        agent_name: str,
+        setup_target: str | None = None,
+    ) -> cli_module.agent_setup_session.AgentSetupSessionResult:
+        setup_calls.append((agent_id, agent_name, setup_target))
+        hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+        _write_gateway_env(hermes_home, default_destination=True)
+        return cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+            gateway_setup_status="complete",
+        )
+
+    monkeypatch.setattr(cli_module.agent_setup_session, "run_agent_setup_session", _run_setup)
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    created_fields = _parse_fields(_line_with_prefix(captured.out, "created "))
+    setup_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_setup_ready"))
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert "Created Maia network maia." in captured.out
+    assert "Started Keryx HTTP API http://127.0.0.1:8080." in captured.out
+    assert "Next: run maia agent setup planner" not in captured.out
+    assert created_fields["name"] == "planner"
+    assert created_fields["call_sign"] == "planner"
+    assert setup_calls == [(created_fields["agent_id"], "planner", None)]
+    assert setup_fields["ready"] == "yes"
+    assert setup_fields["status"] == "complete"
+    assert gateway_fields["ready"] == "yes"
+    assert gateway_fields["status"] == "complete"
+    assert destination_fields["ready"] == "yes"
+    assert destination_fields["status"] == "complete"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert next_fields["command"] == "maia␠agent␠start␠planner"
+    assert next_fields["reason"] == "start-agent-runtime"
+    assert captured.err == ""
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[created_fields["agent_id"]].to_dict() == {
+        "agent_id": created_fields["agent_id"],
+        "runtime_status": "stopped",
+        "setup_status": "complete",
+        "gateway_setup_status": "complete",
+    }
+
+
+def test_init_command_records_incomplete_when_passthrough_setup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answers = iter(["planner", "planner", "", "planner"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+    monkeypatch.setattr(
+        cli_module.agent_setup_session,
+        "run_agent_setup_session",
+        lambda *, agent_id, agent_name, setup_target=None: cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=7,
+            hermes_home=get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)}),
+            setup_status="incomplete",
+            gateway_setup_status="incomplete",
+        ),
+    )
+
+    assert main(["init"]) == 7
+    captured = capsys.readouterr()
+    created_fields = _parse_fields(_line_with_prefix(captured.out, "created "))
+    setup_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_setup_ready"))
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert setup_fields["ready"] == "no"
+    assert setup_fields["status"] == "incomplete"
+    assert gateway_fields["ready"] == "no"
+    assert gateway_fields["status"] == "incomplete"
+    assert next_fields["command"] == "maia␠agent␠setup␠planner"
+    assert next_fields["reason"] == "finish-agent-setup"
+    assert "Agent setup failed for 'planner'" in captured.err
+
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[created_fields["agent_id"]].to_dict() == {
+        "agent_id": created_fields["agent_id"],
+        "runtime_status": "stopped",
+        "setup_status": "incomplete",
+        "gateway_setup_status": "incomplete",
+    }
+
+
+def test_init_command_distinguishes_gateway_ready_from_default_destination_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                setup_status="complete",
+                gateway_setup_status="token-only",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+    setup_calls: list[tuple[str, str, str | None]] = []
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    _write_gateway_env(hermes_home, default_destination=False)
+
+    def _run_setup(
+        *,
+        agent_id: str,
+        agent_name: str,
+        setup_target: str | None = None,
+    ) -> cli_module.agent_setup_session.AgentSetupSessionResult:
+        setup_calls.append((agent_id, agent_name, setup_target))
+        return cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+            gateway_setup_status="token-only",
+        )
+
+    monkeypatch.setattr(cli_module.agent_setup_session, "run_agent_setup_session", _run_setup)
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    identity_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_identity_ready"))
+    setup_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_setup_ready"))
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert identity_fields["ready"] == "yes"
+    assert identity_fields["name"] == "planner"
+    assert identity_fields["source"] == "sole-active-agent"
+    assert setup_fields["ready"] == "yes"
+    assert setup_fields["status"] == "complete"
+    assert gateway_fields["ready"] == "yes"
+    assert gateway_fields["status"] == "token-only"
+    assert destination_fields["ready"] == "no"
+    assert destination_fields["status"] == "token-only"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert conversation_fields["ready"] == "no"
+    assert setup_calls == [(agent_id, "planner", "gateway")]
+    assert next_fields["command"] == "maia␠agent␠setup-gateway␠planner"
+    assert next_fields["reason"] == "configure-default-destination"
+    assert captured.err == ""
+
+
+def test_init_command_recovers_default_destination_via_gateway_setup_passthrough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                setup_status="complete",
+                gateway_setup_status="token-only",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+    setup_calls: list[tuple[str, str, str | None]] = []
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    _write_gateway_env(hermes_home, default_destination=False)
+
+    def _run_setup(
+        *,
+        agent_id: str,
+        agent_name: str,
+        setup_target: str | None = None,
+    ) -> cli_module.agent_setup_session.AgentSetupSessionResult:
+        setup_calls.append((agent_id, agent_name, setup_target))
+        _write_gateway_env(hermes_home, default_destination=True)
+        return cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+            gateway_setup_status="complete",
+        )
+
+    monkeypatch.setattr(cli_module.agent_setup_session, "run_agent_setup_session", _run_setup)
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert setup_calls == [(agent_id, "planner", "gateway")]
+    assert gateway_fields["ready"] == "yes"
+    assert gateway_fields["status"] == "complete"
+    assert destination_fields["ready"] == "yes"
+    assert destination_fields["status"] == "complete"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠start␠planner"
+    assert next_fields["reason"] == "start-agent-runtime"
+    assert captured.err == ""
+
+
+def test_init_command_refreshes_default_destination_from_hermes_home_without_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                setup_status="complete",
+                gateway_setup_status="token-only",
+            )
+        },
+    )
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_HOME_CHANNEL=team-room\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+
+    def _run_setup(*, agent_id: str, agent_name: str, setup_target: str | None = None) -> object:
+        raise AssertionError(
+            "init should not reopen gateway setup when the default destination is already resolvable"
+        )
+
+    monkeypatch.setattr(cli_module.agent_setup_session, "run_agent_setup_session", _run_setup)
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert gateway_fields["ready"] == "yes"
+    assert gateway_fields["status"] == "complete"
+    assert destination_fields["ready"] == "yes"
+    assert destination_fields["status"] == "complete"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠start␠planner"
+    assert next_fields["reason"] == "start-agent-runtime"
+    assert captured.err == ""
+
+
+def test_init_command_only_marks_conversation_ready_when_runtime_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.RUNNING,
+                runtime_handle="container://planner",
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    _write_gateway_env(get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)}), default_destination=True)
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+
+    class _FakeRuntimeAdapter:
+        def status(self, request: object) -> RuntimeStatusResult:
+            assert request.agent_id == agent_id
+            return RuntimeStatusResult(
+                runtime=RuntimeState(
+                    agent_id=agent_id,
+                    runtime_status=RuntimeStatus.RUNNING,
+                    runtime_handle="container://planner",
+                    setup_status="complete",
+                    gateway_setup_status="complete",
+                )
+            )
+
+    monkeypatch.setattr(cli_module, "_build_runtime_adapter", lambda: _FakeRuntimeAdapter())
+
+    assert main(["init"]) == 0
+    captured = capsys.readouterr()
+    infra_fields = _parse_fields(_line_with_prefix(captured.out, "state name=infra_ready"))
+    setup_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_setup_ready"))
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert infra_fields["ready"] == "yes"
+    assert setup_fields["ready"] == "yes"
+    assert gateway_fields["ready"] == "yes"
+    assert destination_fields["ready"] == "yes"
+    assert runtime_fields["ready"] == "yes"
+    assert runtime_fields["status"] == "running"
+    assert conversation_fields["ready"] == "yes"
+    assert next_fields["command"] == "-"
+    assert next_fields["reason"] == "conversation-ready-now"
+
+
+def test_init_command_downgrades_stale_complete_default_destination_from_hermes_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.RUNNING,
+                runtime_handle="container://planner",
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / ".env").write_text(
+        "TELEGRAM_BOT_TOKEN=test-token\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+    setup_calls: list[tuple[str, str, str | None]] = []
+
+    def _run_setup(
+        *,
+        agent_id: str,
+        agent_name: str,
+        setup_target: str | None = None,
+    ) -> cli_module.agent_setup_session.AgentSetupSessionResult:
+        setup_calls.append((agent_id, agent_name, setup_target))
+        return cli_module.agent_setup_session.AgentSetupSessionResult(
+            exit_code=0,
+            hermes_home=hermes_home,
+            setup_status="complete",
+            gateway_setup_status="token-only",
+        )
+
+    class _FakeRuntimeAdapter:
+        def status(self, request: object) -> RuntimeStatusResult:
+            assert request.agent_id == agent_id
+            return RuntimeStatusResult(
+                runtime=RuntimeState(
+                    agent_id=agent_id,
+                    runtime_status=RuntimeStatus.RUNNING,
+                    runtime_handle="container://planner",
+                    setup_status="complete",
+                    gateway_setup_status="token-only",
+                )
+            )
+
+    monkeypatch.setattr(cli_module.agent_setup_session, "run_agent_setup_session", _run_setup)
+    monkeypatch.setattr(cli_module, "_build_runtime_adapter", lambda: _FakeRuntimeAdapter())
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    gateway_fields = _parse_fields(_line_with_prefix(captured.out, "state name=gateway_ready"))
+    destination_fields = _parse_fields(_line_with_prefix(captured.out, "state name=default_destination_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert setup_calls == [(agent_id, "planner", "gateway")]
+    assert gateway_fields["ready"] == "yes"
+    assert gateway_fields["status"] == "token-only"
+    assert destination_fields["ready"] == "no"
+    assert destination_fields["status"] == "token-only"
+    assert runtime_fields["ready"] == "yes"
+    assert runtime_fields["status"] == "running"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠setup-gateway␠planner"
+    assert next_fields["reason"] == "configure-default-destination"
+    assert captured.err == ""
+    runtime_state = RuntimeStateStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert runtime_state[agent_id].gateway_setup_status == "token-only"
+
+
+def test_init_command_does_not_treat_handleless_running_state_as_runtime_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.RUNNING,
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    _write_gateway_env(get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)}), default_destination=True)
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+
+    class _FakeRuntimeAdapter:
+        def status(self, request: object) -> RuntimeStatusResult:
+            raise AssertionError(f"init should not probe live runtime status without a handle: {request!r}")
+
+    monkeypatch.setattr(cli_module, "_build_runtime_adapter", lambda: _FakeRuntimeAdapter())
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠start␠planner"
+    assert next_fields["reason"] == "start-agent-runtime"
+
+
+def test_init_command_reports_runtime_transition_as_not_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            agent_id: RuntimeState(
+                agent_id=agent_id,
+                runtime_status=RuntimeStatus.STARTING,
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    _write_gateway_env(get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)}), default_destination=True)
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    identity_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_identity_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert identity_fields["name"] == "planner"
+    assert identity_fields["source"] == "sole-active-agent"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "starting"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠status␠planner"
+    assert next_fields["reason"] == "wait-for-runtime-transition"
+
+
+def test_init_command_prefers_team_default_agent_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    capsys.readouterr()
+    RuntimeStateStorage().save(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            reviewer_id: RuntimeState(
+                agent_id=reviewer_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                setup_status="complete",
+                gateway_setup_status="complete",
+            )
+        },
+    )
+    _write_gateway_env(get_agent_hermes_home(reviewer_id, {"HOME": str(tmp_path)}), default_destination=True)
+    monkeypatch.setattr(
+        cli_module.infra_runtime,
+        "collect_doctor_checks",
+        lambda state_path: [{"name": "bootstrap", "status": "ok"}],
+    )
+
+    assert main(["team", "update", "--default-agent", reviewer_id]) == 0
+    capsys.readouterr()
+
+    assert main(["init"]) == 1
+    captured = capsys.readouterr()
+    identity_fields = _parse_fields(_line_with_prefix(captured.out, "state name=agent_identity_ready"))
+    runtime_fields = _parse_fields(_line_with_prefix(captured.out, "state name=runtime_running"))
+    conversation_fields = _parse_fields(_line_with_prefix(captured.out, "state name=conversation_ready"))
+    next_fields = _parse_fields(_line_with_prefix(captured.out, "next "))
+
+    assert planner_id != reviewer_id
+    assert identity_fields["agent_id"] == reviewer_id
+    assert identity_fields["name"] == "reviewer"
+    assert identity_fields["source"] == "default-agent"
+    assert runtime_fields["ready"] == "no"
+    assert runtime_fields["status"] == "stopped"
+    assert conversation_fields["ready"] == "no"
+    assert next_fields["command"] == "maia␠agent␠start␠reviewer"
+    assert next_fields["reason"] == "start-agent-runtime"
+
+
 def test_agent_start_backfills_missing_builtin_keryx_skill(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1196,18 +1957,22 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "Hermes agents" not in readme
     assert "python -m maia" not in readme
     assert "Public examples use the installed `maia` entrypoint." in readme
-    assert "## Part 1 operator flow" in readme
+    assert "## Advanced/manual operator flow" in readme
     assert "## What each command means" in readme
     assert "## Known limitations" in readme
     assert "## Secondary surfaces" in readme
     assert "## Part 2 visibility flow" in readme
     assert "## Runtime support boundary" in readme
+    assert "## Validation boundary" in readme
     assert "## Live host runtime recovery" in readme
     assert "## V1 release checklist" in readme
     assert "v1 smoke checklist:" not in readme
     assert "Live host runtime checklist:" not in readme
     assert "Live host report format:" not in readme
-    assert "Part 1 operator flow:" in readme
+    assert "The canonical public onboarding path is one command:" in readme
+    for line in QUICKSTART_EXAMPLES:
+        assert line in readme
+    assert "Advanced/manual operator flow:" in readme
     for line in PART1_OPERATOR_FLOW:
         assert line in readme
     for line in KNOWN_LIMITATIONS:
@@ -1222,8 +1987,16 @@ def test_readme_examples_align_with_public_help() -> None:
         assert line in readme
     for line in RUNTIME_SUPPORT_BOUNDARY:
         assert line in readme
+    for line in VALIDATION_BOUNDARY:
+        assert line in readme
     for line in RUNTIME_RECOVERY_CHECKLIST:
         assert line in readme
+    assert "`maia init` is Maia's canonical public onboarding path." in readme
+    assert "The decomposed `doctor`, `setup`, `agent new`, `agent setup`, and `agent start` commands remain public as the advanced/manual operator flow documented below." in readme
+    assert "Use the advanced/manual operator flow when you want explicit control over shared infra and agent onboarding." in readme
+    assert "These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story." in readme
+    assert "gateway or default chat-surface setup was skipped" in readme
+    assert "usable gateway readiness required before `start`" in readme
     for line in V1_RELEASE_CHECKLIST:
         assert line in readme
     assert "Part 3 portable-state mental model: export all by default, export to an explicit path when you want a named user/project snapshot, then import safely with preview + confirm." in readme
@@ -1240,6 +2013,19 @@ def test_readme_examples_align_with_public_help() -> None:
     assert f"`{DOCTOR_EXAMPLES[0]}`" in readme
     assert f"`{SETUP_EXAMPLES[0]}`" in readme
     assert f"`{AGENT_SETUP_EXAMPLES[0]}`" in readme
+
+
+def test_task157_records_repo_and_host_evidence_separately() -> None:
+    text = TASK157_PATH.read_text(encoding="utf-8")
+
+    assert "Task 157" in text
+    assert "README/help/PRD all tell the same `maia init` story." in text
+    assert "Repo-level validation evidence" in text
+    assert "Host-level smoke evidence" in text
+    assert "## Closeout evidence" in text
+    assert "python3 -m maia --help" in text
+    assert "python3 -m maia init --help" in text
+    assert "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py" in text
 
 
 def test_phase10_plan_locks_v1_release_and_smoke_checklists() -> None:

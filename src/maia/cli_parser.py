@@ -65,6 +65,11 @@ LIFECYCLE_STATUS_BY_COMMAND = {
     "restore": AgentStatus.STOPPED,
 }
 AGENT_ID_COMMANDS = frozenset({"setup", "setup-gateway", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
+PUBLIC_ONBOARDING_CONTRACT = (
+    "`maia init` is Maia's canonical public one-command onboarding path.",
+    "Try-once OSS flow: `uvx maia init`; installed usage: `maia init`.",
+    "The decomposed commands below remain public as the advanced/manual operator flow.",
+)
 PART1_OPERATOR_FLOW = (
     "maia doctor",
     "maia setup",
@@ -82,10 +87,25 @@ DOCTOR_EXAMPLES = (
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
-QUICKSTART_EXAMPLES = PART1_OPERATOR_FLOW
+QUICKSTART_EXAMPLES = ("uvx maia init", "maia init")
+INIT_EXAMPLES = ("maia init",)
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
+INIT_HELP_CONTRACT = (
+    "`maia init` is Maia's canonical onboarding command.",
+    "`maia init` is only successful when Maia is truly conversation-ready, not merely partially configured.",
+    "When any prerequisite is missing, `maia init` must point to the next required onboarding action truthfully.",
+)
+INIT_STATE_MODEL = (
+    "`infra_ready` means doctor-level shared infra checks pass right now.",
+    "`agent_identity_ready` means Maia can target a non-archived onboarding agent right now.",
+    "`agent_setup_ready` means that agent finished Hermes setup.",
+    "`gateway_ready` means that agent has at least one usable gateway configuration (`complete` or `token-only`).",
+    "`default_destination_ready` means Maia can resolve a default user-facing delivery destination/chat surface (`complete`).",
+    "`runtime_running` means the selected agent runtime is actually running right now.",
+    "`conversation_ready` is true only when all required readiness states above are true.",
+)
 DOCTOR_ROLE_CONTRACT = (
-    "`maia doctor` is the first bootstrap gate for Maia shared infra.",
+    "`maia doctor` is the shared-infra gate in Maia's advanced/manual operator flow.",
     "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step.",
     "Run `maia doctor --verbose` to print concrete component details under the short summary.",
     "If `doctor` passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`.",
@@ -95,8 +115,14 @@ RUNTIME_SUPPORT_BOUNDARY = (
     "Run `maia doctor` before using `agent start|stop|status|logs` for real.",
     "Run `maia setup` to bootstrap shared infra before the first agent run.",
 )
+VALIDATION_BOUNDARY = (
+    "Repo-level validation covers the `maia init` readiness contract and fake-docker orchestration path.",
+    "Repo-level validation does not prove this host can launch a real agent with `maia init`.",
+    "Host-level smoke is separate and requires the real host prerequisites for the path under test, including Docker CLI, a reachable Docker daemon, and Hermes CLI when setup still needs to run.",
+)
 V1_RELEASE_CHECKLIST = (
-    "Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.",
+    "Top-level help and README introduce `maia init` as the canonical public onboarding path.",
+    "Advanced/manual operator flow remains `doctor -> setup -> agent new -> agent setup -> agent start`.",
     "`doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.",
     "`agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.",
     "`agent setup` is the operator path to open `hermes setup` for one agent.",
@@ -207,22 +233,41 @@ def _format_epilog_sections(*sections: tuple[str, tuple[str, ...]]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maia",
-        description="Maia control plane CLI.",
+        description="Maia control plane CLI. Public onboarding centers on `maia init`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.set_defaults(parser=parser)
     parser.epilog = _format_epilog_sections(
-        ("Part 1 operator flow:", PART1_OPERATOR_FLOW),
+        ("Public onboarding path:", PUBLIC_ONBOARDING_CONTRACT),
+        ("Advanced/manual operator flow:", PART1_OPERATOR_FLOW),
         ("Doctor role:", DOCTOR_ROLE_CONTRACT),
         ("Portable state flow:", PORTABLE_STATE_FLOW),
         ("Support surfaces:", SUPPORT_SURFACE_CONTRACT),
         ("Known limitations:", KNOWN_LIMITATIONS),
+        ("Validation boundary:", VALIDATION_BOUNDARY),
         ("Keryx collaboration contract:", PART2_CONVERSATION_CONTRACT),
         ("Direct-agent delegation contract:", DIRECT_AGENT_DELEGATION_CONTRACT),
         ("Keryx operator visibility flow:", PART2_VISIBILITY_FLOW),
     )
 
     top_level = parser.add_subparsers(dest="resource")
+
+    init_parser = top_level.add_parser(
+        "init",
+        help="Canonical Maia onboarding command",
+        description=(
+            "Canonical Maia onboarding command. "
+            "Show the truthful onboarding readiness state and the next required step "
+            "toward a conversation-ready Maia agent."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    init_parser.set_defaults(parser=init_parser)
+    init_parser.epilog = _format_epilog_sections(
+        ("Contract:", INIT_HELP_CONTRACT),
+        ("Truthful readiness model:", INIT_STATE_MODEL),
+        ("Examples:", INIT_EXAMPLES),
+    )
 
     for command_name in TOP_LEVEL_TRANSFER_COMMANDS:
         transfer_help = {
@@ -389,7 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
         command_help = {
             "new": "Create an agent identity",
             "setup": "Open hermes setup for an agent in the CLI",
-            "setup-gateway": "Recover skipped gateway/home-channel setup for an agent in the CLI",
+            "setup-gateway": "Recover skipped gateway/default-destination setup for an agent in the CLI",
             "archive-all": "Archive every agent identity",
             "start": "Start an agent runtime",
             "stop": "Stop a running agent runtime",
@@ -405,8 +450,8 @@ def build_parser() -> argparse.ArgumentParser:
         command_description = {
             "new": "Interactively create an agent identity with name, how the agent calls the user, speaking style, and persona.",
             "setup": "Open hermes setup for an agent in the CLI and keep the shared Hermes worker defaults for first start.",
-            "setup-gateway": "Recover skipped gateway/home-channel setup for an agent in the CLI by reopening `hermes setup gateway` after messaging/home-channel setup was skipped during the normal agent setup flow.",
-            "start": "Start an agent runtime after shared infra, agent setup, and gateway/home-channel readiness are complete.",
+            "setup-gateway": "Recover skipped gateway/default-destination setup for an agent in the CLI by reopening `hermes setup gateway` after gateway or default chat-surface setup was skipped during the normal agent setup flow.",
+            "start": "Start an agent runtime after shared infra, agent setup, and usable gateway readiness are complete.",
             "stop": "Stop a running agent runtime without changing the stored agent identity.",
             "status": "Show the operator-facing agent status plus setup and runtime state.",
             "logs": "Show recent runtime logs for an agent after setup is complete and the runtime has started.",

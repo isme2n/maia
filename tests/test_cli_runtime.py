@@ -95,6 +95,8 @@ def parse_fields(line: str) -> dict[str, str]:
         "setup",
         "logs",
         "workspace",
+        "state",
+        "next",
     }:
         tokens = tokens[1:]
     if tokens and tokens[0] == "registry":
@@ -305,9 +307,18 @@ def _write_fake_hermes(path: Path) -> None:
         "target = Path(hermes_home)\n"
         "target.mkdir(parents=True, exist_ok=True)\n"
         "(target / 'setup-marker.txt').write_text('configured', encoding='utf-8')\n"
+        "setup_target = args[1] if len(args) > 1 else ''\n"
         "env_path = target / '.env'\n"
-        "env_path.write_text('TELEGRAM_BOT_TOKEN=test-t...\\nTELEGRAM_HOME_CHANNEL=test-home\\n', encoding='utf-8')\n"
-        "print(f'fake-hermes-setup hermes_home={hermes_home} agent_id={os.environ.get(\"MAIA_AGENT_ID\", \"\")} agent_name={os.environ.get(\"MAIA_AGENT_NAME\", \"\")}')\n"
+        "env_lines = ['TELEGRAM_BOT_TOKEN=test-t...']\n"
+        "write_home_channel = (\n"
+        "    os.environ.get('MAIA_FAKE_HERMES_TOKEN_ONLY_ON_GATEWAY') != '1'\n"
+        "    if setup_target == 'gateway'\n"
+        "    else os.environ.get('MAIA_FAKE_HERMES_TOKEN_ONLY_ON_SETUP') != '1'\n"
+        ")\n"
+        "if write_home_channel:\n"
+        "    env_lines.append('TELEGRAM_HOME_CHANNEL=test-home')\n"
+        "env_path.write_text('\\n'.join(env_lines) + '\\n', encoding='utf-8')\n"
+        "print(f'fake-hermes-setup setup_target={setup_target or \"full\"} hermes_home={hermes_home} agent_id={os.environ.get(\"MAIA_AGENT_ID\", \"\")} agent_name={os.environ.get(\"MAIA_AGENT_NAME\", \"\")}')\n"
         "if os.environ.get('MAIA_FAKE_HERMES_FAIL') == '1':\n"
         "    print('fake-hermes-setup failed', file=sys.stderr)\n"
         "    raise SystemExit(7)\n"
@@ -321,7 +332,7 @@ def _write_fake_docker(path: Path) -> None:
     path.write_text(
         "#!/usr/bin/env python3\n"
         "from pathlib import Path\n"
-        "import json, sys\n"
+        "import json, os, sys\n"
         "state_path = Path(__file__).with_name('fake-docker-state.json')\n"
         "if state_path.exists():\n"
         "    state = json.loads(state_path.read_text(encoding='utf-8'))\n"
@@ -367,12 +378,17 @@ def _write_fake_docker(path: Path) -> None:
         "if args[:2] == ['run', '-d']:\n"
         "    if '--name' in args:\n"
         "        handle = args[args.index('--name') + 1]\n"
+        "        status = 'running'\n"
         "        logs = ['rabbitmq ready']\n"
         "    else:\n"
+        "        if os.environ.get('MAIA_FAKE_DOCKER_FAIL_RUNTIME_RUN') == '1':\n"
+        "            print('runtime start failed', file=sys.stderr)\n"
+        "            raise SystemExit(42)\n"
         "        state['counter'] += 1\n"
         "        handle = f\"runtime-{state['counter']:03d}\"\n"
+        "        status = os.environ.get('MAIA_FAKE_DOCKER_RUNTIME_STATUS', 'running')\n"
         "        logs = ['line 1', 'line 2']\n"
-        "    state['containers'][handle] = {'status': 'running', 'logs': logs}\n"
+        "    state['containers'][handle] = {'status': status, 'logs': logs}\n"
         "    save()\n"
         "    print(handle)\n"
         "    raise SystemExit(0)\n"
@@ -1167,6 +1183,290 @@ def test_agent_setup_passthrough_records_incomplete_setup_state_on_failure(tmp_p
         "runtimes": [
             {
                 "agent_id": agent_id,
+                "runtime_status": "stopped",
+                "setup_status": "incomplete",
+                "gateway_setup_status": "incomplete",
+            }
+        ]
+    }
+
+
+def test_init_orchestrates_real_hermes_setup_for_first_agent(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_docker(fake_docker)
+    _write_fake_hermes(fake_hermes)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "init"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        input="planner\nplanner\n\nplanner\n",
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    created_fields = parse_fields(line_with_prefix(result.stdout, "created "))
+    setup_fields = parse_fields(line_with_prefix(result.stdout, "state name=agent_setup_ready"))
+    gateway_fields = parse_fields(line_with_prefix(result.stdout, "state name=gateway_ready"))
+    destination_fields = parse_fields(line_with_prefix(result.stdout, "state name=default_destination_ready"))
+    runtime_fields = parse_fields(line_with_prefix(result.stdout, "state name=runtime_running"))
+    conversation_fields = parse_fields(line_with_prefix(result.stdout, "state name=conversation_ready"))
+    next_fields = parse_fields(line_with_prefix(result.stdout, "next "))
+    agent_id = created_fields["agent_id"]
+    hermes_home = get_agent_hermes_home(agent_id, {"HOME": str(tmp_path)})
+
+    assert "Created Maia network maia." in result.stdout
+    assert "Started Keryx HTTP API http://maia-keryx:8765." in result.stdout
+    assert f"hermes_home={hermes_home}" in result.stdout
+    assert f"agent_id={agent_id}" in result.stdout
+    assert created_fields["name"] == "planner"
+    assert setup_fields == {"name": "agent_setup_ready", "ready": "yes", "status": "complete"}
+    assert gateway_fields == {"name": "gateway_ready", "ready": "yes", "status": "complete"}
+    assert destination_fields == {
+        "name": "default_destination_ready",
+        "ready": "yes",
+        "status": "complete",
+    }
+    assert runtime_fields == {"name": "runtime_running", "ready": "yes", "status": "running"}
+    assert conversation_fields == {"name": "conversation_ready", "ready": "yes"}
+    assert next_fields["command"] == "-"
+    assert next_fields["reason"] == "conversation-ready-now"
+    assert (hermes_home / "setup-marker.txt").read_text(encoding="utf-8") == "configured"
+    assert load_registry(tmp_path)["agents"][0]["name"] == "planner"
+    assert load_registry(tmp_path)["agents"][0]["status"] == "running"
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": agent_id,
+                "runtime_status": "running",
+                "runtime_handle": "runtime-001",
+                "setup_status": "complete",
+                "gateway_setup_status": "complete",
+            }
+        ]
+    }
+
+
+def test_init_recovers_default_destination_with_real_gateway_passthrough(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_docker(fake_docker)
+    _write_fake_hermes(fake_hermes)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["MAIA_FAKE_HERMES_TOKEN_ONLY_ON_SETUP"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "init"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        input="planner\nplanner\n\nplanner\n",
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    created_fields = parse_fields(line_with_prefix(result.stdout, "created "))
+    gateway_fields = parse_fields(line_with_prefix(result.stdout, "state name=gateway_ready"))
+    destination_fields = parse_fields(line_with_prefix(result.stdout, "state name=default_destination_ready"))
+    runtime_fields = parse_fields(line_with_prefix(result.stdout, "state name=runtime_running"))
+    conversation_fields = parse_fields(line_with_prefix(result.stdout, "state name=conversation_ready"))
+    next_fields = parse_fields(line_with_prefix(result.stdout, "next "))
+
+    assert result.stdout.count("fake-hermes-setup") == 2
+    assert "setup_target=full" in result.stdout
+    assert "setup_target=gateway" in result.stdout
+    assert gateway_fields == {"name": "gateway_ready", "ready": "yes", "status": "complete"}
+    assert destination_fields == {
+        "name": "default_destination_ready",
+        "ready": "yes",
+        "status": "complete",
+    }
+    assert runtime_fields == {"name": "runtime_running", "ready": "yes", "status": "running"}
+    assert conversation_fields == {"name": "conversation_ready", "ready": "yes"}
+    assert next_fields["command"] == "-"
+    assert next_fields["reason"] == "conversation-ready-now"
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": created_fields["agent_id"],
+                "runtime_status": "running",
+                "runtime_handle": "runtime-001",
+                "setup_status": "complete",
+                "gateway_setup_status": "complete",
+            }
+        ]
+    }
+
+
+def test_init_starts_runtime_before_default_destination_is_conversation_ready(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_docker(fake_docker)
+    _write_fake_hermes(fake_hermes)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["MAIA_FAKE_HERMES_TOKEN_ONLY_ON_SETUP"] = "1"
+    env["MAIA_FAKE_HERMES_TOKEN_ONLY_ON_GATEWAY"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "init"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        input="planner\nplanner\n\nplanner\n",
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == ""
+    created_fields = parse_fields(line_with_prefix(result.stdout, "created "))
+    gateway_fields = parse_fields(line_with_prefix(result.stdout, "state name=gateway_ready"))
+    destination_fields = parse_fields(line_with_prefix(result.stdout, "state name=default_destination_ready"))
+    runtime_fields = parse_fields(line_with_prefix(result.stdout, "state name=runtime_running"))
+    conversation_fields = parse_fields(line_with_prefix(result.stdout, "state name=conversation_ready"))
+    next_fields = parse_fields(line_with_prefix(result.stdout, "next "))
+
+    assert result.stdout.count("fake-hermes-setup") == 2
+    assert gateway_fields == {"name": "gateway_ready", "ready": "yes", "status": "token-only"}
+    assert destination_fields == {
+        "name": "default_destination_ready",
+        "ready": "no",
+        "status": "token-only",
+    }
+    assert runtime_fields == {"name": "runtime_running", "ready": "yes", "status": "running"}
+    assert conversation_fields == {"name": "conversation_ready", "ready": "no"}
+    assert next_fields["command"] == "maia␠agent␠setup-gateway␠planner"
+    assert next_fields["reason"] == "configure-default-destination"
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": created_fields["agent_id"],
+                "runtime_status": "running",
+                "runtime_handle": "runtime-001",
+                "setup_status": "complete",
+                "gateway_setup_status": "token-only",
+            }
+        ]
+    }
+
+
+def test_init_reports_runtime_start_remediation_when_runtime_exits_immediately(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_docker(fake_docker)
+    _write_fake_hermes(fake_hermes)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["MAIA_FAKE_DOCKER_RUNTIME_STATUS"] = "exited"
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "init"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        input="planner\nplanner\n\nplanner\n",
+    )
+
+    assert result.returncode == 1
+    created_fields = parse_fields(line_with_prefix(result.stdout, "created "))
+    destination_fields = parse_fields(line_with_prefix(result.stdout, "state name=default_destination_ready"))
+    runtime_fields = parse_fields(line_with_prefix(result.stdout, "state name=runtime_running"))
+    conversation_fields = parse_fields(line_with_prefix(result.stdout, "state name=conversation_ready"))
+    next_fields = parse_fields(line_with_prefix(result.stdout, "next "))
+
+    assert destination_fields == {
+        "name": "default_destination_ready",
+        "ready": "yes",
+        "status": "complete",
+    }
+    assert runtime_fields == {"name": "runtime_running", "ready": "no", "status": "stopped"}
+    assert conversation_fields == {"name": "conversation_ready", "ready": "no"}
+    assert next_fields["command"] == "maia␠agent␠start␠planner"
+    assert next_fields["reason"] == "start-agent-runtime"
+    assert result.stderr.strip() == (
+        "Agent start did not leave 'planner' running. "
+        "Run maia agent logs planner, then rerun maia agent start planner."
+    )
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": created_fields["agent_id"],
+                "runtime_status": "stopped",
+                "runtime_handle": "runtime-001",
+                "setup_status": "complete",
+                "gateway_setup_status": "complete",
+            }
+        ]
+    }
+
+
+def test_init_records_incomplete_setup_state_when_real_passthrough_fails(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_hermes = fake_bin / "hermes"
+    _write_fake_docker(fake_docker)
+    _write_fake_hermes(fake_hermes)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["MAIA_FAKE_HERMES_FAIL"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-m", "maia", "init"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        input="planner\nplanner\n\nplanner\n",
+    )
+
+    assert result.returncode == 7
+    created_fields = parse_fields(line_with_prefix(result.stdout, "created "))
+    setup_fields = parse_fields(line_with_prefix(result.stdout, "state name=agent_setup_ready"))
+    gateway_fields = parse_fields(line_with_prefix(result.stdout, "state name=gateway_ready"))
+    next_fields = parse_fields(line_with_prefix(result.stdout, "next "))
+
+    assert "fake-hermes-setup failed" in result.stderr
+    assert "Agent setup failed for 'planner'" in result.stderr
+    assert setup_fields == {"name": "agent_setup_ready", "ready": "no", "status": "incomplete"}
+    assert gateway_fields == {"name": "gateway_ready", "ready": "no", "status": "incomplete"}
+    assert next_fields["command"] == "maia␠agent␠setup␠planner"
+    assert next_fields["reason"] == "finish-agent-setup"
+    assert load_runtime_state(tmp_path) == {
+        "runtimes": [
+            {
+                "agent_id": created_fields["agent_id"],
                 "runtime_status": "stopped",
                 "setup_status": "incomplete",
                 "gateway_setup_status": "incomplete",

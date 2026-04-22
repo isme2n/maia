@@ -9,25 +9,24 @@ Requirements:
 - Python 3.11+
 - Docker CLI and a reachable Docker daemon for runtime control
 
-From the repository root:
-
-```bash
-python3 -m pip install .
-```
+Intended OSS-facing path:
+- Try Maia with the canonical onboarding flow: `uvx maia init`
+- Install Maia for repeated local use once distributed: `pipx install maia`
+- From this repository checkout, install locally for development: `python3 -m pip install .`
 
 ## First run
 
-Install Maia, then follow the Part 1 bootstrap path in this order:
+The canonical public onboarding path is one command:
 
-1. `maia doctor`
-2. `maia setup`
-3. `maia agent new`
-4. `maia agent setup <name>`
-5. `maia agent start <name>`
+```bash
+uvx maia init
+# or, after installing Maia:
+maia init
+```
 
-`maia doctor` is the infra-only gate for this flow. It tells you whether to fix Docker, Keryx HTTP API, or DB access first, or continue to `maia setup`. Add `--verbose` when you need concrete per-component detail lines under the short summary.
-
-`maia agent setup` is an interactive CLI-only passthrough to `hermes setup` for one agent. Maia does not replace or reinterpret the Hermes setup wizard.
+`maia init` is Maia's canonical public onboarding path.
+It only reports success after the selected agent runtime is running and the agent is conversation-ready.
+The decomposed `doctor`, `setup`, `agent new`, `agent setup`, and `agent start` commands remain public as the advanced/manual operator flow documented below.
 
 Portable state and Keryx visibility stay available as support surfaces outside this first-run path.
 
@@ -36,13 +35,13 @@ Portable state and Keryx visibility stay available as support surfaces outside t
 - Maia control plane: bootstrap shared infra, create agent identities, and operate per-agent runtime lifecycle.
 - Keryx collaboration plane: keep live multi-agent work rooted in one user-facing agent while exposing operator visibility into open collaboration state.
 
-## Part 1 operator flow
+## Advanced/manual operator flow
 
-Maia Part 1 is an operator-facing bootstrap flow, not a messaging-first story. `maia doctor` is the first shared-infra decision point, and the rest of the bootstrap path follows only after it points you to `maia setup`.
+Use the advanced/manual operator flow when you want explicit control over shared infra and agent onboarding.
 
 Public examples use the installed `maia` entrypoint.
 
-Part 1 operator flow:
+Advanced/manual operator flow:
 
 ```bash
 maia doctor
@@ -59,12 +58,14 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 
 ## What each command means
 
-- `maia doctor`: check shared infra readiness only: Docker, Keryx HTTP API, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`. Use `maia doctor --verbose` for concrete component details such as the Keryx endpoint, container/runtime path, Docker probe detail, and SQLite DB path.
+These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story.
+
+- `maia doctor`: check shared infra readiness only for the advanced/manual flow: Docker, Keryx HTTP API, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`. Use `maia doctor --verbose` for concrete component details such as the Keryx endpoint, container/runtime path, Docker probe detail, and SQLite DB path.
 - `maia setup`: bootstrap shared infra only after `doctor` says the shared infra path is ready to continue.
 - `maia agent new`: interactively create an agent identity by asking for agent name, how the agent addresses the user, and persona. New agents still carry the shared Hermes worker defaults needed for first start.
-- `maia agent setup <name>`: open `hermes setup` for that agent in the CLI.
-- `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if messaging/home-channel setup was skipped during the normal `maia agent setup <name>` run.
-- `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with gateway/home-channel setup required before `start`.
+- `maia agent setup <name>`: open an interactive CLI-only passthrough to `hermes setup` for that agent.
+- `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if gateway or default chat-surface setup was skipped during the normal `maia agent setup <name>` run.
+- `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with usable gateway readiness required before `start`.
 - `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
 - `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
 - agent setup is recorded separately from the runtime launch state.
@@ -76,7 +77,7 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 - Shared infra currently depends on the Keryx HTTP API and a writable SQLite state DB path.
 - `maia setup` bootstraps the shared Maia network, Keryx HTTP API container, and SQLite state DB.
 - `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
-- `maia agent start` now also requires gateway/home-channel setup to be complete; rerun `maia agent setup-gateway <name>` if that step was skipped.
+- `maia agent start` requires usable gateway readiness; rerun `maia agent setup-gateway <name>` if gateway or default chat-surface setup was skipped.
 - Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.
 
 ## Part 2 Keryx collaboration
@@ -158,6 +159,12 @@ Detailed contributor material lives outside the primary onboarding flow:
 - Run `maia doctor` before using `agent start|stop|status|logs` for real.
 - Run `maia setup` to bootstrap shared infra before the first agent run.
 
+## Validation boundary
+
+- Repo-level validation covers the `maia init` readiness contract and fake-docker orchestration path.
+- Repo-level validation does not prove this host can launch a real agent with `maia init`.
+- Host-level smoke is separate and requires the real host prerequisites for the path under test, including Docker CLI, a reachable Docker daemon, and Hermes CLI when setup still needs to run.
+
 ## Live host runtime recovery
 
 - If doctor fails, fix Docker, Keryx HTTP API, or SQLite state DB access first.
@@ -168,7 +175,8 @@ Detailed contributor material lives outside the primary onboarding flow:
 <!--
 Compatibility note for tests: the legacy V1 checklist was removed from the public README surface in Task 143B.
 ## V1 release checklist
-- Top-level help and README lead with `doctor -> setup -> agent new -> agent setup -> agent start`.
+- Top-level help and README introduce `maia init` as the canonical public onboarding path.
+- Advanced/manual operator flow remains `doctor -> setup -> agent new -> agent setup -> agent start`.
 - `doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.
 - `agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.
 - `agent setup` is the operator path to open `hermes setup` for one agent.

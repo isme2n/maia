@@ -78,6 +78,8 @@ def _handle_runtime_command(args: argparse.Namespace) -> int:
 
     try:
         command_name = _get_runtime_command_name(args)
+        if resource == "init":
+            return _handle_init(storage, state_path, team_metadata_path)
         if resource == "doctor":
             return _handle_doctor(verbose=getattr(args, "verbose", False))
         if resource == "setup":
@@ -166,6 +168,392 @@ def _handle_setup() -> int:
     return 0
 
 
+def _handle_init(
+    storage: JsonRegistryStorage,
+    state_path: Path | str,
+    team_metadata_path: Path | str,
+) -> int:
+    orchestration_exit_code: int | None = None
+    init_start_attempted = False
+    init_start_error: str | None = None
+    infra_ready = _ensure_init_infra_ready(state_path)
+    if not infra_ready:
+        orchestration_exit_code = 1
+
+    registry = storage.load(state_path)
+    team_metadata = load_team_metadata(team_metadata_path)
+    selected_agent, selected_source = _select_init_agent(registry, team_metadata)
+    if infra_ready and selected_agent is None:
+        selected_agent = _create_agent_interactively(storage, state_path, registry)
+        print(_format_created_agent_line(selected_agent))
+        selected_source = "sole-active-agent"
+
+    if infra_ready and selected_agent is not None:
+        setup_state = RuntimeStateStorage().load(get_state_db_path()).get(selected_agent.agent_id)
+        if _derive_setup_state(setup_state) != "complete":
+            setup_exit_code, _setup_result, setup_error = _run_agent_setup_passthrough(selected_agent)
+            if setup_error is not None:
+                print(
+                    f"Agent setup failed for {selected_agent.name!r}. "
+                    f"Rerun maia agent setup {selected_agent.name} after fixing the Hermes setup issue. {setup_error}",
+                    file=sys.stderr,
+                )
+            elif setup_exit_code != 0:
+                print(
+                    f"Agent setup failed for {selected_agent.name!r}. "
+                    f"Rerun maia agent setup {selected_agent.name} after fixing the Hermes setup issue",
+                    file=sys.stderr,
+                )
+            if setup_exit_code != 0:
+                orchestration_exit_code = setup_exit_code
+        gateway_exit_code = _orchestrate_init_gateway_setup_if_needed(selected_agent)
+        if gateway_exit_code is not None:
+            orchestration_exit_code = gateway_exit_code
+        if _init_runtime_start_capable(state_path):
+            registry = storage.load(state_path)
+            selected_agent = registry.get(selected_agent.agent_id)
+            init_start_attempted, init_start_error = _orchestrate_init_runtime_start_if_needed(
+                selected_agent,
+                storage,
+                state_path,
+                registry,
+                _build_runtime_adapter(),
+            )
+
+    registry = storage.load(state_path)
+    team_metadata = load_team_metadata(team_metadata_path)
+    selected_agent, selected_source = _select_init_agent(registry, team_metadata)
+    infra_ready = _init_infra_ready(state_path)
+    runtime_state = None
+    if selected_agent is not None:
+        runtime_state = _resolve_runtime_state_for_init(
+            selected_agent,
+            _build_runtime_adapter(),
+            infra_ready=infra_ready,
+        )
+        if runtime_state is not None:
+            selected_agent = _sync_registry_status_from_runtime_state(
+                selected_agent,
+                runtime_state,
+                storage,
+                state_path,
+                registry,
+            )
+
+    setup_status = _derive_setup_state(runtime_state)
+    gateway_status = _derive_gateway_setup_state(runtime_state)
+    runtime_status = _derive_init_runtime_status(runtime_state)
+    agent_identity_ready = selected_agent is not None
+    agent_setup_ready = agent_identity_ready and setup_status == "complete"
+    gateway_ready = agent_identity_ready and _is_gateway_start_ready(gateway_status)
+    default_destination_ready = agent_identity_ready and _is_default_destination_ready(gateway_status)
+    runtime_running = agent_identity_ready and infra_ready and runtime_status == RuntimeStatus.RUNNING.value
+    conversation_ready = all(
+        (
+            infra_ready,
+            agent_identity_ready,
+            agent_setup_ready,
+            gateway_ready,
+            default_destination_ready,
+            runtime_running,
+        )
+    )
+    next_command, next_reason = _derive_init_next_step(
+        infra_ready=infra_ready,
+        selected_agent=selected_agent,
+        agent_setup_ready=agent_setup_ready,
+        gateway_ready=gateway_ready,
+        default_destination_ready=default_destination_ready,
+        runtime_running=runtime_running,
+        runtime_status=runtime_status,
+    )
+    report = {
+        "infra_ready": infra_ready,
+        "agent_identity_ready": agent_identity_ready,
+        "selected_agent_id": "-" if selected_agent is None else selected_agent.agent_id,
+        "selected_agent_name": "-" if selected_agent is None else selected_agent.name,
+        "selected_agent_source": selected_source,
+        "agent_setup_ready": agent_setup_ready,
+        "setup_status": setup_status,
+        "gateway_ready": gateway_ready,
+        "gateway_status": gateway_status,
+        "default_destination_ready": default_destination_ready,
+        "runtime_running": runtime_running,
+        "runtime_status": runtime_status,
+        "conversation_ready": conversation_ready,
+        "next_command": next_command,
+        "next_reason": next_reason,
+    }
+    for line in _format_init_output_lines(report):
+        print(line)
+    if init_start_error is not None:
+        print(
+            f"Agent start failed for {selected_agent.name!r}. "
+            f"Rerun maia agent start {selected_agent.name} after fixing the runtime issue. {init_start_error}",
+            file=sys.stderr,
+        )
+    elif (
+        init_start_attempted
+        and selected_agent is not None
+        and not runtime_running
+        and next_command == f"maia agent start {selected_agent.name}"
+    ):
+        print(
+            f"Agent start did not leave {selected_agent.name!r} running. "
+            f"Run maia agent logs {selected_agent.name}, then rerun maia agent start {selected_agent.name}.",
+            file=sys.stderr,
+        )
+    if orchestration_exit_code is not None:
+        return orchestration_exit_code
+    return 0 if conversation_ready else 1
+
+
+def _select_init_agent(
+    registry,
+    team_metadata: TeamMetadata,
+) -> tuple[AgentRecord | None, str]:
+    active_records = [
+        record for record in registry.list() if record.status is not AgentStatus.ARCHIVED
+    ]
+    if not active_records:
+        return None, "none"
+    default_agent_id = team_metadata.default_agent_id.strip()
+    if default_agent_id:
+        try:
+            default_record = registry.get(default_agent_id)
+        except LookupError:
+            default_record = None
+        if default_record is not None and default_record.status is not AgentStatus.ARCHIVED:
+            return default_record, "default-agent"
+    ordered_records = sorted(active_records, key=lambda record: (record.name, record.agent_id))
+    if len(ordered_records) == 1:
+        return ordered_records[0], "sole-active-agent"
+    return ordered_records[0], "first-active-agent"
+
+
+def _init_infra_ready(state_path: Path | str) -> bool:
+    checks = infra_runtime.collect_doctor_checks(state_path)
+    return not any(_is_doctor_failure(check) for check in checks)
+
+
+def _ensure_init_infra_ready(state_path: Path | str) -> bool:
+    if _init_infra_ready(state_path):
+        return True
+    try:
+        steps = infra_runtime.bootstrap_shared_infra(state_path)
+    except ValueError:
+        return False
+    for step in steps:
+        print(_format_setup_step_line(step))
+    return _init_infra_ready(state_path)
+
+
+def _init_runtime_start_capable(state_path: Path | str) -> bool:
+    check_status_by_name = {
+        check["name"]: check["status"] for check in infra_runtime.collect_doctor_checks(state_path)
+    }
+    return (
+        check_status_by_name.get("docker_cli") == "ok"
+        and check_status_by_name.get("docker_daemon") == "ok"
+    )
+
+
+def _orchestrate_init_gateway_setup_if_needed(record: AgentRecord) -> int | None:
+    runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(record.agent_id)
+    runtime_state = _refresh_gateway_setup_state_from_hermes_home(
+        record,
+        runtime_state,
+        allow_downgrade=True,
+    )
+    if _derive_setup_state(runtime_state) != "complete":
+        return None
+    if _is_default_destination_ready(_derive_gateway_setup_state(runtime_state)):
+        return None
+    gateway_exit_code, _gateway_result, gateway_error = _run_agent_setup_passthrough(
+        record,
+        setup_target="gateway",
+    )
+    if gateway_error is not None:
+        print(
+            f"Gateway setup failed for {record.name!r}. "
+            f"Rerun maia agent setup-gateway {record.name} after fixing the Hermes setup issue. {gateway_error}",
+            file=sys.stderr,
+        )
+    elif gateway_exit_code != 0:
+        print(
+            f"Gateway setup failed for {record.name!r}. "
+            f"Rerun maia agent setup-gateway {record.name} after fixing the Hermes setup issue",
+            file=sys.stderr,
+        )
+    return gateway_exit_code if gateway_exit_code != 0 else None
+
+
+def _orchestrate_init_runtime_start_if_needed(
+    record: AgentRecord,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+) -> tuple[bool, str | None]:
+    runtime_state = _resolve_runtime_state_for_init(
+        record,
+        runtime_adapter,
+        infra_ready=True,
+    )
+    if _derive_setup_state(runtime_state) != "complete":
+        return False, None
+    if not _is_gateway_start_ready(_derive_gateway_setup_state(runtime_state)):
+        return False, None
+    if runtime_state is not None and runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
+        return False, None
+    try:
+        _start_agent_runtime(
+            record,
+            storage,
+            registry_path,
+            registry,
+            runtime_adapter,
+            stored_runtime_state=runtime_state,
+        )
+    except ValueError as exc:
+        return True, str(exc)
+    return True, None
+
+
+def _resolve_runtime_state_for_init(
+    record: AgentRecord,
+    runtime_adapter: DockerRuntimeAdapter,
+    *,
+    infra_ready: bool,
+) -> RuntimeState | None:
+    runtime_state = RuntimeStateStorage().load(get_state_db_path()).get(record.agent_id)
+    runtime_state = _refresh_gateway_setup_state_from_hermes_home(
+        record,
+        runtime_state,
+        allow_downgrade=True,
+    )
+    if runtime_state is None or not infra_ready:
+        return runtime_state
+    if runtime_state.runtime_handle is None:
+        if runtime_state.runtime_status is RuntimeStatus.RUNNING:
+            return RuntimeState(
+                agent_id=runtime_state.agent_id,
+                runtime_status=RuntimeStatus.STOPPED,
+                runtime_handle=None,
+                setup_status=runtime_state.setup_status,
+                gateway_setup_status=runtime_state.gateway_setup_status,
+            )
+        return runtime_state
+    try:
+        observed = runtime_adapter.status(RuntimeStatusRequest(agent_id=record.agent_id)).runtime
+    except (LookupError, ValueError):
+        return RuntimeState(
+            agent_id=record.agent_id,
+            runtime_status=RuntimeStatus.STOPPED,
+            runtime_handle=runtime_state.runtime_handle,
+            setup_status=runtime_state.setup_status,
+            gateway_setup_status=runtime_state.gateway_setup_status,
+        )
+    return RuntimeState(
+        agent_id=observed.agent_id,
+        runtime_status=observed.runtime_status,
+        runtime_handle=observed.runtime_handle,
+        setup_status=(observed.setup_status or runtime_state.setup_status),
+        gateway_setup_status=(observed.gateway_setup_status or runtime_state.gateway_setup_status),
+    )
+
+
+def _derive_init_runtime_status(runtime_state: RuntimeState | None) -> str:
+    if runtime_state is None:
+        return "not-started"
+    return runtime_state.runtime_status.value
+
+
+def _derive_init_next_step(
+    *,
+    infra_ready: bool,
+    selected_agent: AgentRecord | None,
+    agent_setup_ready: bool,
+    gateway_ready: bool,
+    default_destination_ready: bool,
+    runtime_running: bool,
+    runtime_status: str,
+) -> tuple[str, str]:
+    if not infra_ready:
+        return "maia doctor", "shared-infra-not-ready"
+    if selected_agent is None:
+        return "maia agent new", "create-first-agent-identity"
+    if not agent_setup_ready:
+        return f"maia agent setup {selected_agent.name}", "finish-agent-setup"
+    if not gateway_ready:
+        return f"maia agent setup-gateway {selected_agent.name}", "configure-usable-gateway"
+    if not default_destination_ready:
+        return f"maia agent setup-gateway {selected_agent.name}", "configure-default-destination"
+    if runtime_status in {RuntimeStatus.STARTING.value, RuntimeStatus.STOPPING.value}:
+        return f"maia agent status {selected_agent.name}", "wait-for-runtime-transition"
+    if not runtime_running:
+        return f"maia agent start {selected_agent.name}", "start-agent-runtime"
+    return "-", "conversation-ready-now"
+
+
+def _format_init_output_lines(report: dict[str, object]) -> list[str]:
+    return [
+        _format_init_state_line(
+            "infra_ready",
+            bool(report["infra_ready"]),
+        ),
+        _format_init_state_line(
+            "agent_identity_ready",
+            bool(report["agent_identity_ready"]),
+            agent_id=str(report["selected_agent_id"]),
+            name=str(report["selected_agent_name"]),
+            source=str(report["selected_agent_source"]),
+        ),
+        _format_init_state_line(
+            "agent_setup_ready",
+            bool(report["agent_setup_ready"]),
+            status=str(report["setup_status"]),
+        ),
+        _format_init_state_line(
+            "gateway_ready",
+            bool(report["gateway_ready"]),
+            status=str(report["gateway_status"]),
+        ),
+        _format_init_state_line(
+            "default_destination_ready",
+            bool(report["default_destination_ready"]),
+            status=str(report["gateway_status"]),
+        ),
+        _format_init_state_line(
+            "runtime_running",
+            bool(report["runtime_running"]),
+            status=str(report["runtime_status"]),
+        ),
+        _format_init_state_line(
+            "conversation_ready",
+            bool(report["conversation_ready"]),
+        ),
+        " ".join(
+            (
+                "next",
+                f"command={_format_preview_value(str(report['next_command']))}",
+                f"reason={_format_preview_value(str(report['next_reason']))}",
+            )
+        ),
+    ]
+
+
+def _format_init_state_line(state_name: str, ready: bool, **fields: str) -> str:
+    tokens = ["state", f"name={state_name}", f"ready={_format_init_ready_value(ready)}"]
+    for field_name, value in fields.items():
+        tokens.append(f"{field_name}={_format_preview_value(value)}")
+    return " ".join(tokens)
+
+
+def _format_init_ready_value(ready: bool) -> str:
+    return "yes" if ready else "no"
+
+
 def _handle_agent_setup(
     args: argparse.Namespace,
     storage: JsonRegistryStorage,
@@ -175,35 +563,16 @@ def _handle_agent_setup(
     _ = (storage, registry_path)
     record = registry.get(args.agent_id)
     requested_name = getattr(args, "agent_lookup", record.name)
-    try:
-        result = agent_setup_session.run_agent_setup_session(
-            agent_id=record.agent_id,
-            agent_name=record.name,
-        )
-    except ValueError as exc:
-        _record_runtime_setup_state(
-            record.agent_id,
-            setup_status="incomplete",
-            gateway_setup_status="incomplete",
-        )
+    exit_code, result, error = _run_agent_setup_passthrough(record)
+    if error is not None:
         print(
             f"Agent setup failed for {requested_name!r}. "
-            f"Rerun maia agent setup {requested_name} after fixing the Hermes setup issue. {exc}",
+            f"Rerun maia agent setup {requested_name} after fixing the Hermes setup issue. {error}",
             file=sys.stderr,
         )
-        return 1
-    if result.exit_code == 0:
-        _sync_agent_hermes_soul(
-            record,
-            hermes_home=result.hermes_home,
-            create_home=True,
-        )
-    _record_runtime_setup_state(
-        record.agent_id,
-        setup_status=result.setup_status,
-        gateway_setup_status=result.gateway_setup_status,
-    )
-    if result.exit_code == 0:
+        return exit_code
+    assert result is not None
+    if exit_code == 0:
         print(
             f"Agent setup completed for {requested_name!r}. "
             f"Hermes home is ready at {result.hermes_home}. "
@@ -215,7 +584,7 @@ def _handle_agent_setup(
         f"Rerun maia agent setup {requested_name} after fixing the Hermes setup issue",
         file=sys.stderr,
     )
-    return result.exit_code
+    return exit_code
 
 
 def _handle_agent_setup_gateway(
@@ -227,25 +596,16 @@ def _handle_agent_setup_gateway(
     _ = (storage, registry_path)
     record = registry.get(args.agent_id)
     requested_name = getattr(args, "agent_lookup", record.name)
-    try:
-        result = agent_setup_session.run_agent_setup_session(
-            agent_id=record.agent_id,
-            agent_name=record.name,
-            setup_target="gateway",
-        )
-    except ValueError as exc:
-        _record_runtime_setup_state(record.agent_id, gateway_setup_status="incomplete")
+    exit_code, result, error = _run_agent_setup_passthrough(record, setup_target="gateway")
+    if error is not None:
         print(
             f"Gateway setup failed for {requested_name!r}. "
-            f"Rerun maia agent setup-gateway {requested_name} after fixing the Hermes setup issue. {exc}",
+            f"Rerun maia agent setup-gateway {requested_name} after fixing the Hermes setup issue. {error}",
             file=sys.stderr,
         )
-        return 1
-    _record_runtime_setup_state(
-        record.agent_id,
-        gateway_setup_status=result.gateway_setup_status,
-    )
-    if result.exit_code == 0:
+        return exit_code
+    assert result is not None
+    if exit_code == 0:
         print(
             f"Gateway setup completed for {requested_name!r}. "
             f"Hermes home is ready at {result.hermes_home}. "
@@ -257,7 +617,55 @@ def _handle_agent_setup_gateway(
         f"Rerun maia agent setup-gateway {requested_name} after fixing the Hermes setup issue",
         file=sys.stderr,
     )
-    return result.exit_code
+    return exit_code
+
+
+def _run_agent_setup_passthrough(
+    record: AgentRecord,
+    *,
+    setup_target: str | None = None,
+) -> tuple[int, agent_setup_session.AgentSetupSessionResult | None, str | None]:
+    try:
+        if setup_target is None:
+            result = agent_setup_session.run_agent_setup_session(
+                agent_id=record.agent_id,
+                agent_name=record.name,
+            )
+        else:
+            result = agent_setup_session.run_agent_setup_session(
+                agent_id=record.agent_id,
+                agent_name=record.name,
+                setup_target=setup_target,
+            )
+    except ValueError as exc:
+        if setup_target is None:
+            _record_runtime_setup_state(
+                record.agent_id,
+                setup_status="incomplete",
+                gateway_setup_status="incomplete",
+            )
+        else:
+            _record_runtime_setup_state(record.agent_id, gateway_setup_status="incomplete")
+        return 1, None, str(exc)
+
+    if result.exit_code == 0 and setup_target is None:
+        _sync_agent_hermes_soul(
+            record,
+            hermes_home=result.hermes_home,
+            create_home=True,
+        )
+    if setup_target is None:
+        _record_runtime_setup_state(
+            record.agent_id,
+            setup_status=result.setup_status,
+            gateway_setup_status=result.gateway_setup_status,
+        )
+    else:
+        _record_runtime_setup_state(
+            record.agent_id,
+            gateway_setup_status=result.gateway_setup_status,
+        )
+    return result.exit_code, result, None
 
 
 def _record_runtime_setup_state(
@@ -477,12 +885,11 @@ def _prompt_required_text(label: str, *, field_name: str) -> str:
         print(f"{field_name} is required", file=sys.stderr)
 
 
-def _handle_agent_new(
-    args: argparse.Namespace,
+def _create_agent_interactively(
     storage: JsonRegistryStorage,
     registry_path: str,
     registry,
-) -> int:
+) -> AgentRecord:
     name = _prompt_required_text("Agent name", field_name="agent name")
     if any(record.name == name for record in registry.list()):
         raise ValueError(f"Agent with name {name!r} already exists")
@@ -516,6 +923,10 @@ def _handle_agent_new(
     registry.add(record)
     storage.save(registry_path, registry)
     ensure_agent_keryx_skill_installed(record.agent_id)
+    return record
+
+
+def _format_created_agent_line(record: AgentRecord) -> str:
     created_parts = [
         f"created agent_id={record.agent_id}",
         f"name={_format_preview_value(record.name)}",
@@ -527,7 +938,17 @@ def _handle_agent_new(
             f"speaking_style_details={_format_preview_value(record.speaking_style_details)}"
         )
     created_parts.append(f"status={record.status.value}")
-    print(" ".join(created_parts))
+    return " ".join(created_parts)
+
+
+def _handle_agent_new(
+    args: argparse.Namespace,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+) -> int:
+    record = _create_agent_interactively(storage, registry_path, registry)
+    print(_format_created_agent_line(record))
     print(f"Next: run maia agent setup {record.name}")
     print(f"Tip: You can tune this agent later with maia agent tune {record.name}")
     return 0
@@ -1105,15 +1526,26 @@ def _load_runtime_state_for_agent(record: AgentRecord) -> RuntimeState | None:
 def _refresh_gateway_setup_state_from_hermes_home(
     record: AgentRecord,
     runtime_state: RuntimeState | None,
+    *,
+    allow_downgrade: bool = False,
 ) -> RuntimeState | None:
-    if runtime_state is None or _is_gateway_start_ready(runtime_state.gateway_setup_status):
+    if runtime_state is None:
         return runtime_state
     if runtime_state.setup_status != "complete":
+        return runtime_state
+    if not allow_downgrade and _is_default_destination_ready(runtime_state.gateway_setup_status):
         return runtime_state
     derived_status = agent_setup_session.derive_gateway_setup_status(
         get_agent_hermes_home(record.agent_id)
     )
-    if not _is_gateway_start_ready(derived_status):
+    if derived_status == runtime_state.gateway_setup_status:
+        return runtime_state
+    if (
+        not allow_downgrade
+        and _gateway_setup_status_rank(derived_status) <= _gateway_setup_status_rank(
+            runtime_state.gateway_setup_status
+        )
+    ):
         return runtime_state
     updated_state = RuntimeState(
         agent_id=runtime_state.agent_id,
@@ -1957,7 +2389,32 @@ def _handle_agent_start(
     runtime_adapter: DockerRuntimeAdapter,
 ) -> int:
     record = registry.get(args.agent_id)
-    stored_runtime_state = _load_runtime_state_for_agent(record)
+    updated, runtime = _start_agent_runtime(
+        record,
+        storage,
+        registry_path,
+        registry,
+        runtime_adapter,
+    )
+    print(
+        f"updated agent_id={updated.agent_id} status={updated.status.value} "
+        f"runtime_status={runtime.runtime_status.value} "
+        f"runtime_handle={_format_preview_value(runtime.runtime_handle)}"
+    )
+    return 0
+
+
+def _start_agent_runtime(
+    record: AgentRecord,
+    storage: JsonRegistryStorage,
+    registry_path: str,
+    registry,
+    runtime_adapter: DockerRuntimeAdapter,
+    *,
+    stored_runtime_state: RuntimeState | None = None,
+) -> tuple[AgentRecord, RuntimeState]:
+    if stored_runtime_state is None:
+        stored_runtime_state = _load_runtime_state_for_agent(record)
     if stored_runtime_state is not None and stored_runtime_state.runtime_status not in _ACTIVE_RUNTIME_STATUSES:
         record = _sync_registry_status_from_runtime_state(
             record,
@@ -1967,32 +2424,27 @@ def _handle_agent_start(
             registry,
         )
     if record.status is AgentStatus.RUNNING:
-        raise _agent_already_running_error(args.agent_id)
+        raise _agent_already_running_error(record.agent_id)
     _resolve_configured_runtime_spec(
         record,
         error_factory=_agent_runtime_unavailable_error,
     )
-    _require_shared_infra_ready(args.agent_id)
+    _require_shared_infra_ready(record.agent_id)
     _require_agent_setup_complete(record, stored_runtime_state)
     _require_agent_gateway_setup_complete(record, stored_runtime_state)
     ensure_agent_keryx_skill_installed(record.agent_id)
     if stored_runtime_state is not None and stored_runtime_state.runtime_status in _ACTIVE_RUNTIME_STATUSES:
-        raise _agent_runtime_already_active_error(args.agent_id)
+        raise _agent_runtime_already_active_error(record.agent_id)
     start_result = runtime_adapter.start(RuntimeStartRequest(agent=record))
     _record_runtime_setup_state(
-        args.agent_id,
+        record.agent_id,
         setup_status=(None if stored_runtime_state is None else stored_runtime_state.setup_status),
         gateway_setup_status=(None if stored_runtime_state is None else stored_runtime_state.gateway_setup_status),
     )
-    registry.set_has_started(args.agent_id, True)
-    updated = registry.set_status(args.agent_id, AgentStatus.RUNNING)
+    registry.set_has_started(record.agent_id, True)
+    updated = registry.set_status(record.agent_id, AgentStatus.RUNNING)
     storage.save(registry_path, registry)
-    print(
-        f"updated agent_id={updated.agent_id} status={updated.status.value} "
-        f"runtime_status={start_result.runtime.runtime_status.value} "
-        f"runtime_handle={_format_preview_value(start_result.runtime.runtime_handle)}"
-    )
-    return 0
+    return updated, start_result.runtime
 
 
 def _handle_agent_stop(
@@ -2374,8 +2826,22 @@ def _derive_gateway_setup_state(runtime_state: RuntimeState | None) -> str:
     return runtime_state.gateway_setup_status
 
 
+def _gateway_setup_status_rank(status: str | None) -> int:
+    return {
+        None: 0,
+        "not-started": 0,
+        "incomplete": 1,
+        "token-only": 2,
+        "complete": 3,
+    }.get(status, 0)
+
+
 def _is_gateway_start_ready(status: str | None) -> bool:
     return status in {"complete", "token-only"}
+
+
+def _is_default_destination_ready(status: str | None) -> bool:
+    return status == "complete"
 
 
 def _format_agent_tune_result(record: AgentRecord, updates: dict[str, object]) -> str:

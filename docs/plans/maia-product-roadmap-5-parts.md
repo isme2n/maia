@@ -12,25 +12,26 @@
 
 ## Part 1 — Bootstrap / Control Plane Foundation
 
-**Goal:** 일반 사용자가 `doctor → setup → agent new → agent setup → agent start` 흐름으로 첫 에이전트를 띄울 수 있게 만든다.
+**Goal:** 일반 사용자가 `uvx maia init` 또는 `maia init`로 Maia onboarding을 시작하고, success는 selected agent가 실제로 conversation-ready일 때만 나오게 만든다. `doctor → setup → agent new → agent setup → agent start`는 advanced/manual operator flow로 유지한다.
 
 **What must be true at the end of Part 1:**
-- `maia doctor`는 인프라만 점검한다.
-- `maia setup`은 shared infra를 준비한다.
-- `maia agent new <name>`는 agent identity를 만든다.
-- `maia agent setup <name>`는 해당 agent 환경에서 `hermes setup`을 그대로 열어준다.
-- `maia agent start <name>`는 setup이 끝난 agent만 시작한다.
-- public docs/help/tests가 이 흐름으로 정렬된다.
+- `maia init`이 canonical public onboarding path다.
+- `maia init`은 shared infra, identity, setup, gateway/default destination, runtime 상태와 next step을 truthfully 보여준다.
+- first-run path에서 필요하면 shared infra bootstrap, agent identity creation/selection, `hermes setup`, gateway recovery, runtime start까지 진행한다.
+- decomposed public flow는 `doctor -> setup -> agent new -> agent setup -> agent start`로 남는다.
+- public docs/help/tests와 release wording이 이 story로 정렬된다.
 
 **Includes:**
-- Docker / queue / DB readiness
+- truthful onboarding readiness reporting
 - shared infra bootstrap
-- agent identity creation
-- agent setup passthrough
-- setup-gated runtime start
+- agent identity creation/selection
+- agent setup passthrough and gateway recovery
+- conversation-ready-gated runtime start
+- explicit repo-level vs host-level validation boundary
 
 **Current working plan:**
 - `docs/plans/phase15-minimal-agent-bootstrap-and-runtime-setup.md`
+- Closeout note: Tasks 152/153/153B/153C/154/155/155B/156/157 closed `maia init` as the canonical public onboarding path while keeping `doctor -> setup -> agent new -> agent setup -> agent start` as the advanced/manual operator flow. Recorded repo-level evidence uses `python3 -m maia --help`, `python3 -m maia init --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py`. Host-level smoke is recorded separately when a real machine proves the path under test; fake-docker repo validation is not host proof.
 
 ---
 
@@ -118,7 +119,7 @@
 - CONTRIBUTING / TESTING / architecture docs separation
 - internal vs public surface separation
 - final repo polish for open-source release
-- Part 5 closeout note: Tasks 143A/143B/143C closed OSS-facing surface alignment by adding a Part 5 public-surface contract matrix + drift checks, restructuring README around product/install/quickstart/concepts, and splitting contributor-facing content into `CONTRIBUTING.md`, `TESTING.md`, and `ARCHITECTURE.md`. Recorded closeout evidence: `python3 -m maia --help`, `python3 -m maia agent --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py` (`151 passed`).
+- Part 5 closeout note: Tasks 143A/143B/143C closed OSS-facing surface alignment by adding a Part 5 public-surface contract matrix + drift checks, restructuring README around product/install/quickstart/concepts, and splitting contributor-facing content into `CONTRIBUTING.md`, `TESTING.md`, and `ARCHITECTURE.md`. Task 157 then finalized the OSS-facing onboarding closeout by aligning README/help/PRD on `maia init` and keeping repo-level proof separate from host-level smoke claims. Recorded closeout evidence: `python3 -m maia --help`, `python3 -m maia agent --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py tests/test_keryx_models.py tests/test_keryx_storage.py tests/test_keryx_server.py` (`151 passed`).
 
 ---
 
