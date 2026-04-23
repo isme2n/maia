@@ -181,7 +181,3 @@ Detailed contributor material lives outside the primary onboarding flow:
 - If setup fails, finish shared infra bootstrap before retrying agent commands.
 - If agent setup fails, rerun `maia agent setup <name>`.
 - If start fails, rerun doctor and confirm shared infra is ready.
-
-<!--
-Compatibility note for tests: the legacy V1 checklist was removed from the public README surface in Task 143B.
--->

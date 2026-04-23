@@ -1,4 +1,4 @@
-"""Keryx domain model primitives for Maia Phase 1 resources."""
+"""Keryx domain model primitives for Maia's collaboration plane."""
 
 from __future__ import annotations
 
