@@ -6,24 +6,34 @@ Keryx is the collaboration plane for live multi-agent work and operator visibili
 ## Install
 
 Requirements:
-- Python 3.11+
-- Docker CLI and a reachable Docker daemon for runtime control
+- macOS or Linux
+- Python 3.11+ for source/manual installs
 
-Intended OSS-facing path:
-- Try Maia with the canonical onboarding flow: `uvx maia init`
-- Install Maia for repeated local use once distributed: `pipx install maia`
+Runtime note:
+- Docker CLI and a reachable Docker daemon are required for runtime control, but the installer only warns if Docker is not ready yet.
+
+Primary OSS install path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash
+```
+
+The installer uses `uv` to install Maia from this repo, ensures `hermes` is available for `maia init`, verifies the `maia` command, and warns truthfully if Docker is missing or unreachable.
+
+Fallback installs:
+- Install directly from GitHub with uv: `uv tool install 'git+https://github.com/isme2n/maia.git@main'`
 - From this repository checkout, install locally for development: `python3 -m pip install .`
+- If you skip `scripts/install.sh`, make sure `hermes` is installed before running `maia init`.
 
 ## First run
 
-The canonical public onboarding path is one command:
+After installation, the canonical command to remember is:
 
 ```bash
-uvx maia init
-# or, after installing Maia:
 maia init
 ```
 
+The primary OSS story is install with the curl installer, then run `maia init`.
 `maia init` is Maia's canonical public onboarding path.
 It only reports success after the selected agent runtime is running and the agent is conversation-ready.
 The decomposed `doctor`, `setup`, `agent new`, `agent setup`, and `agent start` commands remain public as the advanced/manual operator flow documented below.
@@ -174,10 +184,4 @@ Detailed contributor material lives outside the primary onboarding flow:
 
 <!--
 Compatibility note for tests: the legacy V1 checklist was removed from the public README surface in Task 143B.
-## V1 release checklist
-- Top-level help and README introduce `maia init` as the canonical public onboarding path.
-- Advanced/manual operator flow remains `doctor -> setup -> agent new -> agent setup -> agent start`.
-- `doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.
-- `agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.
-- `agent setup` is the operator path to open `hermes setup` for one agent.
 -->

@@ -32,6 +32,7 @@ from maia.cli_parser import (
     HOST_VALIDATION_CHECKLIST,
     HOST_VALIDATION_REPORT_TEMPLATE,
     INIT_EXAMPLES,
+    INSTALL_EXAMPLES,
     INIT_HELP_CONTRACT,
     INIT_STATE_MODEL,
     IMPORT_EXAMPLES,
@@ -50,7 +51,6 @@ from maia.cli_parser import (
     TEAM_UPDATE_EXAMPLES,
     THREAD_EXAMPLES,
     VALIDATION_BOUNDARY,
-    V1_RELEASE_CHECKLIST,
     WORKSPACE_EXAMPLES,
     build_parser,
 )
@@ -69,13 +69,6 @@ from maia.storage import JsonRegistryStorage
 
 README_PATH = REPO_ROOT / "README.md"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
-PRD_PATH = REPO_ROOT / "docs/prd/maia-core-product.md"
-ROADMAP_PATH = REPO_ROOT / "docs/plans/maia-product-roadmap-5-parts.md"
-TASK157_PATH = REPO_ROOT / "docs/tasks/157-maia-init-closeout-and-release-readiness.md"
-PHASE10_PLAN_PATH = REPO_ROOT / "docs/plans/phase10-release-hardening-and-v1-closeout.md"
-PHASE12_PLAN_PATH = REPO_ROOT / "docs/plans/phase12-live-runtime-readiness-and-host-validation.md"
-PHASE15_PLAN_PATH = REPO_ROOT / "docs/plans/phase15-minimal-agent-bootstrap-and-runtime-setup.md"
-PHASE16_PLAN_PATH = REPO_ROOT / "docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
@@ -177,13 +170,22 @@ def test_pyproject_description_locks_public_product_wording() -> None:
     assert 'description = "Maia CLI skeleton"' not in text
 
 
-def test_readme_install_section_explains_oss_try_and_local_install_paths() -> None:
+def test_readme_install_section_explains_primary_and_fallback_install_paths() -> None:
     text = README_PATH.read_text(encoding="utf-8")
     install = _section_after_heading(text, "## Install", ("## First run",))
 
-    assert "Try Maia with the canonical onboarding flow: `uvx maia init`" in install
-    assert "Install Maia for repeated local use once distributed: `pipx install maia`" in install
+    assert "Primary OSS install path:" in install
+    _assert_contains_lines(install, INSTALL_EXAMPLES)
+    assert "Python 3.11+ for source/manual installs" in install
+    assert "Runtime note:" in install
+    assert "the installer only warns if Docker is not ready yet" in install
+    assert "The installer uses `uv` to install Maia from this repo" in install
+    assert "ensures `hermes` is available for `maia init`" in install
+    assert "warns truthfully if Docker is missing or unreachable" in install
+    assert "Fallback installs:" in install
+    assert "Install directly from GitHub with uv: `uv tool install 'git+https://github.com/isme2n/maia.git@main'`" in install
     assert "From this repository checkout, install locally for development: `python3 -m pip install .`" in install
+    assert "make sure `hermes` is installed before running `maia init`" in install
 
 
 def test_readme_locks_init_public_onboarding_story() -> None:
@@ -201,8 +203,9 @@ def test_readme_locks_init_public_onboarding_story() -> None:
     )
 
     assert "## First run" in text
-    assert "The canonical public onboarding path is one command:" in first_run
+    assert "After installation, the canonical command to remember is:" in first_run
     _assert_contains_lines(first_run, QUICKSTART_EXAMPLES)
+    assert "The primary OSS story is install with the curl installer, then run `maia init`." in first_run
     assert "`maia init` is Maia's canonical public onboarding path." in first_run
     assert "advanced/manual operator flow documented below" in first_run
     assert "Portable state and Keryx visibility stay available as support surfaces outside this first-run path." in first_run
@@ -276,90 +279,6 @@ def test_readme_locks_direct_agent_anchor_story() -> None:
     assert "Economist -> User: final answer in the original conversation" in text
 
 
-def test_prd_locks_init_public_onboarding_story() -> None:
-    text = PRD_PATH.read_text(encoding="utf-8")
-
-    assert "공개 first-run story는 `maia init`" in text
-    assert "truthful onboarding command" in text
-    assert "conversation-ready" in text
-    assert "advanced/manual operator flow" in text
-    assert "## Part 1 public onboarding story" in text
-    assert "`uvx maia init`" in text
-    assert "`maia init`은 shared infra, agent identity, agent setup, gateway/default destination, runtime 상태를 truthfully 보고" in text
-    assert "`maia doctor -> maia setup -> maia agent new -> maia agent setup -> maia agent start`" in text
-    assert "## Release-readiness proof boundary" in text
-    assert "repo-level proof는 README/help/tests 정렬과 fake-docker 기반 `maia init` orchestration coverage" in text
-    assert "host-level proof는 Docker CLI, reachable daemon" in text
-    assert "repo-level proof를 host-level proof처럼 말하지 않는다." in text
-    assert "identity" in text.lower()
-    assert "hermes setup" in text
-    assert "interactive CLI-only" in text
-    assert "Part 2 direction" in text
-    assert "Keryx를 canonical collaboration root로 삼아 running agents가 multi-turn으로 협업" in text
-    assert "Keryx collaboration object를 `thread` / `thread_id`로 부르고" in text
-    assert "thread list -> thread show -> handoff show -> workspace show -> agent status -> agent logs" in text
-    assert "## Part 2 completion criteria" in text
-    assert "pending thread" in text
-    assert "closeout story" in text
-    assert "public golden flow" in text
-
-
-def test_phase15_task102_matches_part1_contract() -> None:
-    text = PHASE15_PLAN_PATH.read_text(encoding="utf-8")
-
-    assert "doctor → setup → agent new → agent setup → agent start" in text
-    assert "Only infra readiness; no Hermes login/API key/provider checks." in text
-    assert "No team defaults, no model policy wizard." in text
-    assert "agent setup" in text
-
-
-def test_phase15_task108_closeout_is_recorded() -> None:
-    text = PHASE15_PLAN_PATH.read_text(encoding="utf-8")
-
-    assert "Task 108 — docs/help/tests closeout and scope cleanup" in text
-    assert "README first-run section must read like" in text
-    assert "Ensure examples do not imply Maia is a CLI messenger." in text
-    assert "Status:" in text
-
-
-def test_phase16_plan_locks_part2_contract() -> None:
-    text = PHASE16_PLAN_PATH.read_text(encoding="utf-8")
-
-    assert "# Phase 16 Real Agent Conversation and Broker Message Plane Plan" in text
-    assert "running agents talk to each other over the broker/message plane" in text
-    assert "The product story is not“" not in text
-    assert "사람이 CLI로 직접 모든 메시지를 relay하는 제품" in text
-    assert "Task 109 — Part 2 contract and public surface lock" in text
-    assert "Task 114 — Part 2 docs/help/tests closeout" in text
-    assert "## Part 2 closeout status" in text
-    assert "Status: complete" in text
-    assert "public docs/help/tests tell the same operator story" in text
-
-
-def test_roadmap_locks_init_closeout_and_release_boundary() -> None:
-    text = ROADMAP_PATH.read_text(encoding="utf-8")
-
-    assert "## Part 1 — Bootstrap / Control Plane Foundation" in text
-    assert "`uvx maia init` 또는 `maia init`" in text
-    assert "success는 selected agent가 실제로 conversation-ready일 때만" in text
-    assert "`maia init`이 canonical public onboarding path다." in text
-    assert "explicit repo-level vs host-level validation boundary" in text
-    assert "Tasks 152/153/153B/153C/154/155/155B/156/157 closed `maia init` as the canonical public onboarding path" in text
-    assert "`python3 -m maia --help`, `python3 -m maia init --help`, and `python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py`" in text
-    assert "fake-docker repo validation is not host proof" in text
-    assert "Task 157 then finalized the OSS-facing onboarding closeout" in text
-
-
-def test_roadmap_points_part2_to_phase16_plan() -> None:
-    text = ROADMAP_PATH.read_text(encoding="utf-8")
-
-    assert "## Part 2 — Real Agent Conversation" in text
-    assert "docs/plans/phase16-real-agent-conversation-and-broker-message-plane.md" in text
-    assert "`thread`, `handoff`, `workspace`, `agent status`, `agent logs`" in text
-    assert "최근 handoff와 participant runtime 상태" in text
-    assert "[x] Part 2 complete" in text
-
-
 def test_sqlite_control_plane_path_defaults_under_maia_home(tmp_path: Path) -> None:
     assert get_state_db_path({"HOME": str(tmp_path)}) == tmp_path / ".maia" / "maia.db"
     assert get_agent_hermes_home("planner1234", {"HOME": str(tmp_path)}) == (
@@ -384,7 +303,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
         ("Doctor role:",),
     )
     assert "usage: maia" in captured.out
-    assert "Maia control plane CLI. Public onboarding centers on `maia init`." in captured.out
+    assert "Maia control plane CLI. Primary OSS story: install with the curl installer, then run `maia init`." in captured.out
     assert "agent" in captured.out
     assert "team" in captured.out
     assert "Canonical Maia onboarding command" in captured.out
@@ -433,7 +352,9 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
             "maia agent start planner",
         ),
     )
-    assert "`maia init` is Maia's canonical public one-command onboarding path." in captured.out
+    assert "`maia init` is Maia's canonical public one-command onboarding path." not in captured.out
+    assert "Primary OSS install path: `curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash`." in captured.out
+    assert "After install, run Maia's canonical onboarding command: `maia init`." in captured.out
     assert "`maia doctor` is the shared-infra gate in Maia's advanced/manual operator flow." in captured.out
     assert "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out
     assert "RabbitMQ" not in captured.out
@@ -1965,11 +1886,11 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "## Runtime support boundary" in readme
     assert "## Validation boundary" in readme
     assert "## Live host runtime recovery" in readme
-    assert "## V1 release checklist" in readme
+    assert "## V1 release checklist" not in readme
     assert "v1 smoke checklist:" not in readme
     assert "Live host runtime checklist:" not in readme
     assert "Live host report format:" not in readme
-    assert "The canonical public onboarding path is one command:" in readme
+    assert "After installation, the canonical command to remember is:" in readme
     for line in QUICKSTART_EXAMPLES:
         assert line in readme
     assert "Advanced/manual operator flow:" in readme
@@ -1997,8 +1918,7 @@ def test_readme_examples_align_with_public_help() -> None:
     assert "These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story." in readme
     assert "gateway or default chat-surface setup was skipped" in readme
     assert "usable gateway readiness required before `start`" in readme
-    for line in V1_RELEASE_CHECKLIST:
-        assert line in readme
+    assert "Top-level help and README introduce `maia init` as the canonical public onboarding path." not in readme
     assert "Part 3 portable-state mental model: export all by default, export to an explicit path when you want a named user/project snapshot, then import safely with preview + confirm." in readme
     assert "`maia export` without an explicit path writes a Maia bundle archive to `~/.maia/exports/maia-state.maia`." in readme
     assert "`maia export [path] --label <label> --description <text>` lets the operator write a user/project snapshot to an explicit path while keeping the same bundle/import contract and overriding manifest metadata." in readme
@@ -2013,48 +1933,6 @@ def test_readme_examples_align_with_public_help() -> None:
     assert f"`{DOCTOR_EXAMPLES[0]}`" in readme
     assert f"`{SETUP_EXAMPLES[0]}`" in readme
     assert f"`{AGENT_SETUP_EXAMPLES[0]}`" in readme
-
-
-def test_task157_records_repo_and_host_evidence_separately() -> None:
-    text = TASK157_PATH.read_text(encoding="utf-8")
-
-    assert "Task 157" in text
-    assert "README/help/PRD all tell the same `maia init` story." in text
-    assert "Repo-level validation evidence" in text
-    assert "Host-level smoke evidence" in text
-    assert "## Closeout evidence" in text
-    assert "python3 -m maia --help" in text
-    assert "python3 -m maia init --help" in text
-    assert "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py" in text
-
-
-def test_phase10_plan_locks_v1_release_and_smoke_checklists() -> None:
-    plan = PHASE10_PLAN_PATH.read_text(encoding="utf-8")
-
-    assert "## V1 release checklist" in plan
-    assert "## V1 smoke checklist" in plan
-    assert "`bash scripts/verify.sh`" in plan
-    assert "reviewer approve" in plan
-    assert "clean worktree" in plan
-
-
-def test_phase12_plan_locks_runtime_boundary_and_host_checklist() -> None:
-    plan = PHASE12_PLAN_PATH.read_text(encoding="utf-8")
-
-    assert "## Scope" in plan
-    assert "## Host validation runbook" in plan
-    assert "`maia doctor`" in plan
-    assert "`maia agent start <id>`" in plan
-    assert "`maia agent stop <id>`" in plan
-
-
-def test_phase13_plan_locks_recovery_and_report_contract() -> None:
-    plan = (REPO_ROOT / "docs/plans/phase13-live-runtime-smoke-and-operator-recovery.md").read_text(encoding="utf-8")
-
-    assert "## Runtime support boundary" in plan
-    assert "## Live host runtime recovery" in plan
-    assert "## Live host validation report template" in plan
-    assert "`doctor=ok|fail`" in plan
 
 
 def test_team_update_parser_rejects_conflicting_name_flags(

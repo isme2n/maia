@@ -129,7 +129,7 @@ FROM ${BASE_IMAGE}
 WORKDIR /opt/maia
 COPY pyproject.toml README.md /opt/maia/
 COPY src /opt/maia/src
-RUN python -m pip install --no-cache-dir .[rabbitmq]
+RUN python -m pip install --no-cache-dir .
 ENTRYPOINT ["python", "-m", "maia.hermes_runtime_worker"]
 DOCKERFILE
 

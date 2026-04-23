@@ -171,6 +171,7 @@ def test_sqlite_backed_storages_round_trip_control_plane_state(tmp_path: Path) -
             "agent_id": "agent-001",
             "name": "planner",
             "status": "stopped",
+            "speaking_style": "respectful",
             "persona": "",
             "role": "lead",
             "model": "gpt-5",

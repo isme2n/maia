@@ -7,10 +7,10 @@ Run commands from the repository root.
 Fast:
 
 ```bash
-python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py
+python3 -m pytest -q tests/test_cli.py tests/test_cli_runtime.py tests/test_install_script.py
 ```
 
-Use this when changing README/help text, bootstrap wording, or runtime command behavior.
+Use this when changing README/help text, install/onboarding wording, or runtime command behavior.
 
 Focused:
 

@@ -66,8 +66,8 @@ LIFECYCLE_STATUS_BY_COMMAND = {
 }
 AGENT_ID_COMMANDS = frozenset({"setup", "setup-gateway", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
 PUBLIC_ONBOARDING_CONTRACT = (
-    "`maia init` is Maia's canonical public one-command onboarding path.",
-    "Try-once OSS flow: `uvx maia init`; installed usage: `maia init`.",
+    "Primary OSS install path: `curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash`.",
+    "After install, run Maia's canonical onboarding command: `maia init`.",
     "The decomposed commands below remain public as the advanced/manual operator flow.",
 )
 PART1_OPERATOR_FLOW = (
@@ -87,7 +87,8 @@ DOCTOR_EXAMPLES = (
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
-QUICKSTART_EXAMPLES = ("uvx maia init", "maia init")
+INSTALL_EXAMPLES = ("curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash",)
+QUICKSTART_EXAMPLES = ("maia init",)
 INIT_EXAMPLES = ("maia init",)
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 INIT_HELP_CONTRACT = (
@@ -119,13 +120,6 @@ VALIDATION_BOUNDARY = (
     "Repo-level validation covers the `maia init` readiness contract and fake-docker orchestration path.",
     "Repo-level validation does not prove this host can launch a real agent with `maia init`.",
     "Host-level smoke is separate and requires the real host prerequisites for the path under test, including Docker CLI, a reachable Docker daemon, and Hermes CLI when setup still needs to run.",
-)
-V1_RELEASE_CHECKLIST = (
-    "Top-level help and README introduce `maia init` as the canonical public onboarding path.",
-    "Advanced/manual operator flow remains `doctor -> setup -> agent new -> agent setup -> agent start`.",
-    "`doctor` stays infra-only: Docker, Keryx HTTP API, and SQLite state DB.",
-    "`agent new` interactively captures agent name, how the agent calls the user, speaking style, and persona.",
-    "`agent setup` is the operator path to open `hermes setup` for one agent.",
 )
 KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
@@ -233,7 +227,7 @@ def _format_epilog_sections(*sections: tuple[str, tuple[str, ...]]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="maia",
-        description="Maia control plane CLI. Public onboarding centers on `maia init`.",
+        description="Maia control plane CLI. Primary OSS story: install with the curl installer, then run `maia init`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.set_defaults(parser=parser)

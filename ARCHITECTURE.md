@@ -21,7 +21,7 @@ Control plane and runtime:
 
 Collaboration plane:
 - `src/maia/keryx_models.py`, `src/maia/keryx_storage.py`, `src/maia/keryx_service.py`, `src/maia/keryx_server.py`, `src/maia/keryx_skill.py`: Keryx thread, handoff, pending-work, and visibility surfaces.
-- `src/maia/message_model.py`, `src/maia/handoff_model.py`, `src/maia/presence_model.py`, `src/maia/collaboration_storage.py`, `src/maia/broker.py`, `src/maia/rabbitmq_broker.py`: collaboration records and broker-facing plumbing.
+- `src/maia/message_model.py`, `src/maia/handoff_model.py`: shared collaboration record types used by the active Keryx-backed flow.
 
 ## Reading order
 
@@ -31,5 +31,3 @@ If you are new to the codebase, read in this order:
 2. `src/maia/cli_parser.py` and `src/maia/cli.py` for the surfaced behavior.
 3. Control-plane storage/runtime modules for bootstrap and lifecycle behavior.
 4. Keryx service/storage/model modules for collaboration state and operator visibility.
-
-For the deeper architectural rationale behind the control/runtime/message split, see [`docs/adr/001-runtime-and-messaging-architecture.md`](docs/adr/001-runtime-and-messaging-architecture.md).

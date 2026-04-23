@@ -23,7 +23,7 @@ Requirements:
 - Include goal, non-goals, allowed files, acceptance criteria, required validation commands, forbidden changes.
 - Prefer editing only a few files.
 - Do not implement code changes.
-- Output concise markdown suitable for docs/tasks/<slug>.md.
+- Output concise markdown suitable for a scoped task note (`TASK-<slug>.md`) or PR description.
 EOF
 )
 
