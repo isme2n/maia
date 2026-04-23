@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from maia.app_state import get_runtime_state_path
 from maia.runtime_adapter import RuntimeState
 from maia.sqlite_state import SQLiteState
 
@@ -43,8 +42,6 @@ class RuntimeStateStorage:
         if self._is_sqlite_path(target):
             records = [states[agent_id].to_dict() for agent_id in sorted(states)]
             SQLiteState(target).save_runtime_states(records)
-            cache_path = self._json_cache_path(target)
-            self._write_json_payload(cache_path, {"runtimes": records})
             return
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -94,15 +91,3 @@ class RuntimeStateStorage:
 
     def _is_sqlite_path(self, path: Path) -> bool:
         return path.suffix == ".db"
-
-    def _json_cache_path(self, state_db_path: Path) -> Path:
-        return get_runtime_state_path({"HOME": str(state_db_path.parent.parent)})
-
-    def _write_json_payload(self, path: Path, payload: dict[str, object]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        labeled_payload = {
-            "_maia_local_state": True,
-            "_maia_storage_kind": "transitional-json-cache",
-            **payload,
-        }
-        path.write_text(json.dumps(labeled_payload, indent=2) + "\n", encoding="utf-8")

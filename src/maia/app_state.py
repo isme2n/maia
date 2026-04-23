@@ -13,9 +13,7 @@ __all__ = [
     "get_default_export_path",
     "get_exports_dir",
     "get_maia_home",
-    "get_registry_path",
     "get_runtime_dir",
-    "get_runtime_state_path",
     "get_state_db_path",
     "get_team_metadata_path",
 ]
@@ -25,9 +23,7 @@ _AGENTS_DIRNAME = "agents"
 _MAIA_HOME_DIRNAME = ".maia"
 _DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
 _EXPORTS_DIRNAME = "exports"
-_REGISTRY_FILENAME = "registry.json"
 _RUNTIME_DIRNAME = "runtime"
-_RUNTIME_STATE_FILENAME = "runtime-state.json"
 _STATE_DB_FILENAME = "maia.db"
 _TEAM_METADATA_FILENAME = "team.json"
 
@@ -60,12 +56,6 @@ def get_agent_hermes_home(agent_id: str, env: Mapping[str, str] | None = None) -
     return get_agent_dir(agent_id, env) / _AGENT_HERMES_HOME_DIRNAME
 
 
-def get_registry_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the transitional local registry cache path."""
-
-    return get_maia_home(env) / _REGISTRY_FILENAME
-
-
 def get_exports_dir(env: Mapping[str, str] | None = None) -> Path:
     """Return the directory for portable registry snapshots."""
 
@@ -82,12 +72,6 @@ def get_runtime_dir(env: Mapping[str, str] | None = None) -> Path:
     """Return the directory for runtime-only state."""
 
     return get_maia_home(env) / _RUNTIME_DIRNAME
-
-
-def get_runtime_state_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the transitional local runtime state cache path."""
-
-    return get_runtime_dir(env) / _RUNTIME_STATE_FILENAME
 
 
 def get_state_db_path(env: Mapping[str, str] | None = None) -> Path:

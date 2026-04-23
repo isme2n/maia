@@ -16,7 +16,6 @@ sys.path.insert(0, str(SRC_ROOT))
 
 from maia.app_state import (
     get_agent_hermes_home,
-    get_runtime_state_path,
     get_state_db_path,
 )
 from maia.cli import main
@@ -138,13 +137,8 @@ def _assert_locked_collaboration_contract(section: str) -> None:
     assert "`agent_only`" in section
     assert "`user_direct`" in section
     assert "`failed`" in section
-    active_section = "\n".join(
-        line
-        for line in section.splitlines()
-        if "Legacy `/call` and `/agent-call` are removed from the active collaboration contract." not in line
-    )
-    assert "`/call`" not in active_section
-    assert "`/agent-call`" not in active_section
+    assert "`/call`" not in section
+    assert "`/agent-call`" not in section
 
 
 def _assert_locked_portable_state_contract(section: str) -> None:
@@ -242,7 +236,7 @@ def test_readme_locks_init_public_onboarding_story() -> None:
         ),
     )
     assert "These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story." in text
-    assert "overall launch-readiness state as `not-configured`, `ready`, or `running`" in text
+    assert "overall launch-readiness state as `not-configured`, `ready`, `stopped`, or `running`" in text
     assert "recorded setup state (`not-started|complete|incomplete`) and current runtime state" in text
     assert "interactive `hermes setup` session only in the CLI" in text
     assert "interactive CLI-only passthrough to `hermes setup`" in text
@@ -1909,7 +1903,6 @@ def test_readme_examples_align_with_public_help() -> None:
     for line in KNOWN_LIMITATIONS:
         assert line in readme
     assert "Keryx is Maia's canonical collaboration root for live multi-agent work." in readme
-    assert "Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract." in readme
     assert "Keryx-backed operator views of open collaboration state" in readme
     assert "These remain public support workflows, but they are not the primary first-run bootstrap path." in readme
     assert "Portable state commands (`export`, `import`, `inspect`) remain available as operator support workflows." in readme
@@ -2526,15 +2519,13 @@ def test_thread_list_and_show_surface_control_plane_summary(
     assert exc_info.value.code == 2
 
 
-def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_invalid(
+def test_thread_visibility_uses_sqlite_state_without_runtime_json_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    state_db_path = get_state_db_path({"HOME": str(tmp_path)})
-    runtime_state_path = get_runtime_state_path({"HOME": str(tmp_path)})
     _seed_keryx_thread(
         tmp_path,
         thread_id="sess-invalid-runtime",
@@ -2544,8 +2535,6 @@ def test_thread_visibility_uses_sqlite_state_even_if_runtime_json_cache_is_inval
         created_at="2026-04-15T08:00:00Z",
         updated_at="2026-04-15T08:00:00Z",
     )
-    runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
-    runtime_state_path.write_text("{bad json\n", encoding="utf-8")
 
     assert main(["thread", "list"]) == 0
     fields = _parse_fields(capsys.readouterr().out.strip())

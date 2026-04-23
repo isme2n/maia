@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -11,7 +10,7 @@ SRC_ROOT = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_ROOT))
 
 from maia.agent_model import AgentRecord, AgentStatus
-from maia.app_state import get_registry_path, get_runtime_state_path, get_state_db_path
+from maia.app_state import get_state_db_path
 from maia.registry import AgentRegistry
 from maia.runtime_adapter import RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
@@ -19,7 +18,7 @@ from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
 
 
-def test_sqlite_backed_storages_write_labeled_transitional_json_caches(tmp_path: Path) -> None:
+def test_sqlite_backed_storages_do_not_write_transitional_json_caches(tmp_path: Path) -> None:
     env = {"HOME": str(tmp_path)}
     db_path = get_state_db_path(env)
 
@@ -44,20 +43,15 @@ def test_sqlite_backed_storages_write_labeled_transitional_json_caches(tmp_path:
         },
     )
 
-    registry_cache = json.loads(get_registry_path(env).read_text(encoding="utf-8"))
-    runtime_cache = json.loads(get_runtime_state_path(env).read_text(encoding="utf-8"))
-
-    for payload in (registry_cache, runtime_cache):
-        assert payload["_maia_local_state"] is True
-        assert payload["_maia_storage_kind"] == "transitional-json-cache"
+    maia_home = tmp_path / ".maia"
+    assert not (maia_home / "registry.json").exists()
+    assert not (maia_home / "runtime" / "runtime-state.json").exists()
 
 
 def test_app_state_exposes_sqlite_db_path(tmp_path: Path) -> None:
     env = {"HOME": str(tmp_path)}
 
     assert get_state_db_path(env) == tmp_path / ".maia" / "maia.db"
-    assert get_registry_path(env) == tmp_path / ".maia" / "registry.json"
-    assert get_runtime_state_path(env) == tmp_path / ".maia" / "runtime" / "runtime-state.json"
 
 
 def test_sqlite_state_initializes_control_plane_schema(tmp_path: Path) -> None:

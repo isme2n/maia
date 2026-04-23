@@ -6,7 +6,7 @@ import argparse
 
 from maia.agent_model import AgentStatus
 from maia.handoff_model import HandoffKind
-from maia.public_contract import MAIA_GIT_INSTALL_SPEC, MAIA_INSTALL_CURL_COMMAND
+from maia.public_contract import MAIA_INSTALL_CURL_COMMAND
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor", "setup")
@@ -19,14 +19,11 @@ PART2_CONVERSATION_CONTRACT = (
     "User-facing collaboration entry is `/keryx <instruction>`.",
     "`thread` / `thread_id` are Maia's public names for the Keryx collaboration object.",
     "Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.",
-    "Legacy `/call` and `/agent-call` are removed from the active collaboration contract.",
-    "Legacy broker-style send/reply/inbox CLI entrypoints are removed from the active product contract.",
     "Keryx message delivery intent uses `delivery_mode`: `agent_only` stays agent-only, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicit `failed`.",
     "`thread`, `handoff`, and `workspace` are Keryx-backed operator views of open collaboration state.",
 )
 THREAD_HELP_CONTRACT = (
     "User-facing collaboration entry is `/keryx <instruction>`.",
-    "Legacy `/call` and `/agent-call` are removed from the active collaboration contract.",
     "Keryx message delivery intent uses `delivery_mode`: `agent_only` stays agent-only, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicit `failed`.",
 )
 DIRECT_AGENT_DELEGATION_CONTRACT = (

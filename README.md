@@ -79,7 +79,7 @@ These commands remain public, but they are the advanced/manual flow rather than 
 - `maia agent setup <name>`: open an interactive CLI-only passthrough to `hermes setup` for that agent.
 - `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if gateway or default chat-surface setup was skipped during the normal `maia agent setup <name>` run.
 - `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with usable gateway readiness required before `start`.
-- `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, or `running`.
+- `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, `stopped`, or `running`.
 - `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
 - agent setup is recorded separately from the runtime launch state.
 - new agents carry the shared Hermes worker defaults needed for first start.
@@ -103,8 +103,6 @@ Keryx is Maia's canonical collaboration root for live multi-agent work.
 - If that agent delegates to another agent, the active conversation agent stays the user-facing anchor.
 - `thread` / `thread_id` are Maia's public names for the Keryx collaboration object.
 - Hermes keeps its own `session` wording; a Maia thread is not a Hermes session.
-- Legacy `/call` and `/agent-call` are removed from the active collaboration contract.
-- Legacy broker-style `send`, `reply`, and `inbox` CLI entrypoints are removed from the active product contract.
 - The public Part 2 visibility story centers on `thread`, `handoff`, and `workspace` as Keryx-backed operator views of open collaboration state, recent handoffs, and participant runtime/workspace context.
 - Keryx message delivery intent uses `delivery_mode`: `agent_only` keeps the exchange inside agent collaboration, `user_direct` targets direct user delivery, and a `user_direct` delivery failure is explicitly reported as `failed`.
 

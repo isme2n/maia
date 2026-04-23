@@ -40,7 +40,6 @@ def test_agent_record_creation() -> None:
     assert record.model == ""
     assert record.tags == []
     assert record.runtime_spec is None
-    assert record.messaging_spec is None
 
 
 def test_agent_record_round_trip() -> None:
@@ -63,7 +62,7 @@ def test_agent_record_round_trip() -> None:
     }
 
 
-def test_agent_record_round_trip_with_runtime_and_messaging_spec() -> None:
+def test_agent_record_round_trip_with_runtime_spec() -> None:
     record = AgentRecord(
         agent_id="agent-004",
         name="runner",
@@ -78,7 +77,6 @@ def test_agent_record_round_trip_with_runtime_and_messaging_spec() -> None:
             command=["python", "-m", "runner"],
             env={"MAIA_MODE": "runtime"},
         ),
-        messaging_spec={"broker": "rabbitmq", "queue": "runner.inbox"},
     )
 
     restored = AgentRecord.from_dict(record.to_dict())
@@ -100,7 +98,39 @@ def test_agent_record_round_trip_with_runtime_and_messaging_spec() -> None:
             "command": ["python", "-m", "runner"],
             "env": {"MAIA_MODE": "runtime"},
         },
-        "messaging_spec": {"broker": "rabbitmq", "queue": "runner.inbox"},
+    }
+
+
+def test_agent_record_from_dict_ignores_legacy_messaging_spec_field() -> None:
+    restored = AgentRecord.from_dict(
+        {
+            "agent_id": "agent-004b",
+            "name": "runner",
+            "status": "running",
+            "persona": "careful",
+            "runtime_spec": {
+                "image": "ghcr.io/example/runner:latest",
+                "workspace": "/workspaces/runner",
+                "command": ["python", "-m", "runner"],
+                "env": {"MAIA_MODE": "runtime"},
+            },
+            "messaging_spec": {"broker": "rabbitmq", "queue": "runner.inbox"},
+        }
+    )
+
+    assert restored.to_dict() == {
+        "agent_id": "agent-004b",
+        "name": "runner",
+        "status": "running",
+        "speaking_style": "respectful",
+        "persona": "careful",
+        "setup_status": "configured",
+        "runtime_spec": {
+            "image": "ghcr.io/example/runner:latest",
+            "workspace": "/workspaces/runner",
+            "command": ["python", "-m", "runner"],
+            "env": {"MAIA_MODE": "runtime"},
+        },
     }
 
 
@@ -351,17 +381,12 @@ def test_agent_record_direct_construction_validates_profile_fields(
     with pytest.raises(ValueError, match=error):
         AgentRecord(**kwargs)
 
-
-def test_agent_record_direct_construction_accepts_serialized_extension_fields() -> None:
+def test_agent_record_direct_construction_accepts_serialized_runtime_spec() -> None:
     runtime_spec_payload = {
         "image": "ghcr.io/example/runner:latest",
         "workspace": "/workspaces/runner",
         "command": ["python", "-m", "runner"],
         "env": {"MAIA_MODE": "runtime"},
-    }
-    messaging_spec_payload = {
-        "transport": {"queue": "runner.inbox"},
-        "routing": ["primary"],
     }
 
     record = AgentRecord(
@@ -373,7 +398,6 @@ def test_agent_record_direct_construction_accepts_serialized_extension_fields() 
         model="gpt-5.4",
         tags=["runtime", "queue"],
         runtime_spec=runtime_spec_payload,
-        messaging_spec=messaging_spec_payload,
     )
 
     assert record.runtime_spec == RuntimeSpec(
@@ -382,10 +406,6 @@ def test_agent_record_direct_construction_accepts_serialized_extension_fields() 
         command=["python", "-m", "runner"],
         env={"MAIA_MODE": "runtime"},
     )
-    assert record.messaging_spec == {
-        "transport": {"queue": "runner.inbox"},
-        "routing": ["primary"],
-    }
     assert record.to_dict() == {
         "agent_id": "agent-003e",
         "name": "runner",
@@ -402,21 +422,12 @@ def test_agent_record_direct_construction_accepts_serialized_extension_fields() 
             "command": ["python", "-m", "runner"],
             "env": {"MAIA_MODE": "runtime"},
         },
-        "messaging_spec": {
-            "transport": {"queue": "runner.inbox"},
-            "routing": ["primary"],
-        },
     }
 
     runtime_spec_payload["command"].append("--debug")
-    messaging_spec_payload["transport"]["queue"] = "runner.copy"
 
     assert record.runtime_spec is not None
     assert record.runtime_spec.command == ["python", "-m", "runner"]
-    assert record.messaging_spec == {
-        "transport": {"queue": "runner.inbox"},
-        "routing": ["primary"],
-    }
 
 
 def test_agent_record_direct_construction_accepts_valid_runtime_spec_instance() -> None:
@@ -486,19 +497,9 @@ def test_agent_record_direct_construction_revalidates_runtime_spec_instance() ->
             },
             r"Invalid runtime env: expected mapping\[str, str\]",
         ),
-        (
-            "messaging_spec",
-            ["runner.inbox"],
-            "Invalid agent messaging spec: expected object",
-        ),
-        (
-            "messaging_spec",
-            {1: "runner.inbox"},
-            "Invalid agent messaging spec: expected string keys",
-        ),
     ],
 )
-def test_agent_record_direct_construction_validates_extension_specs(
+def test_agent_record_direct_construction_validates_runtime_spec(
     field_name: str,
     field_value: object,
     error: str,
@@ -514,7 +515,6 @@ def test_agent_record_direct_construction_validates_extension_specs(
             "command": ["python", "-m", "runner"],
             "env": {"MAIA_MODE": "runtime"},
         },
-        "messaging_spec": {"queue": "runner.inbox"},
     }
     kwargs[field_name] = field_value
 
@@ -548,10 +548,6 @@ def test_agent_record_copies_do_not_alias_nested_mutables() -> None:
             command=["python", "-m", "runner"],
             env={"MAIA_MODE": "runtime"},
         ),
-        messaging_spec={
-            "transport": {"queue": "runner.inbox"},
-            "routing": ["primary"],
-        },
     )
 
     copied = copy(record)
@@ -564,33 +560,19 @@ def test_agent_record_copies_do_not_alias_nested_mutables() -> None:
     assert record.runtime_spec is not None
     assert copied.runtime_spec.command is not record.runtime_spec.command
     assert copied.runtime_spec.env is not record.runtime_spec.env
-    assert copied.messaging_spec is not record.messaging_spec
-    assert copied.messaging_spec["transport"] is not record.messaging_spec["transport"]
-    assert copied.messaging_spec["routing"] is not record.messaging_spec["routing"]
     assert replaced.tags is not record.tags
     assert replaced.runtime_spec is not record.runtime_spec
     assert replaced.runtime_spec is not None
     assert replaced.runtime_spec.command is not record.runtime_spec.command
     assert replaced.runtime_spec.env is not record.runtime_spec.env
-    assert replaced.messaging_spec is not record.messaging_spec
-    assert replaced.messaging_spec["transport"] is not record.messaging_spec["transport"]
-    assert replaced.messaging_spec["routing"] is not record.messaging_spec["routing"]
 
     copied.tags.append("copied")
     copied.runtime_spec.command.append("--debug")
     copied.runtime_spec.env["MAIA_TRACE"] = "1"
-    copied.messaging_spec["transport"]["queue"] = "runner.copy"
-    copied.messaging_spec["routing"].append("copy")
     replaced.tags.append("replaced")
     replaced.runtime_spec.command.append("--audit")
     replaced.runtime_spec.env["MAIA_MODE"] = "review"
-    replaced.messaging_spec["transport"]["queue"] = "runner.replace"
-    replaced.messaging_spec["routing"].append("replace")
 
     assert record.tags == ["runtime", "queue"]
     assert record.runtime_spec.command == ["python", "-m", "runner"]
     assert record.runtime_spec.env == {"MAIA_MODE": "runtime"}
-    assert record.messaging_spec == {
-        "transport": {"queue": "runner.inbox"},
-        "routing": ["primary"],
-    }

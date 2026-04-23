@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from maia.agent_model import AgentRecord
-from maia.app_state import get_registry_path
 from maia.registry import AgentRegistry
 from maia.sqlite_state import SQLiteState
 
@@ -25,8 +24,6 @@ class JsonRegistryStorage:
         if self._is_sqlite_path(target) and not portable:
             records = [self._serialize_record(record, portable=False) for record in registry.list()]
             SQLiteState(target).save_agents(records)
-            cache_path = self._json_cache_path(target)
-            self._write_json_payload(cache_path, {"agents": records})
             return
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -127,15 +124,3 @@ class JsonRegistryStorage:
 
     def _is_sqlite_path(self, path: Path) -> bool:
         return path.suffix == ".db"
-
-    def _json_cache_path(self, state_db_path: Path) -> Path:
-        return get_registry_path({"HOME": str(state_db_path.parent.parent)})
-
-    def _write_json_payload(self, path: Path, payload: dict[str, object]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        labeled_payload = {
-            "_maia_local_state": True,
-            "_maia_storage_kind": "transitional-json-cache",
-            **payload,
-        }
-        path.write_text(json.dumps(labeled_payload, indent=2) + "\n", encoding="utf-8")

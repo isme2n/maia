@@ -6,9 +6,7 @@ import argparse
 from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-import os
 from pathlib import Path
-import subprocess
 import sys
 import uuid
 from urllib.parse import quote
@@ -29,7 +27,6 @@ from maia.bundle_archive import (
     write_bundle_archive,
 )
 from maia.cli_bootstrap import (
-    format_doctor_output_lines,
     format_setup_step_line,
     handle_doctor,
     handle_setup,

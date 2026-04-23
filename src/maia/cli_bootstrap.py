@@ -198,10 +198,6 @@ def format_setup_step_line(step: dict[str, str]) -> str:
     action = action_by_status.get(step["status"], step["status"].capitalize())
     if step["step"] == "network":
         return f"{action} Maia network {step['detail']}."
-    if step["step"] == "volume":
-        return f"{action} Maia volume {step['detail']}."
-    if step["step"] == "queue":
-        return f"{action} RabbitMQ {step['detail']}."
     if step["step"] == "keryx":
         return f"{action} Keryx HTTP API {step['detail']}."
     if step["step"] == "db":

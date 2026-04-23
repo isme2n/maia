@@ -20,8 +20,6 @@ from maia import cli as cli_module
 from maia.app_state import (
     get_agent_hermes_home,
     get_default_export_path,
-    get_registry_path,
-    get_runtime_state_path,
     get_state_db_path,
     get_team_metadata_path,
 )

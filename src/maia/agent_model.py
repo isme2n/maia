@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Self
@@ -78,16 +77,6 @@ def _normalize_agent_runtime_spec(value: object) -> RuntimeSpec | None:
     return RuntimeSpec.from_dict(value)
 
 
-def _normalize_agent_messaging_spec(value: object) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("Invalid agent messaging spec: expected object")
-    if any(not isinstance(key, str) for key in value):
-        raise ValueError("Invalid agent messaging spec: expected string keys")
-    return deepcopy(dict(value))
-
-
 class AgentStatus(str, Enum):
     """Supported lifecycle states for an agent."""
 
@@ -127,7 +116,6 @@ class AgentRecord:
     model: str = ""
     tags: list[str] = field(default_factory=list)
     runtime_spec: RuntimeSpec | None = None
-    messaging_spec: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Detach mutable constructor inputs from this instance."""
@@ -153,7 +141,6 @@ class AgentRecord:
         self.runtime_spec = _normalize_agent_runtime_spec(self.runtime_spec)
         if self.runtime_spec is not None and self.setup_status is AgentSetupStatus.NOT_CONFIGURED:
             self.setup_status = AgentSetupStatus.CONFIGURED
-        self.messaging_spec = _normalize_agent_messaging_spec(self.messaging_spec)
 
     def __copy__(self) -> Self:
         """Return an independent shallow copy of the agent record."""
@@ -172,7 +159,6 @@ class AgentRecord:
             model=self.model,
             tags=self.tags,
             runtime_spec=self.runtime_spec,
-            messaging_spec=self.messaging_spec,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -201,8 +187,6 @@ class AgentRecord:
             payload["tags"] = list(self.tags)
         if self.runtime_spec is not None:
             payload["runtime_spec"] = self.runtime_spec.to_dict()
-        if self.messaging_spec is not None:
-            payload["messaging_spec"] = deepcopy(dict(self.messaging_spec))
         return payload
 
     @classmethod
@@ -213,7 +197,6 @@ class AgentRecord:
         model = _validate_agent_str(data.get("model", ""), field_name="model")
         tags = _validate_agent_tags(data.get("tags", []))
         runtime_spec = _normalize_agent_runtime_spec(data.get("runtime_spec"))
-        messaging_spec = _normalize_agent_messaging_spec(data.get("messaging_spec"))
         setup_status = data.get("setup_status")
         if setup_status is None:
             setup_status = (
@@ -236,5 +219,4 @@ class AgentRecord:
             model=model,
             tags=list(tags),
             runtime_spec=runtime_spec,
-            messaging_spec=messaging_spec,
         )

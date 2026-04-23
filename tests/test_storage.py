@@ -243,7 +243,6 @@ def test_json_registry_storage_drops_non_portable_runtime_fields(tmp_path: Path)
                 command=["python", "run.py"],
                 env={"MODE": "test"},
             ),
-            messaging_spec={"queue": "planner-inbox"},
         )
     )
     path = tmp_path / "registry.json"
@@ -317,7 +316,6 @@ def test_json_registry_storage_local_save_preserves_runtime_fields(tmp_path: Pat
                 command=["python", "run.py"],
                 env={"MODE": "test"},
             ),
-            messaging_spec={"queue": "planner-inbox"},
         )
     )
     path = tmp_path / "local-registry.json"
@@ -340,7 +338,6 @@ def test_json_registry_storage_local_save_preserves_runtime_fields(tmp_path: Pat
                     "command": ["python", "run.py"],
                     "env": {"MODE": "test"},
                 },
-                "messaging_spec": {"queue": "planner-inbox"},
             }
         ]
     }
