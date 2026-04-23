@@ -27,10 +27,17 @@ from maia.bundle_archive import (
     write_bundle_archive,
 )
 from maia.cli_bootstrap import (
-    format_setup_step_line,
     handle_doctor,
     handle_setup,
-    is_doctor_failure,
+)
+from maia.cli_init import (
+    derive_init_next_step,
+    derive_init_runtime_status,
+    ensure_init_infra_ready,
+    format_init_output_lines,
+    init_runtime_start_capable,
+    init_infra_ready,
+    select_init_agent,
 )
 from maia.cli_parser import (
     AGENT_ID_COMMANDS,
@@ -165,13 +172,13 @@ def _handle_init(
     orchestration_exit_code: int | None = None
     init_start_attempted = False
     init_start_error: str | None = None
-    infra_ready = _ensure_init_infra_ready(state_path)
+    infra_ready = ensure_init_infra_ready(state_path)
     if not infra_ready:
         orchestration_exit_code = 1
 
     registry = storage.load(state_path)
     team_metadata = load_team_metadata(team_metadata_path)
-    selected_agent, selected_source = _select_init_agent(registry, team_metadata)
+    selected_agent, selected_source = select_init_agent(registry, team_metadata)
     if infra_ready and selected_agent is None:
         selected_agent = _create_agent_interactively(storage, state_path, registry)
         print(_format_created_agent_line(selected_agent))
@@ -198,7 +205,7 @@ def _handle_init(
         gateway_exit_code = _orchestrate_init_gateway_setup_if_needed(selected_agent)
         if gateway_exit_code is not None:
             orchestration_exit_code = gateway_exit_code
-        if _init_runtime_start_capable(state_path):
+        if init_runtime_start_capable(state_path):
             registry = storage.load(state_path)
             selected_agent = registry.get(selected_agent.agent_id)
             init_start_attempted, init_start_error = _orchestrate_init_runtime_start_if_needed(
@@ -211,8 +218,8 @@ def _handle_init(
 
     registry = storage.load(state_path)
     team_metadata = load_team_metadata(team_metadata_path)
-    selected_agent, selected_source = _select_init_agent(registry, team_metadata)
-    infra_ready = _init_infra_ready(state_path)
+    selected_agent, selected_source = select_init_agent(registry, team_metadata)
+    infra_ready = init_infra_ready(state_path)
     runtime_state = None
     if selected_agent is not None:
         runtime_state = _resolve_runtime_state_for_init(
@@ -231,7 +238,7 @@ def _handle_init(
 
     setup_status = _derive_setup_state(runtime_state)
     gateway_status = _derive_gateway_setup_state(runtime_state)
-    runtime_status = _derive_init_runtime_status(runtime_state)
+    runtime_status = derive_init_runtime_status(runtime_state)
     agent_identity_ready = selected_agent is not None
     agent_setup_ready = agent_identity_ready and setup_status == "complete"
     gateway_ready = agent_identity_ready and _is_gateway_start_ready(gateway_status)
@@ -247,7 +254,7 @@ def _handle_init(
             runtime_running,
         )
     )
-    next_command, next_reason = _derive_init_next_step(
+    next_command, next_reason = derive_init_next_step(
         infra_ready=infra_ready,
         selected_agent=selected_agent,
         agent_setup_ready=agent_setup_ready,
@@ -273,7 +280,7 @@ def _handle_init(
         "next_command": next_command,
         "next_reason": next_reason,
     }
-    for line in _format_init_output_lines(report):
+    for line in format_init_output_lines(report, format_preview_value=_format_preview_value):
         print(line)
     if init_start_error is not None:
         print(
@@ -295,56 +302,6 @@ def _handle_init(
     if orchestration_exit_code is not None:
         return orchestration_exit_code
     return 0 if conversation_ready else 1
-
-
-def _select_init_agent(
-    registry,
-    team_metadata: TeamMetadata,
-) -> tuple[AgentRecord | None, str]:
-    active_records = [
-        record for record in registry.list() if record.status is not AgentStatus.ARCHIVED
-    ]
-    if not active_records:
-        return None, "none"
-    default_agent_id = team_metadata.default_agent_id.strip()
-    if default_agent_id:
-        try:
-            default_record = registry.get(default_agent_id)
-        except LookupError:
-            default_record = None
-        if default_record is not None and default_record.status is not AgentStatus.ARCHIVED:
-            return default_record, "default-agent"
-    ordered_records = sorted(active_records, key=lambda record: (record.name, record.agent_id))
-    if len(ordered_records) == 1:
-        return ordered_records[0], "sole-active-agent"
-    return ordered_records[0], "first-active-agent"
-
-
-def _init_infra_ready(state_path: Path | str) -> bool:
-    checks = infra_runtime.collect_doctor_checks(state_path)
-    return not any(is_doctor_failure(check) for check in checks)
-
-
-def _ensure_init_infra_ready(state_path: Path | str) -> bool:
-    if _init_infra_ready(state_path):
-        return True
-    try:
-        steps = infra_runtime.bootstrap_shared_infra(state_path)
-    except ValueError:
-        return False
-    for step in steps:
-        print(format_setup_step_line(step))
-    return _init_infra_ready(state_path)
-
-
-def _init_runtime_start_capable(state_path: Path | str) -> bool:
-    check_status_by_name = {
-        check["name"]: check["status"] for check in infra_runtime.collect_doctor_checks(state_path)
-    }
-    return (
-        check_status_by_name.get("docker_cli") == "ok"
-        and check_status_by_name.get("docker_daemon") == "ok"
-    )
 
 
 def _orchestrate_init_gateway_setup_if_needed(record: AgentRecord) -> int | None:
@@ -450,97 +407,6 @@ def _resolve_runtime_state_for_init(
         setup_status=(observed.setup_status or runtime_state.setup_status),
         gateway_setup_status=(observed.gateway_setup_status or runtime_state.gateway_setup_status),
     )
-
-
-def _derive_init_runtime_status(runtime_state: RuntimeState | None) -> str:
-    if runtime_state is None:
-        return "not-started"
-    return runtime_state.runtime_status.value
-
-
-def _derive_init_next_step(
-    *,
-    infra_ready: bool,
-    selected_agent: AgentRecord | None,
-    agent_setup_ready: bool,
-    gateway_ready: bool,
-    default_destination_ready: bool,
-    runtime_running: bool,
-    runtime_status: str,
-) -> tuple[str, str]:
-    if not infra_ready:
-        return "maia doctor", "shared-infra-not-ready"
-    if selected_agent is None:
-        return "maia agent new", "create-first-agent-identity"
-    if not agent_setup_ready:
-        return f"maia agent setup {selected_agent.name}", "finish-agent-setup"
-    if not gateway_ready:
-        return f"maia agent setup-gateway {selected_agent.name}", "configure-usable-gateway"
-    if not default_destination_ready:
-        return f"maia agent setup-gateway {selected_agent.name}", "configure-default-destination"
-    if runtime_status in {RuntimeStatus.STARTING.value, RuntimeStatus.STOPPING.value}:
-        return f"maia agent status {selected_agent.name}", "wait-for-runtime-transition"
-    if not runtime_running:
-        return f"maia agent start {selected_agent.name}", "start-agent-runtime"
-    return "-", "conversation-ready-now"
-
-
-def _format_init_output_lines(report: dict[str, object]) -> list[str]:
-    return [
-        _format_init_state_line(
-            "infra_ready",
-            bool(report["infra_ready"]),
-        ),
-        _format_init_state_line(
-            "agent_identity_ready",
-            bool(report["agent_identity_ready"]),
-            agent_id=str(report["selected_agent_id"]),
-            name=str(report["selected_agent_name"]),
-            source=str(report["selected_agent_source"]),
-        ),
-        _format_init_state_line(
-            "agent_setup_ready",
-            bool(report["agent_setup_ready"]),
-            status=str(report["setup_status"]),
-        ),
-        _format_init_state_line(
-            "gateway_ready",
-            bool(report["gateway_ready"]),
-            status=str(report["gateway_status"]),
-        ),
-        _format_init_state_line(
-            "default_destination_ready",
-            bool(report["default_destination_ready"]),
-            status=str(report["gateway_status"]),
-        ),
-        _format_init_state_line(
-            "runtime_running",
-            bool(report["runtime_running"]),
-            status=str(report["runtime_status"]),
-        ),
-        _format_init_state_line(
-            "conversation_ready",
-            bool(report["conversation_ready"]),
-        ),
-        " ".join(
-            (
-                "next",
-                f"command={_format_preview_value(str(report['next_command']))}",
-                f"reason={_format_preview_value(str(report['next_reason']))}",
-            )
-        ),
-    ]
-
-
-def _format_init_state_line(state_name: str, ready: bool, **fields: str) -> str:
-    tokens = ["state", f"name={state_name}", f"ready={_format_init_ready_value(ready)}"]
-    for field_name, value in fields.items():
-        tokens.append(f"{field_name}={_format_preview_value(value)}")
-    return " ".join(tokens)
-
-
-def _format_init_ready_value(ready: bool) -> str:
-    return "yes" if ready else "no"
 
 
 def _handle_agent_setup(
