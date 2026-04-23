@@ -736,21 +736,6 @@ class KeryxThreadView:
             allow_empty=False,
         )
 
-    @classmethod
-    def from_session_record(cls, record: KeryxSessionRecord) -> Self:
-        return record.as_thread_view()
-
-    def to_session_record(self) -> KeryxSessionRecord:
-        return KeryxSessionRecord(
-            session_id=self.thread_id,
-            topic=self.topic,
-            participants=self.participants,
-            created_by=self.created_by,
-            status=self.status,
-            created_at=self.created_at,
-            updated_at=self.updated_at,
-        )
-
 
 @dataclass(slots=True)
 class KeryxThreadMessageView:
@@ -935,13 +920,3 @@ class KeryxPendingThreadWorkView:
                 "Invalid Keryx pending thread work: handoff thread_id must match thread"
             )
 
-    @classmethod
-    def from_pending_work_record(cls, record: KeryxPendingWorkRecord) -> Self:
-        return record.as_thread_view()
-
-    def to_pending_work_record(self) -> KeryxPendingWorkRecord:
-        return KeryxPendingWorkRecord(
-            session=self.thread.to_session_record(),
-            message=self.message.to_message_record(),
-            handoff=self.handoff.to_handoff_record(),
-        )

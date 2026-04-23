@@ -931,24 +931,6 @@ def _sorted_thread_messages(messages: Sequence[KeryxMessageRecord]) -> list[Kery
     return sorted(messages, key=_message_sort_key)
 
 
-def _group_messages_by_thread(
-    messages: Sequence[KeryxMessageRecord],
-) -> dict[str, list[KeryxMessageRecord]]:
-    grouped: dict[str, list[KeryxMessageRecord]] = {}
-    for message in messages:
-        grouped.setdefault(message.thread_id, []).append(message)
-    return grouped
-
-
-def _group_handoffs_by_thread(
-    handoffs: Sequence[KeryxHandoffRecord],
-) -> dict[str, list[KeryxHandoffRecord]]:
-    grouped: dict[str, list[KeryxHandoffRecord]] = {}
-    for handoff in handoffs:
-        grouped.setdefault(handoff.thread_id, []).append(handoff)
-    return grouped
-
-
 def _handoff_sort_key(handoff: KeryxHandoffRecord) -> tuple[str, str]:
     return (handoff.created_at, handoff.handoff_id)
 
@@ -1135,14 +1117,6 @@ def _select_latest_internal_event(
     if latest_handoff.created_at >= latest_message.created_at:
         return ("handoff", latest_handoff)
     return ("message", latest_message)
-
-
-def _select_latest_handoff_to_anchor(
-    thread_handoffs: Sequence[KeryxHandoffRecord],
-    anchor_agent: str,
-) -> KeryxHandoffRecord | None:
-    anchor_handoffs = [handoff for handoff in thread_handoffs if handoff.to_agent == anchor_agent]
-    return max(anchor_handoffs, key=_handoff_sort_key, default=None)
 
 
 def _require_thread_participant(thread: KeryxSessionRecord, agent_id: str, *, error: str) -> None:
