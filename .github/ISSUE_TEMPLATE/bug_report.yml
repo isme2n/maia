@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible bug in Maia
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Exact commands, inputs, and environment details needed to reproduce.
+      placeholder: |
+        1. Run ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and logs
+      description: Paste relevant output from `maia --help`, `maia doctor`, `python3 scripts/check_invariants.py contracts`, or `bash scripts/verify.sh`.
+  - type: input
+    id: version
+    attributes:
+      label: Maia version or ref
+      placeholder: v0.1.0 / main / commit SHA
+    validations:
+      required: true

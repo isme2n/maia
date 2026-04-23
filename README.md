@@ -1,5 +1,8 @@
 # Maia
 
+[![CI](https://github.com/isme2n/maia/actions/workflows/ci.yml/badge.svg)](https://github.com/isme2n/maia/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Maia is a control plane for bootstrapping shared infra, creating agent identities, and operating agent runtimes.
 Keryx is the collaboration plane for live multi-agent work and operator visibility.
 

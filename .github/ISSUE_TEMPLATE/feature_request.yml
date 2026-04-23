@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a user-facing or contributor-facing improvement for Maia
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Public contract impact
+      description: Does this affect install flow, onboarding, CLI wording, runtime behavior, or operator workflows?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context

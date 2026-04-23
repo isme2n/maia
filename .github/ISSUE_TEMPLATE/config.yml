@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussions
+    url: https://github.com/isme2n/maia/discussions
+    about: Use Discussions for questions, design discussion, and open-ended product ideas.
+  - name: Security reports
+    url: https://github.com/isme2n/maia/security
+    about: Please report vulnerabilities privately instead of opening a public issue.
