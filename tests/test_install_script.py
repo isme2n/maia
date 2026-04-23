@@ -5,6 +5,13 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+
+import sys
+sys.path.insert(0, str(SRC_ROOT))
+
+from maia.public_contract import MAIA_GIT_INSTALL_SPEC, MAIA_INSTALL_REF
+
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install.sh"
 
 
@@ -36,6 +43,7 @@ def test_install_script_help_describes_contract() -> None:
     assert "ensure Hermes is available for `maia init`" in result.stdout
     assert "--dry-run" in result.stdout
     assert "MAIA_INSTALL_REPO_URL" in result.stdout
+    assert f"MAIA_INSTALL_REF       Git ref to install (default: {MAIA_INSTALL_REF})" in result.stdout
     assert "HERMES_INSTALL_URL" in result.stdout
 
 
@@ -54,8 +62,8 @@ def test_install_script_dry_run_prints_primary_install_flow(tmp_path: Path) -> N
     assert "Detected Linux." in stdout
     assert "uv not found. Installing uv." in stdout
     assert "+ curl -LsSf https://astral.sh/uv/install.sh | bash" in stdout
-    assert "Installing Maia from git+https://github.com/isme2n/maia.git@main" in stdout
-    assert "+ uv tool install --reinstall --from git+https://github.com/isme2n/maia.git@main maia" in stdout
+    assert "Installing Maia from git+https://github.com/isme2n/maia.git@v0.1.0" in stdout
+    assert "+ uv tool install --reinstall --from git+https://github.com/isme2n/maia.git@v0.1.0 maia" in stdout
     assert "Hermes not found. Installing Hermes." in stdout
     assert "+ curl -LsSf https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash" in stdout
     assert "Dry run only: skipped post-install command verification." in stdout
@@ -138,7 +146,7 @@ def test_install_script_runs_post_install_verification_and_docker_warning(tmp_pa
     stdout = result.stdout
     assert "Detected Linux." in stdout
     assert f"uv already available at {bin_dir / 'uv'}" in stdout
-    assert "Installing Maia from git+https://github.com/isme2n/maia.git@main" in stdout
+    assert f"Installing Maia from {MAIA_GIT_INSTALL_SPEC}" in stdout
     assert "Hermes not found. Installing Hermes." in stdout
     assert f"Hermes available at {tmp_path / '.local' / 'bin' / 'hermes'}" in stdout
     assert f"Maia command verified at {tmp_path / '.local' / 'bin' / 'maia'}" in stdout
@@ -249,6 +257,7 @@ def test_install_script_source_locks_primary_urls_and_commands() -> None:
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'MAIA_INSTALL_REPO_URL="${MAIA_INSTALL_REPO_URL:-https://github.com/isme2n/maia.git}"' in text
+    assert f'MAIA_INSTALL_REF="${{MAIA_INSTALL_REF:-{MAIA_INSTALL_REF}}}"' in text
     assert 'HERMES_INSTALL_URL="${HERMES_INSTALL_URL:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"' in text
     assert 'run uv tool install --reinstall --from "$repo_spec" "$MAIA_INSTALL_PACKAGE"' in text
     assert "requires a uv build that supports 'uv tool install --from'" in text

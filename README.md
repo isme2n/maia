@@ -15,13 +15,13 @@ Runtime note:
 Primary OSS install path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/isme2n/maia/v0.1.0/scripts/install.sh | bash
 ```
 
 The installer uses `uv` to install Maia from this repo, ensures `hermes` is available for `maia init`, verifies the `maia` command, and warns truthfully if Docker is missing or unreachable.
 
 Fallback installs:
-- Install directly from GitHub with uv: `uv tool install 'git+https://github.com/isme2n/maia.git@main'`
+- Install directly from GitHub with uv: `uv tool install 'git+https://github.com/isme2n/maia.git@v0.1.0'`
 - From this repository checkout, install locally for development: `python3 -m pip install .`
 - If you skip `scripts/install.sh`, make sure `hermes` is installed before running `maia init`.
 

@@ -67,6 +67,13 @@ from maia.runtime_adapter import RuntimeStartResult, RuntimeState, RuntimeStatus
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.storage import JsonRegistryStorage
 
+from maia.public_contract import (
+    MAIA_GIT_INSTALL_SPEC,
+    MAIA_INSTALL_CURL_COMMAND,
+    MAIA_INSTALL_REF,
+    MAIA_INSTALL_SCRIPT_URL,
+)
+
 README_PATH = REPO_ROOT / "README.md"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
@@ -176,6 +183,9 @@ def test_readme_install_section_explains_primary_and_fallback_install_paths() ->
 
     assert "Primary OSS install path:" in install
     _assert_contains_lines(install, INSTALL_EXAMPLES)
+    assert MAIA_INSTALL_CURL_COMMAND in install
+    assert MAIA_INSTALL_SCRIPT_URL in install
+    assert f"@{MAIA_INSTALL_REF}" in install
     assert "Python 3.11+ for source/manual installs" in install
     assert "Runtime note:" in install
     assert "the installer only warns if Docker is not ready yet" in install
@@ -183,7 +193,7 @@ def test_readme_install_section_explains_primary_and_fallback_install_paths() ->
     assert "ensures `hermes` is available for `maia init`" in install
     assert "warns truthfully if Docker is missing or unreachable" in install
     assert "Fallback installs:" in install
-    assert "Install directly from GitHub with uv: `uv tool install 'git+https://github.com/isme2n/maia.git@main'`" in install
+    assert f"Install directly from GitHub with uv: `uv tool install '{MAIA_GIT_INSTALL_SPEC}'`" in install
     assert "From this repository checkout, install locally for development: `python3 -m pip install .`" in install
     assert "make sure `hermes` is installed before running `maia init`" in install
 
@@ -353,7 +363,7 @@ def test_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
         ),
     )
     assert "`maia init` is Maia's canonical public one-command onboarding path." not in captured.out
-    assert "Primary OSS install path: `curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash`." in captured.out
+    assert f"Primary OSS install path: `{MAIA_INSTALL_CURL_COMMAND}`." in captured.out
     assert "After install, run Maia's canonical onboarding command: `maia init`." in captured.out
     assert "`maia doctor` is the shared-infra gate in Maia's advanced/manual operator flow." in captured.out
     assert "It checks Docker, Keryx HTTP API, and SQLite state DB readiness only, then points you to the next step." in captured.out

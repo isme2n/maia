@@ -3,7 +3,7 @@
 set -euo pipefail
 
 MAIA_INSTALL_REPO_URL="${MAIA_INSTALL_REPO_URL:-https://github.com/isme2n/maia.git}"
-MAIA_INSTALL_REF="${MAIA_INSTALL_REF:-main}"
+MAIA_INSTALL_REF="${MAIA_INSTALL_REF:-v0.1.0}"
 MAIA_INSTALL_PACKAGE="${MAIA_INSTALL_PACKAGE:-maia}"
 MAIA_INSTALL_COMMAND="${MAIA_INSTALL_COMMAND:-maia}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
@@ -25,7 +25,7 @@ Options:
 
 Environment overrides:
   MAIA_INSTALL_REPO_URL  Git repo to install Maia from
-  MAIA_INSTALL_REF       Git ref to install (default: main)
+  MAIA_INSTALL_REF       Git ref to install (default: v0.1.0)
   MAIA_INSTALL_PACKAGE   Tool name to install from the Maia repo (default: maia)
   UV_INSTALL_URL         uv installer URL
   HERMES_INSTALL_URL     Hermes installer URL

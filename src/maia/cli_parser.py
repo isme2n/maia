@@ -6,6 +6,7 @@ import argparse
 
 from maia.agent_model import AgentStatus
 from maia.handoff_model import HandoffKind
+from maia.public_contract import MAIA_GIT_INSTALL_SPEC, MAIA_INSTALL_CURL_COMMAND
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
 TOP_LEVEL_INFO_COMMANDS = ("doctor", "setup")
@@ -66,7 +67,7 @@ LIFECYCLE_STATUS_BY_COMMAND = {
 }
 AGENT_ID_COMMANDS = frozenset({"setup", "setup-gateway", "status", "logs", "tune", "purge", *LIFECYCLE_STATUS_BY_COMMAND})
 PUBLIC_ONBOARDING_CONTRACT = (
-    "Primary OSS install path: `curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash`.",
+    f"Primary OSS install path: `{MAIA_INSTALL_CURL_COMMAND}`.",
     "After install, run Maia's canonical onboarding command: `maia init`.",
     "The decomposed commands below remain public as the advanced/manual operator flow.",
 )
@@ -87,7 +88,7 @@ DOCTOR_EXAMPLES = (
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
-INSTALL_EXAMPLES = ("curl -fsSL https://raw.githubusercontent.com/isme2n/maia/main/scripts/install.sh | bash",)
+INSTALL_EXAMPLES = (MAIA_INSTALL_CURL_COMMAND,)
 QUICKSTART_EXAMPLES = ("maia init",)
 INIT_EXAMPLES = ("maia init",)
 RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
