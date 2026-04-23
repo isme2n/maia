@@ -31,10 +31,12 @@ from maia.cli_bootstrap import (
     handle_setup,
 )
 from maia.cli_init import (
+    InitDependencies,
     derive_init_next_step,
     derive_init_runtime_status,
     ensure_init_infra_ready,
     format_init_output_lines,
+    handle_init,
     init_runtime_start_capable,
     init_infra_ready,
     select_init_agent,
@@ -169,139 +171,35 @@ def _handle_init(
     state_path: Path | str,
     team_metadata_path: Path | str,
 ) -> int:
-    orchestration_exit_code: int | None = None
-    init_start_attempted = False
-    init_start_error: str | None = None
-    infra_ready = ensure_init_infra_ready(state_path)
-    if not infra_ready:
-        orchestration_exit_code = 1
-
-    registry = storage.load(state_path)
-    team_metadata = load_team_metadata(team_metadata_path)
-    selected_agent, selected_source = select_init_agent(registry, team_metadata)
-    if infra_ready and selected_agent is None:
-        selected_agent = _create_agent_interactively(storage, state_path, registry)
-        print(_format_created_agent_line(selected_agent))
-        selected_source = "sole-active-agent"
-
-    if infra_ready and selected_agent is not None:
-        setup_state = RuntimeStateStorage().load(get_state_db_path()).get(selected_agent.agent_id)
-        if _derive_setup_state(setup_state) != "complete":
-            setup_exit_code, _setup_result, setup_error = _run_agent_setup_passthrough(selected_agent)
-            if setup_error is not None:
-                print(
-                    f"Agent setup failed for {selected_agent.name!r}. "
-                    f"Rerun maia agent setup {selected_agent.name} after fixing the Hermes setup issue. {setup_error}",
-                    file=sys.stderr,
-                )
-            elif setup_exit_code != 0:
-                print(
-                    f"Agent setup failed for {selected_agent.name!r}. "
-                    f"Rerun maia agent setup {selected_agent.name} after fixing the Hermes setup issue",
-                    file=sys.stderr,
-                )
-            if setup_exit_code != 0:
-                orchestration_exit_code = setup_exit_code
-        gateway_exit_code = _orchestrate_init_gateway_setup_if_needed(selected_agent)
-        if gateway_exit_code is not None:
-            orchestration_exit_code = gateway_exit_code
-        if init_runtime_start_capable(state_path):
-            registry = storage.load(state_path)
-            selected_agent = registry.get(selected_agent.agent_id)
-            init_start_attempted, init_start_error = _orchestrate_init_runtime_start_if_needed(
-                selected_agent,
-                storage,
-                state_path,
-                registry,
-                _build_runtime_adapter(),
-            )
-
-    registry = storage.load(state_path)
-    team_metadata = load_team_metadata(team_metadata_path)
-    selected_agent, selected_source = select_init_agent(registry, team_metadata)
-    infra_ready = init_infra_ready(state_path)
-    runtime_state = None
-    if selected_agent is not None:
-        runtime_state = _resolve_runtime_state_for_init(
-            selected_agent,
-            _build_runtime_adapter(),
-            infra_ready=infra_ready,
-        )
-        if runtime_state is not None:
-            selected_agent = _sync_registry_status_from_runtime_state(
-                selected_agent,
-                runtime_state,
-                storage,
-                state_path,
-                registry,
-            )
-
-    setup_status = _derive_setup_state(runtime_state)
-    gateway_status = _derive_gateway_setup_state(runtime_state)
-    runtime_status = derive_init_runtime_status(runtime_state)
-    agent_identity_ready = selected_agent is not None
-    agent_setup_ready = agent_identity_ready and setup_status == "complete"
-    gateway_ready = agent_identity_ready and _is_gateway_start_ready(gateway_status)
-    default_destination_ready = agent_identity_ready and _is_default_destination_ready(gateway_status)
-    runtime_running = agent_identity_ready and infra_ready and runtime_status == RuntimeStatus.RUNNING.value
-    conversation_ready = all(
-        (
-            infra_ready,
-            agent_identity_ready,
-            agent_setup_ready,
-            gateway_ready,
-            default_destination_ready,
-            runtime_running,
-        )
+    return handle_init(
+        storage,
+        state_path,
+        team_metadata_path,
+        deps=InitDependencies(
+            ensure_init_infra_ready=ensure_init_infra_ready,
+            init_infra_ready=init_infra_ready,
+            load_team_metadata=load_team_metadata,
+            select_init_agent=select_init_agent,
+            create_agent_interactively=_create_agent_interactively,
+            format_created_agent_line=_format_created_agent_line,
+            load_runtime_setup_state=lambda agent_id: RuntimeStateStorage().load(get_state_db_path()).get(agent_id),
+            derive_setup_state=_derive_setup_state,
+            run_agent_setup_passthrough=_run_agent_setup_passthrough,
+            orchestrate_init_gateway_setup_if_needed=_orchestrate_init_gateway_setup_if_needed,
+            init_runtime_start_capable=init_runtime_start_capable,
+            build_runtime_adapter=_build_runtime_adapter,
+            orchestrate_init_runtime_start_if_needed=_orchestrate_init_runtime_start_if_needed,
+            resolve_runtime_state_for_init=_resolve_runtime_state_for_init,
+            sync_registry_status_from_runtime_state=_sync_registry_status_from_runtime_state,
+            derive_gateway_setup_state=_derive_gateway_setup_state,
+            is_gateway_start_ready=_is_gateway_start_ready,
+            is_default_destination_ready=_is_default_destination_ready,
+            derive_init_runtime_status=derive_init_runtime_status,
+            derive_init_next_step=derive_init_next_step,
+            format_init_output_lines=format_init_output_lines,
+            format_preview_value=_format_preview_value,
+        ),
     )
-    next_command, next_reason = derive_init_next_step(
-        infra_ready=infra_ready,
-        selected_agent=selected_agent,
-        agent_setup_ready=agent_setup_ready,
-        gateway_ready=gateway_ready,
-        default_destination_ready=default_destination_ready,
-        runtime_running=runtime_running,
-        runtime_status=runtime_status,
-    )
-    report = {
-        "infra_ready": infra_ready,
-        "agent_identity_ready": agent_identity_ready,
-        "selected_agent_id": "-" if selected_agent is None else selected_agent.agent_id,
-        "selected_agent_name": "-" if selected_agent is None else selected_agent.name,
-        "selected_agent_source": selected_source,
-        "agent_setup_ready": agent_setup_ready,
-        "setup_status": setup_status,
-        "gateway_ready": gateway_ready,
-        "gateway_status": gateway_status,
-        "default_destination_ready": default_destination_ready,
-        "runtime_running": runtime_running,
-        "runtime_status": runtime_status,
-        "conversation_ready": conversation_ready,
-        "next_command": next_command,
-        "next_reason": next_reason,
-    }
-    for line in format_init_output_lines(report, format_preview_value=_format_preview_value):
-        print(line)
-    if init_start_error is not None:
-        print(
-            f"Agent start failed for {selected_agent.name!r}. "
-            f"Rerun maia agent start {selected_agent.name} after fixing the runtime issue. {init_start_error}",
-            file=sys.stderr,
-        )
-    elif (
-        init_start_attempted
-        and selected_agent is not None
-        and not runtime_running
-        and next_command == f"maia agent start {selected_agent.name}"
-    ):
-        print(
-            f"Agent start did not leave {selected_agent.name!r} running. "
-            f"Run maia agent logs {selected_agent.name}, then rerun maia agent start {selected_agent.name}.",
-            file=sys.stderr,
-        )
-    if orchestration_exit_code is not None:
-        return orchestration_exit_code
-    return 0 if conversation_ready else 1
 
 
 def _orchestrate_init_gateway_setup_if_needed(record: AgentRecord) -> int | None:
