@@ -10,7 +10,6 @@ __all__ = [
     "get_agent_dir",
     "get_agent_hermes_home",
     "get_agents_dir",
-    "get_collaboration_path",
     "get_default_export_path",
     "get_exports_dir",
     "get_maia_home",
@@ -24,7 +23,6 @@ __all__ = [
 _AGENT_HERMES_HOME_DIRNAME = "hermes"
 _AGENTS_DIRNAME = "agents"
 _MAIA_HOME_DIRNAME = ".maia"
-_COLLABORATION_FILENAME = "collaboration.json"
 _DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
 _EXPORTS_DIRNAME = "exports"
 _REGISTRY_FILENAME = "registry.json"
@@ -66,12 +64,6 @@ def get_registry_path(env: Mapping[str, str] | None = None) -> Path:
     """Return the transitional local registry cache path."""
 
     return get_maia_home(env) / _REGISTRY_FILENAME
-
-
-def get_collaboration_path(env: Mapping[str, str] | None = None) -> Path:
-    """Return the transitional local collaboration cache path."""
-
-    return get_maia_home(env) / _COLLABORATION_FILENAME
 
 
 def get_exports_dir(env: Mapping[str, str] | None = None) -> Path:

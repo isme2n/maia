@@ -6,3 +6,9 @@ __pycache__/
 logs/
 .backups/
 .DS_Store
+/AGENTS.md
+/SETUP_STATUS.md
+/TASK-*.md
+/task-*.md
+/REVIEW-*.md
+/review-*.md

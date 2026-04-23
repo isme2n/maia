@@ -1,7 +1,7 @@
 """Read-only runtime context helpers for Maia agents.
 
-Active collaboration context comes from Keryx-backed thread data. Legacy
-collaboration tables remain only as compatibility input for stale helpers/tests.
+Active collaboration context comes from Keryx-backed thread data stored in
+Maia's SQLite state DB.
 """
 
 from __future__ import annotations

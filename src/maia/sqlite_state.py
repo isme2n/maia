@@ -1,7 +1,6 @@
 """SQLite-backed local control-plane state for Maia.
 
-`keryx_*` tables are the active collaboration storage. The older
-`collaboration_*` tables remain only for transitional snapshot helpers.
+Keryx tables are Maia's active collaboration storage.
 """
 
 from __future__ import annotations
@@ -45,21 +44,6 @@ class SQLiteState:
                     name TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
                     detail TEXT NOT NULL DEFAULT ''
-                );
-                CREATE TABLE IF NOT EXISTS collaboration_threads (
-                    thread_id TEXT PRIMARY KEY,
-                    position INTEGER NOT NULL UNIQUE,
-                    payload TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS collaboration_messages (
-                    message_id TEXT PRIMARY KEY,
-                    position INTEGER NOT NULL UNIQUE,
-                    payload TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS collaboration_handoffs (
-                    handoff_id TEXT PRIMARY KEY,
-                    position INTEGER NOT NULL UNIQUE,
-                    payload TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS keryx_sessions (
                     session_id TEXT PRIMARY KEY,
@@ -156,69 +140,6 @@ class SQLiteState:
                         payload,
                     )
                     for state, payload in zip(states, payloads, strict=True)
-                ],
-            )
-
-    def load_collaboration(self) -> dict[str, list[dict[str, Any]]]:
-        """Load the legacy collaboration snapshot stored in `collaboration_*` tables."""
-        self.initialize()
-        with self._connect() as connection:
-            threads = [
-                json.loads(row[0])
-                for row in connection.execute(
-                    "SELECT payload FROM collaboration_threads ORDER BY position ASC"
-                ).fetchall()
-            ]
-            messages = [
-                json.loads(row[0])
-                for row in connection.execute(
-                    "SELECT payload FROM collaboration_messages ORDER BY position ASC"
-                ).fetchall()
-            ]
-            handoffs = [
-                json.loads(row[0])
-                for row in connection.execute(
-                    "SELECT payload FROM collaboration_handoffs ORDER BY position ASC"
-                ).fetchall()
-            ]
-        return {
-            "threads": threads,
-            "messages": messages,
-            "handoffs": handoffs,
-        }
-
-    def save_collaboration(
-        self,
-        *,
-        threads: list[dict[str, Any]],
-        messages: list[dict[str, Any]],
-        handoffs: list[dict[str, Any]],
-    ) -> None:
-        """Write the legacy collaboration snapshot into `collaboration_*` tables."""
-        self.initialize()
-        with self._connect() as connection:
-            connection.execute("DELETE FROM collaboration_threads")
-            connection.execute("DELETE FROM collaboration_messages")
-            connection.execute("DELETE FROM collaboration_handoffs")
-            connection.executemany(
-                "INSERT INTO collaboration_threads(thread_id, position, payload) VALUES (?, ?, ?)",
-                [
-                    (thread["thread_id"], position, json.dumps(thread))
-                    for position, thread in enumerate(threads)
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO collaboration_messages(message_id, position, payload) VALUES (?, ?, ?)",
-                [
-                    (message["message_id"], position, json.dumps(message))
-                    for position, message in enumerate(messages)
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO collaboration_handoffs(handoff_id, position, payload) VALUES (?, ?, ?)",
-                [
-                    (handoff["handoff_id"], position, json.dumps(handoff))
-                    for position, handoff in enumerate(handoffs)
                 ],
             )
 
