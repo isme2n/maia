@@ -71,3 +71,10 @@ def test_architecture_doc_does_not_reference_removed_legacy_models() -> None:
 
     assert "src/maia/message_model.py" not in architecture
     assert "src/maia/handoff_model.py" not in architecture
+
+
+def test_runtime_state_storage_does_not_expose_dead_prune_helper() -> None:
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from maia.runtime_state_storage import RuntimeStateStorage
+
+    assert not hasattr(RuntimeStateStorage, "prune")

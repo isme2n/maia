@@ -101,9 +101,8 @@ def test_keryx_storage_round_trips_phase1_records(tmp_path: Path) -> None:
 
     assert storage.list_sessions() == [session, session_two]
     assert storage.get_session(session.session_id) == session
-    assert storage.get_message(message.message_id) == message
-    assert storage.get_message(message.message_id).delivery_mode is KeryxDeliveryMode.USER_DIRECT
     assert storage.list_messages(session_id=session.session_id) == [message]
+    assert storage.list_messages(session_id=session.session_id)[0].delivery_mode is KeryxDeliveryMode.USER_DIRECT
     assert storage.list_handoffs(session_id=session.session_id) == [handoff]
     assert storage.get_handoff(handoff.handoff_id) == handoff
 
@@ -141,29 +140,6 @@ def test_keryx_storage_update_session_rewrites_membership(tmp_path: Path) -> Non
         (1, "analyst"),
         (2, "reviewer"),
     ]
-
-
-def test_keryx_storage_update_message_persists_new_payload(tmp_path: Path) -> None:
-    storage = KeryxStorage(tmp_path / "maia.db")
-    storage.create_session(_build_session())
-    storage.create_message(_build_message())
-
-    updated = KeryxMessageRecord(
-        message_id="msg-001",
-        session_id="session-001",
-        from_agent="planner",
-        to_agent="analyst",
-        kind="follow-up",
-        body="Please review the updated persistence behavior.",
-        created_at="2026-04-19T09:05:00Z",
-        reply_to_message_id="msg-000",
-    )
-
-    result = storage.update_message(updated)
-
-    assert result == updated
-    assert storage.get_message(updated.message_id) == updated
-    assert storage.list_messages(session_id=updated.session_id) == [updated]
 
 
 def test_keryx_storage_update_handoff_persists_new_status(tmp_path: Path) -> None:
@@ -232,7 +208,6 @@ def test_keryx_storage_missing_records_and_session_updates_raise_lookup_error(
     storage = KeryxStorage(tmp_path / "maia.db")
 
     assert storage.get_session("missing-session") is None
-    assert storage.get_message("missing-message") is None
     assert storage.get_handoff("missing-handoff") is None
 
     with pytest.raises(LookupError, match="missing-session"):
@@ -243,11 +218,13 @@ def test_keryx_storage_missing_records_and_session_updates_raise_lookup_error(
 
     storage.create_session(_build_session())
 
-    with pytest.raises(LookupError, match="msg-001"):
-        storage.update_message(_build_message())
-
     with pytest.raises(LookupError, match="handoff-001"):
         storage.update_handoff(_build_handoff())
 
     with pytest.raises(LookupError, match="session-002"):
         storage.update_session(_build_session(session_id="session-002"))
+
+
+def test_keryx_storage_keeps_minimal_message_api_surface() -> None:
+    assert not hasattr(KeryxStorage, "get_message")
+    assert not hasattr(KeryxStorage, "update_message")

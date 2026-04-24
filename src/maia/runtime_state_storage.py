@@ -37,18 +37,6 @@ class RuntimeStateStorage:
         del states[agent_id]
         self.save(target, states)
 
-    def prune(self, path: Path | str, valid_agent_ids: set[str]) -> None:
-        target = self._require_sqlite_path(path)
-        states = self.load(target)
-        pruned = {
-            agent_id: state
-            for agent_id, state in states.items()
-            if agent_id in valid_agent_ids
-        }
-        if pruned == states:
-            return
-        self.save(target, pruned)
-
     def _deserialize_runtime_states(
         self,
         items: list[object],

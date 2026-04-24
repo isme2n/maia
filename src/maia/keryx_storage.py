@@ -196,43 +196,6 @@ class KeryxStorage:
             for (payload_text,) in rows
         ]
 
-    def get_message(self, message_id: str) -> KeryxMessageRecord | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT payload FROM keryx_messages WHERE message_id = ?",
-                (message_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._deserialize_record_payload(
-            row[0],
-            record_type=KeryxMessageRecord,
-            resource_name="message",
-        )
-
-    def update_message(self, record: KeryxMessageRecord) -> KeryxMessageRecord:
-        with self._connect() as connection:
-            if not self._message_exists(connection, record.message_id):
-                raise LookupError(f"Keryx message with id {record.message_id!r} not found")
-            if not self._session_exists(connection, record.session_id):
-                raise LookupError(f"Keryx session with id {record.session_id!r} not found")
-            connection.execute(
-                """
-                UPDATE keryx_messages
-                SET session_id = ?,
-                    created_at = ?,
-                    payload = ?
-                WHERE message_id = ?
-                """,
-                (
-                    record.session_id,
-                    record.created_at,
-                    json.dumps(record.to_dict()),
-                    record.message_id,
-                ),
-            )
-        return record
-
     def create_handoff(self, record: KeryxHandoffRecord) -> KeryxHandoffRecord:
         with self._connect() as connection:
             if not self._session_exists(connection, record.session_id):
