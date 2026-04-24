@@ -10,8 +10,10 @@ from typing import Any, Self
 __all__ = [
     "KeryxAgentSummary",
     "KeryxDeliveryMode",
+    "KeryxHandoffKind",
     "KeryxHandoffRecord",
     "KeryxHandoffStatus",
+    "KeryxMessageKind",
     "KeryxMessageRecord",
     "KeryxPendingThreadWorkView",
     "KeryxPendingWorkRecord",
@@ -131,6 +133,27 @@ def _coerce_delivery_mode(value: object) -> "KeryxDeliveryMode":
         raise ValueError(
             f"Invalid Keryx message delivery_mode: expected one of {allowed}; got {value!r}"
         ) from exc
+
+
+class KeryxMessageKind(str, Enum):
+    """Supported message types exchanged within a Keryx thread."""
+
+    REQUEST = "request"
+    QUESTION = "question"
+    ANSWER = "answer"
+    REPORT = "report"
+    HANDOFF = "handoff"
+    NOTE = "note"
+
+
+class KeryxHandoffKind(str, Enum):
+    """Supported handoff pointer types stored in Keryx collaboration state."""
+
+    FILE = "file"
+    DIR = "dir"
+    REPO_REF = "repo-ref"
+    REPORT = "report"
+    LINK = "link"
 
 
 @dataclass(slots=True)
@@ -919,4 +942,3 @@ class KeryxPendingThreadWorkView:
             raise ValueError(
                 "Invalid Keryx pending thread work: handoff thread_id must match thread"
             )
-

@@ -4,6 +4,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 
@@ -46,6 +48,26 @@ def test_sqlite_backed_storages_do_not_write_transitional_json_caches(tmp_path: 
     maia_home = tmp_path / ".maia"
     assert not (maia_home / "registry.json").exists()
     assert not (maia_home / "runtime" / "runtime-state.json").exists()
+
+
+def test_runtime_state_storage_rejects_non_sqlite_paths(tmp_path: Path) -> None:
+    path = tmp_path / "runtime-state.json"
+    storage = RuntimeStateStorage()
+
+    with pytest.raises(ValueError, match="SQLite"):
+        storage.load(path)
+
+    with pytest.raises(ValueError, match="SQLite"):
+        storage.save(
+            path,
+            {
+                "agent-001": RuntimeState(
+                    agent_id="agent-001",
+                    runtime_status=RuntimeStatus.STOPPED,
+                    setup_status="configured",
+                )
+            },
+        )
 
 
 def test_app_state_exposes_sqlite_db_path(tmp_path: Path) -> None:

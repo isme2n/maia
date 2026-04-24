@@ -26,12 +26,12 @@ from maia.hermes_runtime_worker import (
 from maia.keryx_models import (
     KeryxAgentSummary,
     KeryxHandoffStatus,
+    KeryxMessageKind,
     KeryxPendingThreadWorkView,
     KeryxThreadHandoffView,
     KeryxThreadMessageView,
     KeryxThreadView,
 )
-from maia.message_model import MessageKind
 
 
 class FakeKeryxClient:
@@ -153,7 +153,7 @@ def _message() -> KeryxThreadMessageView:
         thread_id="thread-001",
         from_agent="planner",
         to_agent="reviewer",
-        kind=MessageKind.REQUEST.value,
+        kind=KeryxMessageKind.REQUEST.value,
         body="Please review the latest patch.",
         created_at="2026-04-16T00:00:00Z",
     )
@@ -211,7 +211,7 @@ def test_process_once_publishes_reply_and_marks_handoff_done() -> None:
     assert reply.from_agent == "reviewer"
     assert reply.to_agent == "planner"
     assert reply.reply_to_message_id == "msg-001"
-    assert reply.kind == MessageKind.ANSWER.value
+    assert reply.kind == KeryxMessageKind.ANSWER.value
     assert reply.body == "Looks good. Ship it."
     assert not hasattr(reply, "session_id")
     assert len(keryx_client.updated_handoffs) == 1

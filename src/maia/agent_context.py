@@ -19,7 +19,6 @@ from maia.keryx_models import (
     KeryxSessionRecord,
     KeryxThreadMessageView,
 )
-from maia.message_model import MessageRecord
 from maia.runtime_adapter import RuntimeState, RuntimeStatus
 
 __all__ = [
@@ -145,7 +144,7 @@ def build_runtime_context(
     state_db_path: str | Path,
     *,
     agent_id: str,
-    incoming_message: MessageRecord | KeryxMessageRecord | KeryxThreadMessageView,
+    incoming_message: KeryxMessageRecord | KeryxThreadMessageView,
 ) -> RuntimeContext:
     roster = load_team_roster(state_db_path)
     try:

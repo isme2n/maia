@@ -106,7 +106,7 @@ def _write_fake_docker(path: Path) -> None:
 
 def test_runtime_state_storage_round_trip(tmp_path: Path) -> None:
     storage = RuntimeStateStorage()
-    path = tmp_path / "runtime" / "runtime-state.json"
+    path = tmp_path / "runtime" / "maia.db"
     states = {
         "agent-001": RuntimeState(
             agent_id="agent-001",
@@ -183,7 +183,7 @@ def test_ensure_keryx_container_recreates_existing_container_for_different_state
 def test_docker_runtime_adapter_start_status_logs_stop_flow(tmp_path: Path) -> None:
     fake_docker = tmp_path / "docker"
     _write_fake_docker(fake_docker)
-    state_path = tmp_path / "runtime-state.json"
+    state_path = tmp_path / "maia.db"
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
         state_path=state_path,
@@ -214,7 +214,7 @@ def test_docker_runtime_adapter_start_status_logs_stop_flow(tmp_path: Path) -> N
 def test_docker_runtime_adapter_missing_docker_error(tmp_path: Path) -> None:
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
+        state_path=tmp_path / "maia.db",
         docker_bin=None,
     )
 
@@ -227,7 +227,7 @@ def test_docker_runtime_adapter_missing_runtime_state_error(tmp_path: Path) -> N
     _write_fake_docker(fake_docker)
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
+        state_path=tmp_path / "maia.db",
         docker_bin=str(fake_docker),
     )
 
@@ -252,7 +252,7 @@ def test_docker_runtime_adapter_surfaces_command_failures(tmp_path: Path) -> Non
     failing_docker.chmod(0o755)
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
+        state_path=tmp_path / "maia.db",
         docker_bin=str(failing_docker),
     )
 
@@ -277,7 +277,7 @@ def test_docker_runtime_adapter_collects_successful_stderr_logs(tmp_path: Path) 
         encoding='utf-8',
     )
     docker_script.chmod(0o755)
-    state_path = tmp_path / "runtime-state.json"
+    state_path = tmp_path / "maia.db"
     RuntimeStateStorage().save(
         state_path,
         {
@@ -302,7 +302,7 @@ def test_docker_runtime_adapter_collects_successful_stderr_logs(tmp_path: Path) 
 def test_docker_runtime_adapter_syncs_exited_container_to_stopped(tmp_path: Path) -> None:
     fake_docker = tmp_path / "docker"
     _write_fake_docker(fake_docker)
-    state_path = tmp_path / "runtime-state.json"
+    state_path = tmp_path / "maia.db"
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
         state_path=state_path,
@@ -388,7 +388,7 @@ def test_docker_runtime_adapter_start_sets_runtime_user_mapping(tmp_path: Path, 
     monkeypatch.setattr(docker_runtime_adapter_module.os, "getgid", lambda: 2345)
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
+        state_path=tmp_path / "maia.db",
         docker_bin=str(docker_script),
     )
 
@@ -418,7 +418,7 @@ def test_docker_runtime_adapter_reserved_agent_identity_overrides_runtime_env(tm
     docker_script.chmod(0o755)
     adapter = DockerRuntimeAdapter(
         state_storage=RuntimeStateStorage(),
-        state_path=tmp_path / "runtime-state.json",
+        state_path=tmp_path / "maia.db",
         docker_bin=str(docker_script),
     )
     agent = AgentRecord(

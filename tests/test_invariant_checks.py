@@ -49,3 +49,17 @@ def test_policy_scan_can_fail_on_findings(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "[dual-write]" in result.stdout
+
+
+
+def test_current_collaboration_surface_avoids_legacy_model_imports() -> None:
+    active_surface_files = [
+        REPO_ROOT / "src" / "maia" / "agent_context.py",
+        REPO_ROOT / "src" / "maia" / "hermes_runtime_worker.py",
+        REPO_ROOT / "src" / "maia" / "cli_parser.py",
+    ]
+
+    joined = "\n".join(path.read_text(encoding="utf-8") for path in active_surface_files)
+
+    assert "from maia.message_model import" not in joined
+    assert "from maia.handoff_model import" not in joined

@@ -12,60 +12,42 @@ __all__ = ["RuntimeStateStorage"]
 
 
 class RuntimeStateStorage:
-    """Persist runtime states to local SQLite state or transitional JSON files."""
+    """Persist runtime states to Maia's local SQLite state DB."""
 
     def load(self, path: Path | str) -> dict[str, RuntimeState]:
-        target = Path(path)
-        if self._is_sqlite_path(target):
-            try:
-                items = SQLiteState(target).load_runtime_states()
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"Invalid runtime state SQLite in {target}: {exc.msg}"
-                ) from exc
-            return self._deserialize_runtime_states(items, target, source_kind="SQLite")
-        if not target.exists():
-            return {}
+        target = self._require_sqlite_path(path)
         try:
-            raw_data = json.loads(target.read_text(encoding="utf-8"))
+            items = SQLiteState(target).load_runtime_states()
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid runtime state JSON in {target}: {exc.msg}") from exc
-        if not isinstance(raw_data, dict):
-            raise ValueError(f"Invalid runtime state JSON in {target}: expected object")
-        items = raw_data.get("runtimes")
-        if not isinstance(items, list):
-            raise ValueError(f"Invalid runtime state JSON in {target}: expected 'runtimes' list")
-        return self._deserialize_runtime_states(items, target, source_kind="JSON")
+            raise ValueError(
+                f"Invalid runtime state SQLite in {target}: {exc.msg}"
+            ) from exc
+        return self._deserialize_runtime_states(items, target, source_kind="SQLite")
 
     def save(self, path: Path | str, states: dict[str, RuntimeState]) -> None:
-        target = Path(path)
-        if self._is_sqlite_path(target):
-            records = [states[agent_id].to_dict() for agent_id in sorted(states)]
-            SQLiteState(target).save_runtime_states(records)
-            return
-        target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "runtimes": [states[agent_id].to_dict() for agent_id in sorted(states)]
-        }
-        target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        target = self._require_sqlite_path(path)
+        records = [states[agent_id].to_dict() for agent_id in sorted(states)]
+        SQLiteState(target).save_runtime_states(records)
 
     def remove(self, path: Path | str, agent_id: str) -> None:
-        states = self.load(path)
+        target = self._require_sqlite_path(path)
+        states = self.load(target)
         if agent_id not in states:
             return
         del states[agent_id]
-        self.save(path, states)
+        self.save(target, states)
 
     def prune(self, path: Path | str, valid_agent_ids: set[str]) -> None:
-        states = self.load(path)
+        target = self._require_sqlite_path(path)
+        states = self.load(target)
         pruned = {
             agent_id: state
             for agent_id, state in states.items()
             if agent_id in valid_agent_ids
         }
-        if pruned == states and (self._is_sqlite_path(Path(path)) or Path(path).exists()):
+        if pruned == states:
             return
-        self.save(path, pruned)
+        self.save(target, pruned)
 
     def _deserialize_runtime_states(
         self,
@@ -91,3 +73,9 @@ class RuntimeStateStorage:
 
     def _is_sqlite_path(self, path: Path) -> bool:
         return path.suffix == ".db"
+
+    def _require_sqlite_path(self, path: Path | str) -> Path:
+        target = Path(path)
+        if not self._is_sqlite_path(target):
+            raise ValueError(f"Runtime state storage requires a SQLite DB path: {target}")
+        return target

@@ -19,6 +19,7 @@ from maia import agent_setup_session
 from maia.keryx_models import (
     KeryxAgentSummary,
     KeryxHandoffRecord,
+    KeryxMessageKind,
     KeryxHandoffStatus,
     KeryxMessageRecord,
     KeryxPendingThreadWorkView,
@@ -26,7 +27,6 @@ from maia.keryx_models import (
     KeryxThreadHandoffView,
     KeryxThreadMessageView,
 )
-from maia.message_model import MessageKind
 
 __all__ = [
     "HttpKeryxClient",
@@ -52,7 +52,7 @@ class WorkerConfig:
     poll_seconds: float = 2.0
     max_messages_per_poll: int = 1
     hermes_bin: str = "hermes"
-    reply_kind: MessageKind = MessageKind.ANSWER
+    reply_kind: KeryxMessageKind = KeryxMessageKind.ANSWER
     gateway_setup_status: str = "incomplete"
     gateway_bridge_command: tuple[str, ...] = field(
         default_factory=lambda: ((sys.executable or "python"), "-m", "maia.hermes_gateway_bridge")
@@ -210,7 +210,9 @@ def load_config_from_env(env: dict[str, str] | None = None) -> WorkerConfig:
         poll_seconds=float(source.get("MAIA_POLL_SECONDS", "2")),
         max_messages_per_poll=int(source.get("MAIA_MAX_MESSAGES_PER_POLL", "1")),
         hermes_bin=source.get("MAIA_HERMES_BIN", "hermes").strip() or "hermes",
-        reply_kind=MessageKind(source.get("MAIA_HERMES_REPLY_KIND", MessageKind.ANSWER.value)),
+        reply_kind=KeryxMessageKind(
+            source.get("MAIA_HERMES_REPLY_KIND", KeryxMessageKind.ANSWER.value)
+        ),
         gateway_setup_status=_derive_gateway_setup_status(source),
     )
 

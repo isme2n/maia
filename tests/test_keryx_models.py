@@ -13,8 +13,10 @@ sys.path.insert(0, str(SRC_ROOT))
 from maia.keryx_models import (
     KeryxAgentSummary,
     KeryxDeliveryMode,
+    KeryxHandoffKind,
     KeryxHandoffRecord,
     KeryxHandoffStatus,
+    KeryxMessageKind,
     KeryxMessageRecord,
     KeryxSessionRecord,
     KeryxSessionStatus,
@@ -36,6 +38,23 @@ def test_keryx_handoff_status_values() -> None:
 def test_keryx_delivery_mode_values() -> None:
     assert KeryxDeliveryMode.AGENT_ONLY.value == "agent_only"
     assert KeryxDeliveryMode.USER_DIRECT.value == "user_direct"
+
+
+def test_keryx_message_kind_values() -> None:
+    assert KeryxMessageKind.REQUEST.value == "request"
+    assert KeryxMessageKind.QUESTION.value == "question"
+    assert KeryxMessageKind.ANSWER.value == "answer"
+    assert KeryxMessageKind.REPORT.value == "report"
+    assert KeryxMessageKind.HANDOFF.value == "handoff"
+    assert KeryxMessageKind.NOTE.value == "note"
+
+
+def test_keryx_handoff_kind_values() -> None:
+    assert KeryxHandoffKind.FILE.value == "file"
+    assert KeryxHandoffKind.DIR.value == "dir"
+    assert KeryxHandoffKind.REPO_REF.value == "repo-ref"
+    assert KeryxHandoffKind.REPORT.value == "report"
+    assert KeryxHandoffKind.LINK.value == "link"
 
 
 def test_keryx_agent_summary_round_trip() -> None:

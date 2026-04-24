@@ -26,12 +26,12 @@ from maia.app_state import (
 from maia.keryx_models import (
     KeryxHandoffRecord,
     KeryxHandoffStatus,
+    KeryxMessageKind,
     KeryxMessageRecord,
     KeryxSessionRecord,
     KeryxSessionStatus,
 )
 from maia.keryx_service import KeryxService
-from maia.message_model import MessageKind
 from maia.runtime_state_storage import RuntimeStateStorage
 from maia.sqlite_state import SQLiteState
 from maia.storage import JsonRegistryStorage
@@ -499,7 +499,7 @@ def _setup_v1_golden_flow(
         thread_id=thread_id,
         from_agent=planner_id,
         to_agent=reviewer_id,
-        kind=MessageKind.REQUEST.value,
+        kind=KeryxMessageKind.REQUEST.value,
         body="please review the latest patch",
         created_at=thread_created_at,
     )
@@ -509,7 +509,7 @@ def _setup_v1_golden_flow(
         thread_id=thread_id,
         from_agent=reviewer_id,
         to_agent=planner_id,
-        kind=MessageKind.ANSWER.value,
+        kind=KeryxMessageKind.ANSWER.value,
         body="review complete",
         created_at=thread_updated_at,
         reply_to_message_id=first_message_id,

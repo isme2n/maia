@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from maia.agent_model import AgentStatus
-from maia.handoff_model import HandoffKind
+from maia.keryx_models import KeryxHandoffKind
 from maia.public_contract import MAIA_INSTALL_CURL_COMMAND
 
 TOP_LEVEL_TRANSFER_COMMANDS = ("export", "import", "inspect")
@@ -649,7 +649,7 @@ def build_parser() -> argparse.ArgumentParser:
             command_parser.add_argument(
                 "--type",
                 required=True,
-                choices=tuple(kind.value for kind in HandoffKind),
+                choices=tuple(kind.value for kind in KeryxHandoffKind),
                 help="Handoff pointer type",
             )
             command_parser.add_argument(
