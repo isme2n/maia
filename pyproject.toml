@@ -27,7 +27,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/isme2n/maia"
-Documentation = "https://github.com/isme2n/maia/blob/main/README.md"
+Documentation = "https://github.com/isme2n/maia/blob/v0.1.0/README.md"
 Repository = "https://github.com/isme2n/maia"
 Issues = "https://github.com/isme2n/maia/issues"
 Security = "https://github.com/isme2n/maia/security"

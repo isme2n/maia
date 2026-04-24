@@ -63,3 +63,11 @@ def test_current_collaboration_surface_avoids_legacy_model_imports() -> None:
 
     assert "from maia.message_model import" not in joined
     assert "from maia.handoff_model import" not in joined
+
+
+
+def test_architecture_doc_does_not_reference_removed_legacy_models() -> None:
+    architecture = (REPO_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+
+    assert "src/maia/message_model.py" not in architecture
+    assert "src/maia/handoff_model.py" not in architecture

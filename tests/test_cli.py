@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -26,10 +24,7 @@ from maia.cli_parser import (
     DIRECT_AGENT_DELEGATION_CONTRACT,
     DOCTOR_EXAMPLES,
     EXPORT_EXAMPLES,
-    GOLDEN_FLOW_SMOKE_CONTRACT,
     HANDOFF_EXAMPLES,
-    HOST_VALIDATION_CHECKLIST,
-    HOST_VALIDATION_REPORT_TEMPLATE,
     INIT_EXAMPLES,
     INSTALL_EXAMPLES,
     INIT_HELP_CONTRACT,
@@ -42,7 +37,6 @@ from maia.cli_parser import (
     PART2_VISIBILITY_FLOW,
     PUBLIC_ONBOARDING_CONTRACT,
     QUICKSTART_EXAMPLES,
-    RUNTIME_PREREQ_EXAMPLES,
     RUNTIME_RECOVERY_CHECKLIST,
     RUNTIME_SUPPORT_BOUNDARY,
     SETUP_EXAMPLES,

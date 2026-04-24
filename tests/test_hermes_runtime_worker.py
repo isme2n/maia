@@ -440,3 +440,49 @@ def test_http_keryx_client_surfaces_http_errors() -> None:
 
     with pytest.raises(ValueError, match="Keryx request failed"):
         client.list_agents()
+
+
+
+def test_http_keryx_client_list_pending_work_returns_thread_views() -> None:
+    client = HttpKeryxClient("http://keryx.test")
+    client._request_json = lambda method, path: [
+        {
+            "session": {
+                "session_id": "thread-001",
+                "topic": "Runtime rollout",
+                "participants": ["planner", "reviewer"],
+                "created_by": "planner",
+                "status": "active",
+                "created_at": "2026-04-16T00:00:00Z",
+                "updated_at": "2026-04-16T00:01:00Z",
+            },
+            "message": {
+                "message_id": "msg-001",
+                "session_id": "thread-001",
+                "from_agent": "planner",
+                "to_agent": "reviewer",
+                "kind": KeryxMessageKind.REQUEST.value,
+                "body": "Please review the latest patch.",
+                "created_at": "2026-04-16T00:00:00Z",
+            },
+            "handoff": {
+                "handoff_id": "handoff-001",
+                "session_id": "thread-001",
+                "from_agent": "planner",
+                "to_agent": "reviewer",
+                "kind": "report",
+                "status": KeryxHandoffStatus.OPEN.value,
+                "summary": "Review notes ready",
+                "location": "reports/review.md",
+                "created_at": "2026-04-16T00:00:01Z",
+                "updated_at": "2026-04-16T00:00:01Z",
+            },
+        }
+    ]
+
+    pending = client.list_pending_work(agent_id="reviewer")
+
+    assert len(pending) == 1
+    assert pending[0].thread.thread_id == "thread-001"
+    assert pending[0].message.thread_id == "thread-001"
+    assert pending[0].handoff.thread_id == "thread-001"

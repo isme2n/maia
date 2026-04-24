@@ -89,8 +89,7 @@ These commands remain public, but they are the advanced/manual flow rather than 
 - Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.
 - Shared infra currently depends on the Keryx HTTP API and a writable SQLite state DB path.
 - `maia setup` bootstraps the shared Maia network, Keryx HTTP API container, and SQLite state DB.
-- `maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.
-- `maia agent start` requires usable gateway readiness; rerun `maia agent setup-gateway <name>` if gateway or default chat-surface setup was skipped.
+- `maia agent setup` opens an interactive `hermes setup` session only in the CLI; if gateway or default destination setup was skipped, rerun `maia agent setup-gateway <name>`.
 - Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.
 
 ## Part 2 Keryx collaboration

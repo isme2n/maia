@@ -88,7 +88,6 @@ AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
 INSTALL_EXAMPLES = (MAIA_INSTALL_CURL_COMMAND,)
 QUICKSTART_EXAMPLES = ("maia init",)
 INIT_EXAMPLES = ("maia init",)
-RUNTIME_PREREQ_EXAMPLES = ("maia doctor",)
 INIT_HELP_CONTRACT = (
     "`maia init` is Maia's canonical onboarding command.",
     "`maia init` is only successful when Maia is truly conversation-ready, not merely partially configured.",
@@ -123,22 +122,14 @@ KNOWN_LIMITATIONS = (
     "Runtime control (agent start|stop|status|logs) requires Docker CLI and a reachable Docker daemon.",
     "Shared infra currently depends on the Keryx HTTP API and a writable SQLite state DB path.",
     "`maia setup` bootstraps the shared Maia network, Keryx HTTP API container, and SQLite state DB.",
-    "`maia agent setup` opens an interactive `hermes setup` session only in the CLI; gateway/chat surfaces do not support it.",
+    "`maia agent setup` opens an interactive `hermes setup` session only in the CLI; if gateway or default destination setup was skipped, rerun `maia agent setup-gateway <name>`.",
     "Keryx collaboration visibility stays on `thread`, `handoff`, and `workspace`; it is not the Part 1 bootstrap flow.",
 )
-GOLDEN_FLOW_SMOKE_CONTRACT = PART1_OPERATOR_FLOW
-HOST_VALIDATION_CHECKLIST = PART1_OPERATOR_FLOW
 RUNTIME_RECOVERY_CHECKLIST = (
     "If doctor fails, fix Docker, Keryx HTTP API, or SQLite state DB access first.",
     "If setup fails, finish shared infra bootstrap before retrying agent commands.",
     "If agent setup fails, rerun `maia agent setup <name>`.",
     "If start fails, rerun doctor and confirm shared infra is ready.",
-)
-HOST_VALIDATION_REPORT_TEMPLATE = (
-    "doctor=ok|fail",
-    "setup=ok|fail",
-    "agent_setup=ok|fail",
-    "live_runtime_smoke=ok|fail",
 )
 PORTABLE_STATE_FLOW = (
     "Primary Part 3 flow: `maia export` saves the full portable snapshot to `~/.maia/exports/maia-state.maia` by default.",
@@ -347,7 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
         }[command_name]
         description_text = {
             "doctor": "Check shared infra readiness for Docker, Keryx HTTP API, and SQLite state DB access only.",
-            "setup": "Bootstrap shared Maia infra only: Docker-backed Keryx HTTP API and SQLite state DB state.",
+            "setup": "Bootstrap shared Maia infra only: the Maia network, Docker-backed Keryx HTTP API, and SQLite state DB state.",
         }[command_name]
         command_parser = top_level.add_parser(
             command_name,
@@ -640,7 +631,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{" + ",".join(HANDOFF_COMMANDS) + "}",
     )
     for command_name in HANDOFF_COMMANDS:
-        command_parser = handoff_commands.add_parser(command_name, help=f"{command_name} handoff")
+        command_help = {
+            "add": "Record a handoff pointer on an existing thread",
+            "list": "List handoffs for a thread or the whole Keryx view",
+            "show": "Show one handoff pointer with current status",
+        }[command_name]
+        command_parser = handoff_commands.add_parser(command_name, help=command_help)
         command_parser.set_defaults(parser=command_parser)
         if command_name == "add":
             command_parser.add_argument("--thread-id", required=True, help="Existing thread id")

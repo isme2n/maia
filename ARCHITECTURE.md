@@ -21,7 +21,7 @@ Control plane and runtime:
 
 Collaboration plane:
 - `src/maia/keryx_models.py`, `src/maia/keryx_storage.py`, `src/maia/keryx_service.py`, `src/maia/keryx_server.py`, `src/maia/keryx_skill.py`: Keryx thread, handoff, pending-work, and visibility surfaces.
-- `src/maia/message_model.py`, `src/maia/handoff_model.py`: shared collaboration record types used by the active Keryx-backed flow.
+- `src/maia/hermes_runtime_worker.py`, `src/maia/agent_context.py`: worker-facing Keryx thread views and runtime context assembly used by the active collaboration flow.
 
 ## Reading order
 

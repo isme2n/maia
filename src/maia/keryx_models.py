@@ -942,3 +942,9 @@ class KeryxPendingThreadWorkView:
             raise ValueError(
                 "Invalid Keryx pending thread work: handoff thread_id must match thread"
             )
+
+    @classmethod
+    def from_pending_work_record(cls, record: KeryxPendingWorkRecord) -> Self:
+        """Expose a pending-work record through Maia's public thread naming."""
+
+        return record.as_thread_view()

@@ -13,7 +13,6 @@ __all__ = [
     "get_default_export_path",
     "get_exports_dir",
     "get_maia_home",
-    "get_runtime_dir",
     "get_state_db_path",
     "get_team_metadata_path",
 ]
@@ -23,7 +22,6 @@ _AGENTS_DIRNAME = "agents"
 _MAIA_HOME_DIRNAME = ".maia"
 _DEFAULT_BUNDLE_FILENAME = "maia-state.maia"
 _EXPORTS_DIRNAME = "exports"
-_RUNTIME_DIRNAME = "runtime"
 _STATE_DB_FILENAME = "maia.db"
 _TEAM_METADATA_FILENAME = "team.json"
 
@@ -66,12 +64,6 @@ def get_default_export_path(env: Mapping[str, str] | None = None) -> Path:
     """Return the default path for exporting a portable Maia bundle."""
 
     return get_exports_dir(env) / _DEFAULT_BUNDLE_FILENAME
-
-
-def get_runtime_dir(env: Mapping[str, str] | None = None) -> Path:
-    """Return the directory for runtime-only state."""
-
-    return get_maia_home(env) / _RUNTIME_DIRNAME
 
 
 def get_state_db_path(env: Mapping[str, str] | None = None) -> Path:
