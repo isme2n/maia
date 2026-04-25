@@ -72,6 +72,8 @@ For a concrete agent-scoped setup example, use `maia agent setup planner` after 
 ## What each command means
 
 These commands remain public, but they are the advanced/manual flow rather than the canonical one-command onboarding story.
+Lifecycle cleanup also remains part of the public CLI surface under `maia agent archive ...` and `maia agent purge ...`.
+For archive/purge, literal `all` is a reserved bulk keyword. If you already have an older agent literally named `all`, target it by `agent_id` for the single-agent form.
 
 - `maia doctor`: check shared infra readiness only for the advanced/manual flow: Docker, Keryx HTTP API, and DB. If it passes, continue to `maia setup`; if it fails, fix shared infra and rerun `maia doctor`. Use `maia doctor --verbose` for concrete component details such as the Keryx endpoint, container/runtime path, Docker probe detail, and SQLite DB path.
 - `maia setup`: bootstrap shared infra only after `doctor` says the shared infra path is ready to continue.
@@ -79,6 +81,10 @@ These commands remain public, but they are the advanced/manual flow rather than 
 - `maia agent setup <name>`: open an interactive CLI-only passthrough to `hermes setup` for that agent.
 - `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if gateway or default chat-surface setup was skipped during the normal `maia agent setup <name>` run.
 - `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with usable gateway readiness required before `start`.
+- `maia agent archive <name>` archives one agent identity, and `maia agent archive all` uses reserved keyword `all` to archive every stored agent identity only when no agent runtime is active.
+- `maia agent restore <name>` restores one archived agent identity to the stopped state.
+- `maia agent purge <name>` permanently removes one archived agent identity and local Maia/Hermes state, and it refuses until that target is already archived. `--yes` is not used for the single-agent form.
+- `maia agent purge all --yes` permanently removes every archived agent identity and local Maia/Hermes state after explicit confirmation, and it refuses unless every remaining agent is already archived.
 - `maia agent list|status` surface the overall launch-readiness state as `not-configured`, `ready`, `stopped`, or `running`.
 - `maia agent status` also shows the recorded setup state (`not-started|complete|incomplete`) and current runtime state.
 - agent setup is recorded separately from the runtime launch state.

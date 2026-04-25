@@ -19,6 +19,9 @@ from maia.app_state import (
 from maia.cli import main
 from maia import cli as cli_module
 from maia.cli_parser import (
+    AGENT_LIFECYCLE_EXAMPLES,
+    AGENT_LIFECYCLE_KEYWORD_NOTES,
+    AGENT_PURGE_NOTES,
     AGENT_SETUP_EXAMPLES,
     AGENT_TUNE_EXAMPLES,
     DIRECT_AGENT_DELEGATION_CONTRACT,
@@ -264,6 +267,31 @@ def test_readme_locks_init_public_onboarding_story() -> None:
         )
     )
     _assert_contains_lines(text, PART2_VISIBILITY_FLOW)
+
+
+def test_readme_documents_public_lifecycle_cleanup_surface() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    command_meanings = _section_after_heading(
+        text,
+        "## What each command means",
+        ("## Known limitations",),
+    )
+
+    assert "Lifecycle cleanup also remains part of the public CLI surface" in command_meanings
+    assert (
+        "For archive/purge, literal `all` is a reserved bulk keyword. If you already have an older agent literally named `all`, target it by `agent_id` for the single-agent form."
+    ) in command_meanings
+    assert (
+        "`maia agent archive <name>` archives one agent identity, and `maia agent archive all` uses reserved keyword `all` to archive every stored agent identity only when no agent runtime is active."
+    ) in command_meanings
+    assert (
+        "`maia agent purge <name>` permanently removes one archived agent identity and local Maia/Hermes state, and it refuses until that target is already archived. `--yes` is not used for the single-agent form."
+    ) in command_meanings
+    assert (
+        "`maia agent purge all --yes` permanently removes every archived agent identity and local Maia/Hermes state after explicit confirmation, and it refuses unless every remaining agent is already archived."
+    ) in command_meanings
+    assert "archive-all" not in command_meanings
+    assert "purge-all" not in command_meanings
 
 
 def test_readme_locks_direct_agent_anchor_story() -> None:
@@ -599,26 +627,51 @@ def test_agent_start_help_mentions_gateway_readiness(capsys: pytest.CaptureFixtu
     assert "usable gateway readiness" in captured.out
 
 
-def test_agent_help_includes_archive_all_and_purge_all(capsys: pytest.CaptureFixture[str]) -> None:
+def test_agent_help_documents_archive_and_purge_bulk_forms(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         main(["agent", "--help"])
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "archive-all" in captured.out
-    assert "purge-all" in captured.out
+    assert "archive-all" not in captured.out
+    assert "purge-all" not in captured.out
+    assert "Lifecycle cleanup:" in captured.out
+    _assert_contains_lines(captured.out, AGENT_LIFECYCLE_EXAMPLES)
+    _assert_contains_lines(captured.out, AGENT_LIFECYCLE_KEYWORD_NOTES)
+
+
+def test_agent_purge_help_clarifies_bulk_only_yes_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["agent", "purge", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "archive-all" not in captured.out
+    assert "purge-all" not in captured.out
+    assert "Confirm full deletion only for `maia agent purge all`" in captured.out
+    _assert_contains_lines(captured.out, AGENT_PURGE_NOTES)
 
 
 def test_build_parser_agent_bulk_lifecycle_shapes() -> None:
-    archive_args = build_parser().parse_args(["agent", "archive-all"])
-    purge_args = build_parser().parse_args(["agent", "purge-all", "--yes"])
+    archive_args = build_parser().parse_args(["agent", "archive", "demo"])
+    archive_all_args = build_parser().parse_args(["agent", "archive", "all"])
+    purge_args = build_parser().parse_args(["agent", "purge", "demo"])
+    purge_all_args = build_parser().parse_args(["agent", "purge", "all", "--yes"])
 
     assert archive_args.resource == "agent"
-    assert archive_args.agent_command == "archive-all"
-    assert not hasattr(archive_args, "agent_id")
+    assert archive_args.agent_command == "archive"
+    assert archive_args.agent_id == "demo"
+    assert archive_all_args.resource == "agent"
+    assert archive_all_args.agent_command == "archive"
+    assert archive_all_args.agent_id == "all"
     assert purge_args.resource == "agent"
-    assert purge_args.agent_command == "purge-all"
-    assert purge_args.yes is True
+    assert purge_args.agent_command == "purge"
+    assert purge_args.agent_id == "demo"
+    assert purge_args.yes is False
+    assert purge_all_args.resource == "agent"
+    assert purge_all_args.agent_command == "purge"
+    assert purge_all_args.agent_id == "all"
+    assert purge_all_args.yes is True
 
 
 def test_build_parser_handoff_add_shape() -> None:
@@ -770,6 +823,24 @@ def test_agent_new_prompts_for_identity_fields_and_points_to_agent_setup(
     assert skill_path.exists()
     assert "name: keryx" in skill_path.read_text(encoding="utf-8")
     assert "/keryx 경제에게 지난번 조사했던 거 있으면 그거 좀 달라 그래" in skill_path.read_text(encoding="utf-8")
+
+
+def test_agent_new_rejects_reserved_bulk_keyword_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answers = iter(["all"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert main(["agent", "new"]) == 1
+    captured = capsys.readouterr()
+    assert "Agent name:" in captured.out
+    assert (
+        "error: Agent name 'all' is reserved for maia agent archive all and maia agent purge all --yes. Use a different name"
+        in captured.err
+    )
 
 
 def test_builtin_keryx_skill_locks_grounded_http_workflow() -> None:

@@ -46,14 +46,12 @@ AGENT_COMMANDS = (
     "start",
     "stop",
     "archive",
-    "archive-all",
     "restore",
     "status",
     "logs",
     "list",
     "tune",
     "purge",
-    "purge-all",
 )
 TEAM_COMMANDS = ("show", "update")
 LIFECYCLE_STATUS_BY_COMMAND = {
@@ -85,6 +83,26 @@ DOCTOR_EXAMPLES = (
 SETUP_EXAMPLES = ("maia setup",)
 AGENT_SETUP_EXAMPLES = ("maia agent setup planner",)
 AGENT_SETUP_GATEWAY_EXAMPLES = ("maia agent setup-gateway planner",)
+AGENT_ARCHIVE_EXAMPLES = (
+    "maia agent archive <name>",
+    "maia agent archive all",
+)
+AGENT_PURGE_EXAMPLES = (
+    "maia agent purge <name>",
+    "maia agent purge all --yes",
+)
+AGENT_LIFECYCLE_EXAMPLES = (
+    *AGENT_ARCHIVE_EXAMPLES,
+    *AGENT_PURGE_EXAMPLES,
+)
+AGENT_LIFECYCLE_KEYWORD_NOTES = (
+    "Literal `all` is reserved for bulk archive/purge operations.",
+    "Use an explicit agent_id to target a legacy agent literally named `all`.",
+)
+AGENT_PURGE_NOTES = (
+    *AGENT_LIFECYCLE_KEYWORD_NOTES,
+    "`--yes` only applies to `maia agent purge all`; single-agent purge does not use it.",
+)
 INSTALL_EXAMPLES = (MAIA_INSTALL_CURL_COMMAND,)
 QUICKSTART_EXAMPLES = ("maia init",)
 INIT_EXAMPLES = ("maia init",)
@@ -406,8 +424,17 @@ def build_parser() -> argparse.ArgumentParser:
             show_parser.add_argument("thread_id", help="Thread id")
             show_parser.add_argument("--limit", type=int, default=50, help="Max messages to show")
 
-    agent_parser = top_level.add_parser("agent", help="Manage agents")
+    agent_parser = top_level.add_parser(
+        "agent",
+        help="Manage agents",
+        description="Manage agent identities, runtime state, and lifecycle cleanup.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     agent_parser.set_defaults(parser=agent_parser)
+    agent_parser.epilog = _format_epilog_sections(
+        ("Lifecycle cleanup:", AGENT_LIFECYCLE_EXAMPLES),
+        ("Bulk lifecycle keyword:", AGENT_LIFECYCLE_KEYWORD_NOTES),
+    )
 
     agent_commands = agent_parser.add_subparsers(
         dest="agent_command",
@@ -418,17 +445,15 @@ def build_parser() -> argparse.ArgumentParser:
             "new": "Create an agent identity",
             "setup": "Open hermes setup for an agent in the CLI",
             "setup-gateway": "Recover skipped gateway/default-destination setup for an agent in the CLI",
-            "archive-all": "Archive every agent identity",
             "start": "Start an agent runtime",
             "stop": "Stop a running agent runtime",
-            "archive": "Archive an agent identity",
+            "archive": "Archive one agent identity or every agent identity",
             "restore": "Restore an archived agent identity",
             "status": "Show agent runtime status",
             "logs": "Show agent runtime logs",
             "list": "List agent identities",
             "tune": "Update stored agent metadata",
-            "purge": "Purge an agent identity and local state",
-            "purge-all": "Purge every archived agent identity and local state",
+            "purge": "Purge one archived agent identity or every archived agent identity",
         }[command_name]
         command_description = {
             "new": "Interactively create an agent identity with name, how the agent calls the user, speaking style, and persona.",
@@ -439,8 +464,8 @@ def build_parser() -> argparse.ArgumentParser:
             "status": "Show the operator-facing agent status plus setup and runtime state.",
             "logs": "Show recent runtime logs for an agent after setup is complete and the runtime has started.",
             "list": "List stored agent identities with their operator-facing launch-readiness state.",
-            "archive-all": "Archive every stored agent identity only when no agent runtime is active.",
-            "purge-all": "Purge every archived agent identity and local Maia/Hermes state after explicit confirmation.",
+            "archive": "Archive one stored agent identity, or use reserved keyword `all` in `maia agent archive all` to archive every stored agent identity only when no agent runtime is active. Use agent_id to target a legacy agent literally named `all`.",
+            "purge": "Purge one archived agent identity and local Maia/Hermes state, or use reserved keyword `all` in `maia agent purge all --yes` to purge every archived agent identity after explicit confirmation. Use agent_id to target a legacy agent literally named `all`, and note that `--yes` only applies to the bulk form.",
         }.get(command_name)
         command_parser = agent_commands.add_parser(
             command_name,
@@ -452,17 +477,35 @@ def build_parser() -> argparse.ArgumentParser:
         if command_name in AGENT_ID_COMMANDS:
             if command_name in {"setup", "setup-gateway", "start", "stop", "status", "logs"}:
                 command_parser.add_argument("agent_id", metavar="name", help="Agent name")
+            elif command_name in {"archive", "purge"}:
+                command_parser.add_argument(
+                    "agent_id",
+                    metavar="agent_id|name|all",
+                    help=(
+                        "Agent id or name, or reserved keyword `all` for every agent. "
+                        "Use agent_id to target a legacy agent literally named `all`."
+                    ),
+                )
             else:
                 command_parser.add_argument("agent_id", help="Agent id")
         if command_name == "setup":
             command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_EXAMPLES)
         if command_name == "setup-gateway":
             command_parser.epilog = _format_epilog("Examples:", AGENT_SETUP_GATEWAY_EXAMPLES)
-        if command_name == "purge-all":
+        if command_name == "archive":
+            command_parser.epilog = _format_epilog_sections(
+                ("Examples:", AGENT_ARCHIVE_EXAMPLES),
+                ("Bulk lifecycle keyword:", AGENT_LIFECYCLE_KEYWORD_NOTES),
+            )
+        if command_name == "purge":
+            command_parser.epilog = _format_epilog_sections(
+                ("Examples:", AGENT_PURGE_EXAMPLES),
+                ("Bulk purge contract:", AGENT_PURGE_NOTES),
+            )
             command_parser.add_argument(
                 "--yes",
                 action="store_true",
-                help="Confirm full deletion of every archived agent and its local Maia/Hermes state",
+                help="Confirm full deletion only for `maia agent purge all`",
             )
         if command_name == "logs":
             command_parser.add_argument(

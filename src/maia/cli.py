@@ -71,6 +71,7 @@ _ACTIVE_RUNTIME_STATUSES = frozenset(
         RuntimeStatus.STOPPING,
     }
 )
+_BULK_AGENT_LIFECYCLE_KEYWORD = "all"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -477,6 +478,11 @@ def _create_agent_interactively(
     registry,
 ) -> AgentRecord:
     name = _prompt_required_text("Agent name", field_name="agent name")
+    if name == _BULK_AGENT_LIFECYCLE_KEYWORD:
+        raise ValueError(
+            "Agent name 'all' is reserved for maia agent archive all and maia agent purge all --yes. "
+            "Use a different name"
+        )
     if any(record.name == name for record in registry.list()):
         raise ValueError(f"Agent with name {name!r} already exists")
     call_sign = _prompt_required_text(
@@ -1889,7 +1895,10 @@ def _sanitize_team_metadata_for_registry(metadata: TeamMetadata, registry) -> Te
 def _get_runtime_command_name(args: argparse.Namespace) -> str | None:
     resource = getattr(args, "resource", None)
     if resource == "agent":
-        return getattr(args, "agent_command", None)
+        command_name = getattr(args, "agent_command", None)
+        if command_name in {"archive", "purge"} and getattr(args, "agent_id", None) == _BULK_AGENT_LIFECYCLE_KEYWORD:
+            return f"{command_name}-all"
+        return command_name
     if resource == "handoff":
         return getattr(args, "handoff_command", None)
     if resource == "team":
@@ -2194,6 +2203,8 @@ def _handle_agent_purge(
     registry_path: str,
     registry,
 ) -> int:
+    if args.yes:
+        raise ValueError("--yes is only supported with maia agent purge all")
     record = registry.get(args.agent_id)
     if record.status is not AgentStatus.ARCHIVED:
         raise ValueError(
@@ -2250,7 +2261,7 @@ def _handle_agent_purge_all(
     registry,
 ) -> int:
     if not args.yes:
-        raise ValueError("maia agent purge-all requires --yes")
+        raise ValueError("maia agent purge all requires --yes")
     records = registry.list()
     non_archived = [record.agent_id for record in records if record.status is not AgentStatus.ARCHIVED]
     if non_archived:

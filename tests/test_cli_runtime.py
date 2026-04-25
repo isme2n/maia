@@ -2677,7 +2677,7 @@ def test_agent_archive_all_is_all_or_nothing_for_active_runtimes(
     started = run_module(tmp_path, "agent", "start", running_id)
     assert started.returncode == 0
 
-    archived = run_module(tmp_path, "agent", "archive-all")
+    archived = run_module(tmp_path, "agent", "archive", "all")
     assert archived.returncode == 1
     assert archived.stderr.strip() == (
         f"error: Can't archive all agents while runtimes are active: {running_id}. Stop them first"
@@ -2689,6 +2689,20 @@ def test_agent_archive_all_is_all_or_nothing_for_active_runtimes(
     assert f"agent_id={stopped_id}" in listed.stdout and "status=not-configured" in listed.stdout
 
 
+def test_agent_archive_all_archives_every_stored_agent(tmp_path: Path) -> None:
+    first_id = create_agent(tmp_path, "first")
+    second_id = create_agent(tmp_path, "second")
+
+    archived = run_module(tmp_path, "agent", "archive", "all")
+    assert archived.returncode == 0
+    assert parse_fields(archived.stdout.strip()) == {"agents": "2", "status": "archived"}
+
+    listed = run_module(tmp_path, "agent", "list")
+    assert listed.returncode == 0
+    assert f"agent_id={first_id}" in listed.stdout and "status=archived" in listed.stdout
+    assert f"agent_id={second_id}" in listed.stdout and "status=archived" in listed.stdout
+
+
 def test_agent_purge_all_requires_yes_and_archived_only(
     tmp_path: Path,
 ) -> None:
@@ -2697,11 +2711,11 @@ def test_agent_purge_all_requires_yes_and_archived_only(
     archived = run_module(tmp_path, "agent", "archive", archived_id)
     assert archived.returncode == 0
 
-    missing_yes = run_module(tmp_path, "agent", "purge-all")
+    missing_yes = run_module(tmp_path, "agent", "purge", "all")
     assert missing_yes.returncode == 1
-    assert missing_yes.stderr.strip() == "error: maia agent purge-all requires --yes"
+    assert missing_yes.stderr.strip() == "error: maia agent purge all requires --yes"
 
-    refused = run_module(tmp_path, "agent", "purge-all", "--yes")
+    refused = run_module(tmp_path, "agent", "purge", "all", "--yes")
     assert refused.returncode == 1
     assert refused.stderr.strip() == (
         f"error: Can't purge all agents unless every remaining agent is archived: {active_id}"
@@ -2711,6 +2725,19 @@ def test_agent_purge_all_requires_yes_and_archived_only(
     assert listed.returncode == 0
     assert f"agent_id={archived_id}" in listed.stdout
     assert f"agent_id={active_id}" in listed.stdout
+
+
+def test_agent_purge_single_rejects_yes_flag(tmp_path: Path) -> None:
+    agent_id = create_agent(tmp_path, "solo")
+    assert run_module(tmp_path, "agent", "archive", agent_id).returncode == 0
+
+    refused = run_module(tmp_path, "agent", "purge", agent_id, "--yes")
+    assert refused.returncode == 1
+    assert refused.stderr.strip() == "error: --yes is only supported with maia agent purge all"
+
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    assert purged.returncode == 0
+    assert parse_fields(purged.stdout.strip()) == {"agent_id": agent_id}
 
 
 def test_agent_purge_all_removes_all_archived_agents_and_homes(tmp_path: Path) -> None:
@@ -2737,7 +2764,7 @@ def test_agent_purge_all_removes_all_archived_agents_and_homes(tmp_path: Path) -
     assert run_module(tmp_path, "agent", "archive", first_id).returncode == 0
     assert run_module(tmp_path, "agent", "archive", second_id).returncode == 0
 
-    purged = run_module(tmp_path, "agent", "purge-all", "--yes")
+    purged = run_module(tmp_path, "agent", "purge", "all", "--yes")
     assert purged.returncode == 0
     assert parse_fields(purged.stdout.strip()) == {"agents": "2"}
     assert load_registry(tmp_path) == {"agents": []}
@@ -2750,6 +2777,33 @@ def test_agent_purge_all_removes_all_archived_agents_and_homes(tmp_path: Path) -
         team_tags=[],
         default_agent_id="",
     )
+
+
+def test_agent_named_all_remains_operable_by_id_for_single_agent_lifecycle(tmp_path: Path) -> None:
+    agent_id = "legacy01"
+    write_registry(
+        get_state_db_path({"HOME": str(tmp_path)}),
+        {
+            "agents": [
+                AgentRecord(
+                    agent_id=agent_id,
+                    name="all",
+                    call_sign="legacy",
+                    status="stopped",
+                    persona="legacy agent",
+                ).to_dict()
+            ]
+        },
+    )
+
+    archived = run_module(tmp_path, "agent", "archive", agent_id)
+    assert archived.returncode == 0
+    assert parse_fields(archived.stdout.strip()) == {"agent_id": agent_id, "status": "archived"}
+
+    purged = run_module(tmp_path, "agent", "purge", agent_id)
+    assert purged.returncode == 0
+    assert parse_fields(purged.stdout.strip()) == {"agent_id": agent_id}
+    assert load_registry(tmp_path) == {"agents": []}
 
 
 
