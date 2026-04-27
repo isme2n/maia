@@ -674,6 +674,57 @@ def test_build_parser_agent_bulk_lifecycle_shapes() -> None:
     assert purge_all_args.yes is True
 
 
+def test_runtime_command_name_keeps_bulk_lifecycle_on_canonical_verbs() -> None:
+    archive_all_args = build_parser().parse_args(["agent", "archive", "all"])
+    purge_all_args = build_parser().parse_args(["agent", "purge", "all", "--yes"])
+
+    assert cli_module._get_runtime_command_name(archive_all_args) == "archive"
+    assert cli_module._get_runtime_command_name(purge_all_args) == "purge"
+
+
+def test_agent_archive_all_handles_reserved_bulk_keyword(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    planner_id = _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    reviewer_id = _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    capsys.readouterr()
+
+    assert main(["agent", "archive", "all"]) == 0
+    captured = capsys.readouterr()
+    assert "updated agents=2 status=archived" in captured.out
+    assert captured.err == ""
+
+    registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    statuses = {record.agent_id: record.status.value for record in registry.list()}
+    assert statuses == {planner_id: "archived", reviewer_id: "archived"}
+
+
+def test_agent_purge_all_handles_reserved_bulk_keyword(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _create_agent(monkeypatch, capsys, tmp_path, "planner")
+    _create_agent(monkeypatch, capsys, tmp_path, "reviewer")
+    capsys.readouterr()
+
+    assert main(["agent", "archive", "all"]) == 0
+    capsys.readouterr()
+
+    assert main(["agent", "purge", "all", "--yes"]) == 0
+    captured = capsys.readouterr()
+    assert "purged agents=2" in captured.out
+    assert captured.err == ""
+
+    registry = JsonRegistryStorage().load(get_state_db_path({"HOME": str(tmp_path)}))
+    assert registry.list() == []
+
+
+
 def test_build_parser_handoff_add_shape() -> None:
     args = build_parser().parse_args(
         [

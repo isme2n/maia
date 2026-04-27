@@ -81,6 +81,7 @@ For archive/purge, literal `all` is a reserved bulk keyword. If you already have
 - `maia agent setup <name>`: open an interactive CLI-only passthrough to `hermes setup` for that agent.
 - `maia agent setup-gateway <name>`: recover only the agent-scoped `hermes setup gateway` flow if gateway or default chat-surface setup was skipped during the normal `maia agent setup <name>` run.
 - `maia agent start|stop|status|logs <name>`: operate that agent after shared infra and agent setup are ready, with usable gateway readiness required before `start`.
+- `maia agent tune <name>`: interactively update stored identity/runtime metadata such as how the agent addresses the user, persona, and other saved defaults; after an identity sync Maia can also offer an immediate SOUL resync path.
 - `maia agent archive <name>` archives one agent identity, and `maia agent archive all` uses reserved keyword `all` to archive every stored agent identity only when no agent runtime is active.
 - `maia agent restore <name>` restores one archived agent identity to the stopped state.
 - `maia agent purge <name>` permanently removes one archived agent identity and local Maia/Hermes state, and it refuses until that target is already archived. `--yes` is not used for the single-agent form.
